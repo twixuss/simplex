@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+    <Type Name="Node" Inheritable="true">
+        <DisplayString>{location}</DisplayString>
+    </Type>
+    <Type Name="Node" Inheritable="false">
+        <Expand>
+            <Item Name="[value]" Condition="kind==NodeKind::Block              " Optional="true">*(Block              *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Call               " Optional="true">*(Call               *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Definition         " Optional="true">*(Definition         *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::IntegerLiteral     " Optional="true">*(IntegerLiteral     *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::BooleanLiteral     " Optional="true">*(BooleanLiteral     *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Lambda             " Optional="true">*(Lambda             *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::LambdaHead         " Optional="true">*(LambdaHead         *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Name               " Optional="true">*(Name               *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::If                 " Optional="true">*(If                 *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::BuiltinType        " Optional="true">*(BuiltinType        *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Return             " Optional="true">*(Return             *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::While              " Optional="true">*(While              *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Continue           " Optional="true">*(Continue           *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Break              " Optional="true">*(Break              *)this</Item>
+        </Expand>
+    </Type>
+    <Type Name="Name">
+        <DisplayString>{location}: {type, na}</DisplayString>
+    </Type>
+    <Type Name="BuiltinType">
+        <DisplayString>{location}: {type}</DisplayString>
+    </Type>
+</AutoVisualizer>

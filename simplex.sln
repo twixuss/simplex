@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.33516.290
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "simplex", "simplex.vcxproj", "{7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Элементы решения", "Элементы решения", "{3C731290-52A5-4AEC-9CA9-CF0E44A0A2CA}"
+	ProjectSection(SolutionItems) = preProject
+		simplex.natvis = simplex.natvis
+		dep\tl\tl.natvis = dep\tl\tl.natvis
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05}.Debug|x64.ActiveCfg = Debug|x64
+		{7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05}.Debug|x64.Build.0 = Debug|x64
+		{7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05}.Release|x64.ActiveCfg = Release|x64
+		{7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {10E7AC41-B810-4A16-8BE3-9E24219E04DA}
+	EndGlobalSection
+EndGlobal
