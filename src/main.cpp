@@ -1800,7 +1800,7 @@ struct ExecutionContext {
 
 			auto name = lambda->definition->name;
 
-			if (name == u8"print"s) {
+			if (name == u8"println"s) {
 				println(argument_values[0].integer);
 				return Value{};
 			}
@@ -2371,13 +2371,13 @@ private:
 
 			if (!typecheck(lambda->body))
 				return false;
+		}
 
-			if (!lambda->head.return_type) {
+		if (!lambda->head.return_type) {
+			if (lambda->body) {
 				reporter.warning(lambda->location, "TODO: proper return type deduction. For now using body type {}.", lambda->body->type);
 				lambda->head.return_type = lambda->body->type;
-			}
-		} else {
-			if (!lambda->head.return_type) {
+			} else {
 				lambda->head.return_type = get_builtin_type(BuiltinTypeKind::None);
 			}
 		}

@@ -3,7 +3,7 @@
   <ImportGroup Label="PropertySheets" />
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
-    <IntDir>$(SolutionDir)tmp\$(Configuration)\</IntDir>
+    <IntDir>$(SolutionDir)tmp\$(ProjectName)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep\tl\include;$(IncludePath)</IncludePath>
     <OutDir>$(SolutionDir)bin-$(Configuration)\</OutDir>
     <_PropertySheetDisplayName>Common</_PropertySheetDisplayName>
