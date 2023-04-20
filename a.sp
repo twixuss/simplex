@@ -3,7 +3,7 @@ const main = (): {
     var b = 1
     while a < 100 {
         print(a)
-        var c = a + b
+        let c = a + b
         a = b
         b = c
     }

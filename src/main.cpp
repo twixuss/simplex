@@ -1,11 +1,12 @@
 // TODO: track current node for assertion messages.
 
-void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line);
+void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function);
 template <class ...Args>
-void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *format, Args ...args);
+void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, char const *format, Args ...args);
 
-#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure_impl(cause_string, expression, __FILE__, __LINE__, __VA_ARGS__), debug_break())
+#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure_impl(cause_string, expression, __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__), debug_break())
 
+#define TL_DEBUG BUILD_DEBUG
 #define TL_IMPL
 #define TL_DEFAULT_HASH_MAP ContiguousHashMap
 #include <tl/main.h>
@@ -37,8 +38,21 @@ constexpr u64 read_u64(utf8 *data) {
 
 using String = Span<utf8>;
 
+inline bool operator==(String a, char const *b) {
+	return a == as_utf8(as_span(b));
+}
+
+#if BUILD_DEBUG
+u32 string_hash_count;
+#endif
+
 template <>
 constexpr u64 get_hash(String const &string) {
+#if BUILD_DEBUG
+	if (!std::is_constant_evaluated())
+		++string_hash_count;
+#endif
+
 	if (string.count >= 8) {
 		u64 first = read_u64(string.data);
 		u64 last = read_u64(string.end() - 8);
@@ -50,18 +64,6 @@ constexpr u64 get_hash(String const &string) {
 		result += string.data[i] * (i * 0xdeadc0debabeface + 1);
 	}
 	return result;
-}
-
-void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line) {
-	println("COMPILER ERROR: {} {} at {}:{}", cause_string, expression, file, line);
-}
-void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, Span<char> message) {
-	assertion_failure_impl(cause_string, expression, file, line);
-	println("Message: {}", message);
-}
-template <class ...Args>
-void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *format, Args ...args) {
-	assertion_failure_impl(cause_string, expression, file, line, tformat(format, args...));
 }
 
 struct TimedResult {
@@ -165,18 +167,14 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	x("&=") \
 	x("|=") \
 	x("^=") \
+	x("&&") \
+	x("||") \
+	x("<<") \
+	x(">>") \
 
-consteval u8 const_string_to_token_kind(Span<char> token) {
-	if (token.count == 1)
-		return token[0];
-
-	u8 iota = 0xa0;
-#define x(string) if (iota > 0xaf) *(int *)0 = 0; /*overflow*/ if (token == string##s) return iota; ++iota;
-	ENUMERATE_DOUBLE_CHAR_TOKENS(x)
-#undef x
-
-	*(int *)0 = 0; /*invalid token*/;
-}
+#define ENUMERATE_TRIPLE_CHAR_TOKENS(x) \
+	x("<<=") \
+	x(">>=") \
 
 #define ENUMERATE_BUILTIN_TYPES(x) \
 	x(Type, 0x80) \
@@ -189,7 +187,7 @@ consteval u8 const_string_to_token_kind(Span<char> token) {
 	x(S32,  0x87) \
 	x(S64,  0x88) \
 	x(Bool, 0x89) \
-	x(None, 0x8a) /* NOTE: might also be used for empty optionals? */ \
+	x(None, 0x8a) \
 
 #define ENUMERATE_KEYWORDS(x) \
 	ENUMERATE_BUILTIN_TYPES(x) \
@@ -207,18 +205,43 @@ consteval u8 const_string_to_token_kind(Span<char> token) {
 	x(continue, 0x9b) \
 
 // #define x(name, token, precedence)
+// Sorry, I want these names to be short ;)
 #define ENUMERATE_BINARY_OPERATIONS(x) \
-	x(multiply,       "*" , 4) \
-	x(divide,         "/" , 4) \
-	x(add,            "+" , 3) \
-	x(subtract,       "-" , 3) \
-	x(equals,         "==", 2) \
-	x(not_equals,     "!=", 2) \
-	x(less,           "<" , 2) \
-	x(less_equals,    "<=", 2) \
-	x(greater,        ">" , 2) \
-	x(greater_equals, ">=", 2) \
-	x(assign,         "=" , 1) \
+	x(mul, "*" , 6) \
+	x(div, "/" , 6) \
+	x(mod, "%" , 6) \
+	\
+	x(add, "+" , 5) \
+	x(sub, "-" , 5) \
+	\
+	x(bor, "|" , 4) \
+	x(ban, "&" , 4) \
+	x(bxo, "^" , 4) \
+	x(bsl, "<<", 4) \
+	x(bsr, ">>", 4) \
+	\
+	x(equ, "==", 3) \
+	x(neq, "!=", 3) \
+	x(les, "<" , 3) \
+	x(leq, "<=", 3) \
+	x(grt, ">" , 3) \
+	x(grq, ">=", 3) \
+	\
+	x(lan, "||", 2) \
+	x(lor, "&&", 2) \
+	\
+	x(ass, "=" , 1) \
+	\
+	x(addass, "+=" , 1) \
+	x(subass, "-=" , 1) \
+	x(mulass, "*=" , 1) \
+	x(divass, "/=" , 1) \
+	x(modass, "%=" , 1) \
+	x(borass, "|=" , 1) \
+	x(banass, "&=" , 1) \
+	x(bxoass, "^=" , 1) \
+	x(bslass, "<<=", 1) \
+	x(bsrass, ">>=", 1) \
 
 #define ENUMERATE_TOKEN_KIND(x) \
 	ENUMERATE_KEYWORDS(x) \
@@ -251,14 +274,26 @@ consteval u8 const_string_to_token_kind(Span<char> token) {
 	ENUMERATE_EXPRESSION_KIND(x) \
 	ENUMERATE_STATEMENT_KIND(x) \
 
+consteval u8 const_string_to_token_kind(Span<char> token) {
+	if (token.count == 1)
+		return token[0];
+
+	u8 iota = 0xa0;
+#define x(string) if (token == string##s) return iota; ++iota;
+	ENUMERATE_DOUBLE_CHAR_TOKENS(x)
+	ENUMERATE_TRIPLE_CHAR_TOKENS(x)
+#undef x
+
+	*(int *)0 = 0; /*invalid token*/;
+}
+
 enum TokenKind : u8 {
 #define x(name, value) Token_##name = value,
 	ENUMERATE_TOKEN_KIND(x)
 #undef x
 };
 
-
-umm append_known_token_kind(StringBuilder &builder, TokenKind kind) {
+inline umm append(StringBuilder &builder, TokenKind kind) {
 	switch (kind) {
 		case Token_end_of_file: return append(builder, "end of file");
 		case Token_end_of_line: return append(builder, "end of line");
@@ -272,13 +307,6 @@ umm append_known_token_kind(StringBuilder &builder, TokenKind kind) {
 		ENUMERATE_TOKEN_KIND(x)
 #undef x
 	}
-
-	return 0;
-}
-
-inline umm append(StringBuilder &builder, TokenKind kind) {
-	if (auto appended = append_known_token_kind(builder, kind))
-		return appended;
 
 	return append(builder, "unknown");
 }
@@ -300,6 +328,9 @@ inline umm append(StringBuilder &builder, Token token) {
 #define PASTE_CASE(x) case x:
 #define PASTE_CASE_0(x) case x[0]:
 
+// This hash map panics on hash collision. Here it is used for
+// mapping token strings to token kinds. Because all of them
+// are inserted at compile time, panic is not a problem.
 template <umm capacity_, class Key_, class Value_, class Traits = DefaultHashTraits<Key_, true>>
 struct FixedHashMap {
 	using Key = Key_;
@@ -314,7 +345,7 @@ struct FixedHashMap {
 
 	constexpr bool insert(Key const &key, Value value) {
 		auto index = traits.get_index(key, capacity);
-		assert(!init[index]); // NOTE: if theres a compilation error, that means this failed.
+		assert(!init[index]); // NOTE: if theres a compilation error, that means this assertion failed.
 		init[index] = true;
 		kv[index].key = key;
 		kv[index].value = value;
@@ -329,6 +360,9 @@ struct FixedHashMap {
 	}
 };
 
+// NOTE: Currently these maps are way bigger than needed. They could use a
+//       custom hash function to reduce their size. Need to figure that out.
+
 constexpr auto keywords = []() consteval {
 	FixedHashMap<128, String, TokenKind> keywords = {};
 #define x(name, value) keywords.insert(u8#name##s, Token_##name);
@@ -337,15 +371,7 @@ constexpr auto keywords = []() consteval {
 	return keywords;
 }();
 
-struct MulticharHashTraits : DefaultHashTraits<String> {
-	inline static constexpr u64 get_hash(String const &key) {
-		if (key.count == 1)
-			return key[0];
-		return key[0] * 128 + key[1];
-	}
-};
-
-using MulticharTokens = FixedHashMap<128, String, TokenKind/*, MulticharHashTraits*/>;
+using MulticharTokens = FixedHashMap<512, String, TokenKind>;
 
 // 0th map contains tokens with length 1, 1st map - length 2, etc...
 constexpr MulticharTokens multichar_tokens[2] = {
@@ -518,6 +544,20 @@ struct ImmediateReporter : ReporterBase {
 		report.print();
 	}
 } immediate_reporter;
+
+thread_local String debug_current_location;
+
+void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function) {
+	immediate_reporter.error(debug_current_location, "COMPILER ERROR: {} {} at {}:{} in function {}", cause_string, expression, file, line, function);
+}
+void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, Span<char> message) {
+	assertion_failure_impl(cause_string, expression, file, line, function);
+	println("Message: {}", message);
+}
+template <class ...Args>
+void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, char const *format, Args ...args) {
+	assertion_failure_impl(cause_string, expression, file, line, function, tformat(format, args...));
+}
 
 Optional<List<Token>> source_to_tokens(String source, String path) {
 	timed_function();
@@ -843,10 +883,13 @@ enum class BuiltinTypeKind : u8 {
 #define x(name, value) name = value,
 	ENUMERATE_BUILTIN_TYPES(x)
 #undef x
+	count,
 };
 
 DEFINE_EXPRESSION(Block) {
 	Block *parent = 0;
+	Expression *container = 0;
+
 	List<Node *> children;
 	List<Definition *> definition_list;
 	HashMap<String, List<Definition *>> definition_map;
@@ -871,6 +914,9 @@ DEFINE_EXPRESSION(BooleanLiteral) {
 	bool value = false;
 };
 DEFINE_EXPRESSION(LambdaHead) {
+	LambdaHead() {
+		parameters_block.container = this;
+	}
 	Block parameters_block;
 	Expression *return_type = 0;
 	bool is_intrinsic : 1 = false;
@@ -915,9 +961,9 @@ void Block::add(Node *child) {
 	}
 }
 
-HashMap<BuiltinTypeKind, BuiltinType *> builtin_types;
-BuiltinType *get_builtin_type(BuiltinTypeKind kind) {
-	return builtin_types.find(kind)->value;
+BuiltinType *builtin_types[(u32)BuiltinTypeKind::count];
+BuiltinType *&get_builtin_type(BuiltinTypeKind kind) {
+	return builtin_types[(u32)kind];
 }
 
 int tabs = 0;
@@ -1036,7 +1082,12 @@ void print_ast_impl(LambdaHead *head) {
 		print_ast(group[0]->parsed_type);
 	}
 
-	print(")");
+	print(')');
+	if (head->return_type) {
+		print(" ");
+		print_ast(head->return_type);
+	}
+	print(':');
 
 	if (head->is_intrinsic) print(" #intrinsic");
 }
@@ -1045,8 +1096,6 @@ void print_ast_impl(Lambda *lambda) {
 	if (lambda->body) {
 		print(' ');
 		print_ast(lambda->body);
-	} else {
-		print(';');
 	}
 }
 void print_ast_impl(Name *name) { print(name->name); }
@@ -1086,7 +1135,9 @@ void print_ast_impl(Break *) { print("break"); }
 void print_ast_impl(Binary *binary) {
 	print('(');
 	print_ast(binary->left);
+	print(' ');
 	print(binary->operation);
+	print(' ');
 	print_ast(binary->right);
 	print(')');
 }
@@ -1123,6 +1174,7 @@ struct Parser {
 	Token *token = 0;
 	Block *current_block = &global_block;
 	While *current_loop = 0;
+	Expression *current_container = 0;
 	Reporter reporter;
 
 	Expression *parse_expression(bool whitespace_is_skippable_before_binary_operator = false, int right_precedence = 0) {
@@ -1275,8 +1327,10 @@ struct Parser {
 				auto lambda = Lambda::create();
 				lambda->location = token->string;
 				lambda->head.parameters_block.parent = current_block;
+
 				scoped_replace(current_block, &lambda->head.parameters_block);
 				scoped_replace(current_loop, 0);
+				scoped_replace(current_container, lambda);
 
 				next();
 				skip_lines();
@@ -1364,6 +1418,8 @@ struct Parser {
 				block->parent = current_block;
 				scoped_replace(current_block, block);
 
+				block->container = current_container;
+
 				next();
 
 				while (true) {
@@ -1372,10 +1428,20 @@ struct Parser {
 						break;
 					}
 
-					if (!parse_statement_into_block(block))
+					auto child = parse_statement();
+					if (!child)
 						return 0;
+
+					block->add(child);
 				}
 				next();
+
+				for (auto child : block->children.skip(-1)) {
+					if (!allowed_in_statement_context(child)) {
+						reporter.error(child->location, "{}s are not allowed in statement context.", child->kind);
+						return 0;
+					}
+				}
 
 				return block;
 			}
@@ -1539,28 +1605,23 @@ struct Parser {
 				return true;
 			case NodeKind::Binary:
 				switch (((Binary *)node)->operation) {
-					case BinaryOperation::assign:
+					case BinaryOperation::ass:
 						return true;
 				}
 				break;
 		}
 		return false;
 	}
-	Node *parse_statement_into_block(Block *block) {
-		auto child = parse_statement();
-		if (!child)
-			return 0;
-
-		if (!allowed_in_statement_context(child)) {
-			reporter.error(child->location, "{}s are not allowed in statement context.", child->kind);
-			return 0;
+	bool ensure_allowed_in_statement_context(Node *node) {
+		if (!allowed_in_statement_context(node)) {
+			reporter.error(node->location, "{}s are not allowed in statement context.", node->kind);
+			return false;
 		}
-
-		block->add(child);
-		return child;
+		return true;
 	}
 	bool next() {
 		++token;
+		debug_current_location = token->string;
 		return token->kind != Token_end_of_file;
 	}
 	bool expect(std::underlying_type_t<TokenKind> expected_kind) {
@@ -1589,6 +1650,7 @@ struct Parser {
 	void skip_lines() {
 		while (token->kind == '\n')
 			++token;
+		debug_current_location = token->string;
 	}
 };
 
@@ -1601,6 +1663,8 @@ Optional<List<Node *>> tokens_to_nodes(Span<Token> tokens) {
 	
 	defer { parser.reporter.print_all(); };
 
+	scoped_replace(debug_current_location, {});
+
 	while (true) {
 		auto saved = parser.token;
 		parser.skip_lines();
@@ -1608,11 +1672,15 @@ Optional<List<Node *>> tokens_to_nodes(Span<Token> tokens) {
 			break;
 		}
 
-		auto node = parser.parse_statement_into_block(&global_block);
-		if (!node)
+		auto child = parser.parse_statement();
+		if (!child)
 			return {};
 
-		nodes.add(node);
+		if (!parser.ensure_allowed_in_statement_context(child)) {
+			return {};
+		}
+
+		nodes.add(child);
 	}
 
 	return nodes;
@@ -1623,6 +1691,7 @@ struct ExecutionContext {
 		nothing,
 		integer,
 		boolean,
+		lambda,
 		break_,
 		continue_,
 		return_,
@@ -1632,12 +1701,16 @@ struct ExecutionContext {
 		ValueKind kind = {};
 		u64 integer = 0;
 		bool boolean = false;
+		Lambda *lambda = 0;
 	};
 
 	struct Scope {
 		// Make this pointer-stable just in case.
 		BucketHashMap<Definition *, Value> variables;
 	};
+
+	static constexpr umm recursion_limit = 256;
+	umm recursion_level = 0;
 
 	List<Scope> scope_stack;
 	Value return_value;
@@ -1649,6 +1722,8 @@ struct ExecutionContext {
 	}
 
 	Value execute(Node *node) {
+		scoped_replace(debug_current_location, node->location);
+
 		switch (node->kind) {
 #define x(name) case NodeKind::name: return execute_impl((##name *)node);
 			ENUMERATE_NODE_KIND(x)
@@ -1690,7 +1765,9 @@ struct ExecutionContext {
 
 		return {};
 	}
-	Value execute_impl(Lambda *lambda) { not_implemented(); }
+	Value execute_impl(Lambda *lambda) {
+		return {.kind = ValueKind::lambda, .lambda = lambda}; 
+	}
 	Value execute_impl(LambdaHead *head) { not_implemented(); }
 	Value execute_impl(Name *name) {
 		assert(name->definition);
@@ -1739,14 +1816,21 @@ struct ExecutionContext {
 			executed_arguments.add(execute(argument));
 		}
 
+		++recursion_level;
+		defer { --recursion_level; };
+
+		if (recursion_level >= recursion_limit) {
+			immediate_reporter.error(call->location, "Recursion limit of {} was exceeded.", recursion_limit);
+			exit(1);
+		}
 
 		auto prev_scope_stack = scope_stack;
 		scope_stack = {};
 		scope_stack.add(prev_scope_stack[0]);
 		defer {
 			prev_scope_stack[0] = scope_stack[0];
-		free(scope_stack);
-		scope_stack = prev_scope_stack;
+			free(scope_stack);
+			scope_stack = prev_scope_stack;
 		};
 
 		auto &param_scope = scope_stack.add();
@@ -1785,7 +1869,7 @@ struct ExecutionContext {
 	Value execute_impl(Break *Break) { return { .kind = ValueKind::break_ }; }
 	Value execute_impl(BuiltinType *type) { not_implemented(); }
 	Value execute_impl(Binary *binary) {
-		if (binary->operation == BinaryOperation::assign) {
+		if (binary->operation == BinaryOperation::ass) {
 			if (auto name = as<Name>(binary->left)) {
 				auto stored_value = get_stored_value(name);
 				if (!stored_value) {
@@ -1805,16 +1889,16 @@ struct ExecutionContext {
 		assert(left.kind == ValueKind::integer);
 		assert(right.kind == ValueKind::integer);
 		switch (binary->operation) {
-			case BinaryOperation::add:            return { .kind = ValueKind::integer, .integer = left.integer +  right.integer };
-			case BinaryOperation::subtract:       return { .kind = ValueKind::integer, .integer = left.integer -  right.integer };
-			case BinaryOperation::multiply:       return { .kind = ValueKind::integer, .integer = left.integer +  right.integer };
-			case BinaryOperation::divide:         return { .kind = ValueKind::integer, .integer = left.integer /  right.integer };
-			case BinaryOperation::equals:         return { .kind = ValueKind::boolean, .boolean = left.integer == right.integer };
-			case BinaryOperation::not_equals:     return { .kind = ValueKind::boolean, .boolean = left.integer != right.integer };
-			case BinaryOperation::less:           return { .kind = ValueKind::boolean, .boolean = left.integer <  right.integer };
-			case BinaryOperation::less_equals:    return { .kind = ValueKind::boolean, .boolean = left.integer <= right.integer };
-			case BinaryOperation::greater:        return { .kind = ValueKind::boolean, .boolean = left.integer >  right.integer };
-			case BinaryOperation::greater_equals: return { .kind = ValueKind::boolean, .boolean = left.integer >= right.integer };
+			case BinaryOperation::add: return { .kind = ValueKind::integer, .integer = left.integer +  right.integer };
+			case BinaryOperation::sub: return { .kind = ValueKind::integer, .integer = left.integer -  right.integer };
+			case BinaryOperation::mul: return { .kind = ValueKind::integer, .integer = left.integer +  right.integer };
+			case BinaryOperation::div: return { .kind = ValueKind::integer, .integer = left.integer /  right.integer };
+			case BinaryOperation::equ: return { .kind = ValueKind::boolean, .boolean = left.integer == right.integer };
+			case BinaryOperation::neq: return { .kind = ValueKind::boolean, .boolean = left.integer != right.integer };
+			case BinaryOperation::les: return { .kind = ValueKind::boolean, .boolean = left.integer <  right.integer };
+			case BinaryOperation::leq: return { .kind = ValueKind::boolean, .boolean = left.integer <= right.integer };
+			case BinaryOperation::grt: return { .kind = ValueKind::boolean, .boolean = left.integer >  right.integer };
+			case BinaryOperation::grq: return { .kind = ValueKind::boolean, .boolean = left.integer >= right.integer };
 		}
 
 		immediate_reporter.error(binary->location, "Invalid binary operation");
@@ -1841,7 +1925,14 @@ umm append(StringBuilder &builder, ExecutionContext::Value value) {
 }
 
 bool is_constant(Expression *expression);
-bool is_constant_impl(Block *block) { not_implemented(); }
+bool is_constant_impl(Block *block) {
+	assert(block->children.count == 1, "not implemented");
+
+	auto last_expression = as<Expression>(block->children.back());
+	assert(last_expression, "not implemented");
+
+	return is_constant(last_expression);
+}
 bool is_constant_impl(Definition *definition) { return definition->mutability == Mutability::constant; }
 bool is_constant_impl(IntegerLiteral *literal) { return true; }
 bool is_constant_impl(BooleanLiteral *literal) { return true; }
@@ -1853,6 +1944,7 @@ bool is_constant_impl(If *If) { not_implemented(); }
 bool is_constant_impl(BuiltinType *type) { return true; }
 bool is_constant_impl(Binary *binary) { return is_constant(binary->left) && is_constant(binary->right); }
 bool is_constant(Expression *expression) {
+	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
 #define x(name) case NodeKind::name: return is_constant_impl((##name *)expression);
 		ENUMERATE_EXPRESSION_KIND(x)
@@ -1874,6 +1966,7 @@ bool is_mutable_impl(If *If) { not_implemented(); }
 bool is_mutable_impl(BuiltinType *type) { return false; }
 bool is_mutable_impl(Binary *binary) { return false; }
 bool is_mutable(Expression *expression) {
+	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
 #define x(name) case NodeKind::name: return is_mutable_impl((##name *)expression);
 		ENUMERATE_EXPRESSION_KIND(x)
@@ -1899,16 +1992,17 @@ auto println_(auto ...params) {
 
 volatile u32 typechecker_uid_counter;
 
-enum class TypecheckStatus : u8 {
+enum class TypecheckEntryStatus : u8 {
 	suspended,
 	in_progress,
-	done,
+	succeeded,
+	failed,
 };
 
 struct TypecheckEntry {
 	Node* node = 0;
 	Typechecker* typechecker = 0;
-	TypecheckStatus status = {};
+	TypecheckEntryStatus status = {};
 	SpinLock lock;
 	u32 last_thread_index = 0;
 	SpinLock dependants_lock;
@@ -1916,8 +2010,22 @@ struct TypecheckEntry {
 	bool dependency_failed = false;
 };
 
-SpinLock global_typecheck_lock;
 List<TypecheckEntry> typecheck_entries;
+
+LockProtected<List<Report>, SpinLock> deferred_reports;
+
+struct BinaryTypecheckerKey {
+	Expression *left_type = 0;
+	Expression *right_type = 0;
+	BinaryOperation operation = {};
+
+	constexpr auto operator<=>(BinaryTypecheckerKey const &) const = default;
+};
+
+template <>
+u64 get_hash(BinaryTypecheckerKey const &key) {
+	return (u64)key.left_type ^ rotate_left((u64)key.left_type, 21) ^ rotate_left((u64)key.operation, 42);
+}
 
 struct Typechecker {
 	const u32 uid = atomic_add(&typechecker_uid_counter, 1);
@@ -1972,12 +2080,15 @@ struct Typechecker {
 		}
 
 		if (yield_result != YieldResult::wait) {
-			reporter.print_all();
+			locked_use(deferred_reports) {
+				deferred_reports.add(reporter.reports);
+			};
 		}
 		return yield_result;
 	}
 
 	void stop() {
+		status.finished = true;
 		debug_stop();
 	}
 	void retire() {
@@ -1990,10 +2101,13 @@ struct Typechecker {
 		with(retired_typecheckers_lock, retired_typecheckers.add(this));
 	}
 
+	inline static HashMap<BinaryTypecheckerKey, bool (Typechecker::*)(Binary *)> binary_typecheckers;
+
 private:
 	struct Status {
 		u32 progress = 0;
 		bool waiting = false;
+		bool finished = false;
 	};
 
 	using TypecheckProgress = List<Status>;
@@ -2007,16 +2121,19 @@ private:
 	Status status;
 	u32 thread_index = -1;
 	TypecheckEntry *entry = 0;
+	List<Node *> node_stack;
 
 	void get_total_progress(TypecheckProgress& progress) {
 		progress.clear();
 
 		for (auto &entry : typecheck_entries) {
 			auto typechecker = entry.typechecker;
-			if (typechecker)
+			if (typechecker) {
 				progress.add(typechecker->status);
-			else
+			} else {
+				// NOTE: Typechecker was not created yet. This means that progress can always be made.
 				progress.add({ .waiting = false });
+			}
 		}
 	}
 
@@ -2027,6 +2144,9 @@ private:
 			return true;
 
 		for (auto status : now) {
+			if (status.finished)
+				continue;
+
 			if (!status.waiting) {
 				return true;
 			}
@@ -2035,6 +2155,9 @@ private:
 		assert(old.count == now.count);
 
 		for (umm i = 0; i < old.count; ++i) {
+			if (now[i].finished)
+				continue;
+
 			if (!now[i].waiting || old[i].waiting) {
 				return true;
 			}
@@ -2071,14 +2194,12 @@ private:
 					sleep_nanoseconds(1000);
 				}
 				if (iteration >= wait_fatal_limit) {
-					debug_break();
 					return false;
 				}
 				++iteration;
 
 				get_total_progress(current_progress);
 				if (!has_progress(old_progress, current_progress)) {
-					debug_break();
 					return false;
 				}
 				Swap(old_progress, current_progress);
@@ -2111,6 +2232,7 @@ private:
 
 	void yield(YieldResult result) {
 		yield_result = result;
+		scoped_replace(debug_current_location, {});
 		fiber_yield(parent_fiber);
 	}
 
@@ -2124,6 +2246,11 @@ private:
 	bool typecheck(Node *node) {
 		++status.progress;
 		defer{ ++status.progress; };
+
+		scoped_replace(debug_current_location, node->location);
+
+		node_stack.add(node);
+		defer { node_stack.pop(); };
 
 		switch (node->kind) {
 #define x(name) case NodeKind::name: if (!typecheck_impl((##name *)node)) return false; break;
@@ -2195,10 +2322,13 @@ private:
 			}
 		}
 
-		if (definition->parsed_type) {
-			definition->type = definition->parsed_type;
-		} else {
-			definition->type = definition->initial_value->type;
+		// NOTE: definition->type might be set by lambda
+		if (!definition->type) {
+			if (definition->parsed_type) {
+				definition->type = definition->parsed_type;
+			} else {
+				definition->type = definition->initial_value->type;
+			}
 		}
 
 		return true;
@@ -2230,6 +2360,12 @@ private:
 
 		lambda->type = &lambda->head;
 
+		if (lambda->head.return_type) {
+			if (lambda->definition) {
+				lambda->definition->type = lambda->type;
+			}
+		}
+
 		if (lambda->body) {
 			scoped_replace(current_block, &lambda->head.parameters_block);
 
@@ -2251,39 +2387,71 @@ private:
 	}
 	bool typecheck_impl(Name *name) {
 		for (auto block = current_block; block; block = block->parent) {
-			auto definitions = block->definition_map.get_or_insert(name->name);
-			if (definitions.count == 1) {
-				name->definition = definitions[0];
+			if (auto found_definitions = block->definition_map.find(name->name)) {
+				auto definitions = found_definitions->value;
+				if (definitions.count == 1) {
+					auto definition = definitions[0];
 
-				if (block == &global_block) {
-					for (auto &typecheck_entry : typecheck_entries) {
-						if (typecheck_entry.node == name->definition) {
-							scoped(typecheck_entry.dependants_lock);
-							typecheck_entry.dependants.add(entry);
-							break;
+					name->definition = definition;
+
+					auto definition_index = find_index_of(block->children, definition);
+					assert(definition_index < block->children.count);
+
+					if (block->container && as<Lambda>(block->container)) {
+						// Find our parent node in found definition's block
+						for (auto node : reverse_iterate(node_stack)) {
+							auto parent_index = find_index_of(block->children, node);
+							if (parent_index < block->children.count) {
+								if (parent_index < definition_index) {
+									reporter.error(name->location, "Can't access definition because it is declared after.");
+									reporter.info(definition->location, "Here is the definition.");
+									return false;
+								}
+								break;
+							}
 						}
 					}
 
+					TypecheckEntry *dependency_entry = 0;
+
+					if (block == &global_block) {
+						for (auto &typecheck_entry : typecheck_entries) {
+							if (typecheck_entry.node == definition) {
+								dependency_entry = &typecheck_entry;
+								break;
+							}
+						}
+					}
+
+					if (dependency_entry) {
+						scoped(dependency_entry->dependants_lock);
+						dependency_entry->dependants.add(entry);
+					}
+
+					if (!yield_while_null(name->location, &definition->type)) {
+						reporter.error(name->location, "Couldn't wait for definition type.");
+						return false;
+					}
+
+					if (dependency_entry) {
+						scoped(dependency_entry->dependants_lock);
+						find_and_erase_unordered(dependency_entry->dependants,entry);
+					}
+
+					name->type = definition->type;
+					return true;
 				}
-				
-				if (!yield_while_null(name->location, &name->definition->type)) {
-					reporter.error(name->location, "Couldn't wait for definition type.");
-					return false;
+
+				if (definitions.count == 0) {
+					continue;
 				}
 
-				name->type = name->definition->type;
-				return true;
+				reporter.error(name->location, "`{}` is ambiguous.", name->name);
+				for (auto definition : definitions) {
+					reporter.info(definition->location, "Declared here:");
+				}
+				return false;
 			}
-
-			if (definitions.count == 0) {
-				continue;
-			}
-
-			reporter.error(name->location, "`{}` is ambiguous.", name->name);
-			for (auto definition : definitions) {
-				reporter.info(definition->location, "Declared here:");
-			}
-			return false;
 		}
 		reporter.error(name->location, "`{}` was not declared.", name->name);
 		return false;
@@ -2369,6 +2537,13 @@ private:
 		if (!typecheck(binary->right))
 			return false;
 
+		auto dleft  = direct(binary->left->type);
+		auto dright = direct(binary->right->type);
+
+		if (auto found = binary_typecheckers.find({ dleft, dright, binary->operation })) {
+			return (this->*found->value)(binary);
+		}
+
 		if (!types_match(binary->left->type, binary->right->type)) {
 			reporter.error(binary->location, "No binary operation defined for types {} and {}.", binary->left->type, binary->right->type);
 			return false;
@@ -2376,21 +2551,21 @@ private:
 
 		switch (binary->operation) {
 			case BinaryOperation::add:
-			case BinaryOperation::subtract:
-			case BinaryOperation::multiply:
-			case BinaryOperation::divide:
+			case BinaryOperation::sub:
+			case BinaryOperation::mul:
+			case BinaryOperation::div:
 				binary->type = binary->left->type;
 				break;
-			case BinaryOperation::equals:
-			case BinaryOperation::not_equals:
-			case BinaryOperation::less:
-			case BinaryOperation::less_equals:
-			case BinaryOperation::greater:
-			case BinaryOperation::greater_equals:
+			case BinaryOperation::equ:
+			case BinaryOperation::neq:
+			case BinaryOperation::les:
+			case BinaryOperation::leq:
+			case BinaryOperation::grt:
+			case BinaryOperation::grq:
 				binary->type = get_builtin_type(BuiltinTypeKind::Bool);
 				break;
 
-			case BinaryOperation::assign:
+			case BinaryOperation::ass:
 				if (!is_mutable(binary->left)) {
 					reporter.error(binary->left->location, "This expression is read-only.");
 					return false;
@@ -2419,6 +2594,73 @@ private:
 		debug_stopped = true;
 		// println("stopped typechecker {}", uid);
 	}
+
+public:
+	/////////////////////////
+	// Binary Typecheckers //
+	/////////////////////////
+
+	bool bt_take_left(Binary *binary) {
+		binary->type = binary->left->type;
+		return true;
+	}
+	bool bt_set_bool(Binary *binary) {
+		binary->type = get_builtin_type(BuiltinTypeKind::Bool);
+		return true;
+	}
+
+	static void init_binary_typecheckers() {
+		construct(binary_typecheckers);
+
+#define y(left, right, operation) binary_typecheckers.get_or_insert({ get_builtin_type(left), get_builtin_type(right), operation })
+#define x(left, right, operation) y(BuiltinTypeKind::left, BuiltinTypeKind::right, BinaryOperation::operation)
+
+		//
+		// Every type is equatable
+		// 
+		for (u32 i = 0; i < (u32)BuiltinTypeKind::count; ++i) {
+			y((BuiltinTypeKind)i, (BuiltinTypeKind)i, BinaryOperation::equ) = &bt_set_bool;
+		}
+
+#define ORDERABLE(type) \
+		x(type, type, les) = &bt_set_bool; \
+		x(type, type, leq) = &bt_set_bool; \
+		x(type, type, grt) = &bt_set_bool; \
+		x(type, type, grq) = &bt_set_bool
+
+		ORDERABLE(Bool);
+		ORDERABLE(U8);
+		ORDERABLE(U16);
+		ORDERABLE(U32);
+		ORDERABLE(U64);
+		ORDERABLE(S8);
+		ORDERABLE(S16);
+		ORDERABLE(S32);
+		ORDERABLE(S64);
+
+#define MATHABLE(type) \
+		x(type, type, add) = &bt_take_left; \
+		x(type, type, sub) = &bt_take_left; \
+		x(type, type, mul) = &bt_take_left; \
+		x(type, type, div) = &bt_take_left; \
+		x(type, type, mod) = &bt_take_left;
+
+		MATHABLE(Bool);
+		MATHABLE(U8);
+		MATHABLE(U16);
+		MATHABLE(U32);
+		MATHABLE(U64);
+		MATHABLE(S8);
+		MATHABLE(S16);
+		MATHABLE(S32);
+		MATHABLE(S64);
+
+#undef MATHABLE
+#undef ORDERABLE
+#undef x
+#undef y
+	}
+
 };
 
 void init_globals() {
@@ -2432,6 +2674,7 @@ void init_globals() {
 	construct(global_block);
 	construct(builtin_types);
 	construct(typecheck_entries);
+	construct(deferred_reports);
 }
 
 struct ParsedArguments {
@@ -2478,7 +2721,7 @@ void init_builtin_types() {
 #define x(name, value) \
 	static BuiltinType _builtin_type_##name; \
 	{ \
-		auto &type = builtin_types.get_or_insert(BuiltinTypeKind::name); \
+		auto &type = get_builtin_type(BuiltinTypeKind::name); \
 		type = &_builtin_type_##name; \
 		type->type_kind = BuiltinTypeKind::name; \
 		type->type = &_builtin_type_Type; \
@@ -2492,6 +2735,10 @@ s32 tl_main(Span<Span<utf8>> args) {
 		for (auto time : timed_results) {
 			println("{} took {} ms", time.name, time.seconds * 1000);
 		}
+
+#if BUILD_DEBUG
+		println("Total string hashes: {}", string_hash_count);
+#endif
 	};
 
 	init_globals();
@@ -2520,6 +2767,9 @@ s32 tl_main(Span<Span<utf8>> args) {
 	auto global_nodes = tokens_to_nodes(tokens.value());
 	if (!global_nodes)
 		return 0;
+
+	for (auto node : global_nodes.value())
+		global_block.add(node);
 
 	auto cpu_info = get_cpu_info();
 
@@ -2574,7 +2824,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 						scoped(entry->lock);
 
 						switch (entry->status) {
-							case TypecheckStatus::suspended: {
+							case TypecheckEntryStatus::suspended: {
 								// NOTE: This prevents a single thread running single typechecker all the time and gives opportunity to do this to others.
 								//       I added this because one thread was waiting on an identifier all the time and i guess it was the only one who could
 								//       hold the entry lock.
@@ -2586,7 +2836,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 								// }
 								// entry->last_thread_index = thread_index;
 
-								entry->status = TypecheckStatus::in_progress;
+								entry->status = TypecheckEntryStatus::in_progress;
 								if (!entry->typechecker) {
 									entry->typechecker = Typechecker::create(entry->node);
 								}
@@ -2594,11 +2844,12 @@ s32 tl_main(Span<Span<utf8>> args) {
 								// println("{} took {} {}", thread_index, entry->typechecker->uid, entry->node->location);
 								return entry;
 							}
-							case TypecheckStatus::in_progress: {
+							case TypecheckEntryStatus::in_progress: {
 								done_entries_count = 0;
 								break;
 							}
-							case TypecheckStatus::done: {
+							case TypecheckEntryStatus::succeeded:
+							case TypecheckEntryStatus::failed: {
 								++done_entries_count;
 								if (done_entries_count == typecheck_entries.count)
 									return 0;
@@ -2626,25 +2877,27 @@ s32 tl_main(Span<Span<utf8>> args) {
 					entry->typechecker->stop();
 
 					if (result == YieldResult::wait) {
-						entry->status = TypecheckStatus::suspended;
+						entry->status = TypecheckEntryStatus::suspended;
 
 						// NOTE: put waiting entry to the back of the list to give priority to others.
 						//auto found = find(typecheck_entries, entry);
 						//assert(found);
-						//while (found < typecheck_entries.end() && found[1]->status != TypecheckStatus::suspended) {
+						//while (found < typecheck_entries.end() && found[1]->status != TypecheckEntryStatus::suspended) {
 						//	Swap(found[0], found[1]);
 						//}
 					} else {
 						entry->typechecker->retire();
-						entry->status = TypecheckStatus::done;
 
 						if (result == YieldResult::fail) {
+							entry->status = TypecheckEntryStatus::failed;
 							failed = true;
 
 							scoped(entry->dependants_lock);
 							for (auto dependant : entry->dependants) {
 								dependant->dependency_failed = true;
 							}
+						} else {
+							entry->status = TypecheckEntryStatus::succeeded;
 						}
 					}
 				}
@@ -2656,8 +2909,100 @@ s32 tl_main(Span<Span<utf8>> args) {
 		join(threads[thread_index]);
 	}
 
-	for (auto &entry : typecheck_entries)
-		assert(entry.status == TypecheckStatus::done);
+	for (auto &entry : typecheck_entries) {
+		assert(entry.status == TypecheckEntryStatus::succeeded || entry.status == TypecheckEntryStatus::failed);
+	}
+
+
+	auto find_cyclic_dependencies = [&] {
+		enum class VertexState : u8 {
+			none,
+			visited,
+			finished,
+		};
+		struct Vertex {
+			VertexState state = {};
+			u32 parent = -1;
+			List<u32> pointees;
+		};
+
+		List<Vertex> vertices;
+		vertices.resize(typecheck_entries.count);
+
+		auto add_edge = [&] (u32 from, u32 to) {
+			vertices[from].pointees.add(to);
+		};
+
+		for (auto &dependency : typecheck_entries) {
+			auto dependency_index = index_of(typecheck_entries, &dependency);
+			assert(dependency_index < typecheck_entries.count);
+
+			for (auto &dependant : dependency.dependants) {
+				auto dependant_index = index_of(typecheck_entries, dependant);
+				assert(dependant_index < typecheck_entries.count);
+
+				add_edge(dependant_index, dependency_index);
+			}
+		}
+
+		List<u32> cycle;
+		List<List<u32>> cycles;
+
+		auto dfs = [&](this auto &&self, u32 u) -> void {
+			vertices[u].state = VertexState::visited;
+			for (auto v : vertices[u].pointees) {
+				switch (vertices[v].state) {
+					case VertexState::none: {
+						vertices[v].parent = u;
+						self(v);
+						break;
+					}
+					case VertexState::visited: {
+						// cycle found, backtrack to find vertices in cycle
+						auto p = u;
+						cycle.add(v);
+						while (p != v) {
+							cycle.add(p);
+							p = vertices[p].parent;
+						}
+						reverse(cycle); // reverse to get correct order
+						cycles.add(cycle);
+						cycle.clear();
+						break;
+					}
+				}
+			}
+			vertices[u].state = VertexState::finished;
+		};
+
+		for (umm i = 0; i < typecheck_entries.count; i++) {
+			if (vertices[i].state == VertexState::none) {
+				dfs(i);
+			}
+		}
+
+		return cycles;
+	};
+
+	auto cyclic_dependencies = find_cyclic_dependencies();
+	if (cyclic_dependencies.count) {
+		immediate_reporter.error("Cyclic dependencies detected.");
+		for (umm i = 0; i < cyclic_dependencies.count; ++i) {
+			immediate_reporter.warning("Cycle #{}:", i);
+			auto &cycle = cyclic_dependencies[i];
+
+			for (umm j = 0; j < cycle.count; ++j) {
+				auto &entry = typecheck_entries[cycle[j]];
+				auto &next_entry = typecheck_entries[cycle[(j + 1) % cycle.count]];
+
+				immediate_reporter.info(entry.node->location, "{} depends on {}.", entry.node->location, next_entry.node->location);
+			}
+		}
+	}
+
+	for (auto &report : deferred_reports.use_unprotected()) {
+		report.print();
+	}
 
 	if (failed) {
 		return 1;
