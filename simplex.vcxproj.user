@@ -4,8 +4,8 @@
     <ShowAllFiles>false</ShowAllFiles>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>a.sp -t1</LocalDebuggerCommandArguments>
-    <RemoteDebuggerCommandArguments>a.sp -t1</RemoteDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>a.sp</LocalDebuggerCommandArguments>
+    <RemoteDebuggerCommandArguments>a.sp</RemoteDebuggerCommandArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LocalDebuggerCommandArguments>a.sp</LocalDebuggerCommandArguments>

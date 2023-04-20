@@ -1984,12 +1984,6 @@ enum class YieldResult : u8 {
 	wait,
 };
 
-auto println_(auto ...params) {
-	scoped(stdout_mutex);
-	return tl::println(params...);
-}
-#define println println_
-
 volatile u32 typechecker_uid_counter;
 
 enum class TypecheckEntryStatus : u8 {
@@ -2155,15 +2149,14 @@ private:
 		assert(old.count == now.count);
 
 		for (umm i = 0; i < old.count; ++i) {
-			if (now[i].finished)
-				continue;
+			if (now[i].finished > old[i].finished)
+				return true;
 
-			if (!now[i].waiting || old[i].waiting) {
+			if (now[i].waiting <= old[i].waiting)
 				return true;
-			}
-			if (now[i].progress > old[i].progress) {
+
+			if (now[i].progress > old[i].progress)
 				return true;
-			}
 		}
 
 		return false;
@@ -2194,12 +2187,14 @@ private:
 					sleep_nanoseconds(1000);
 				}
 				if (iteration >= wait_fatal_limit) {
+					debug_break();
 					return false;
 				}
 				++iteration;
 
 				get_total_progress(current_progress);
 				if (!has_progress(old_progress, current_progress)) {
+					debug_break();
 					return false;
 				}
 				Swap(old_progress, current_progress);
@@ -2800,113 +2795,116 @@ s32 tl_main(Span<Span<utf8>> args) {
 	List<Thread *> threads;
 	threads.resize(thread_count);
 
-	for (umm thread_index = 0; thread_index < thread_count; ++thread_index) {
-		threads[thread_index] = create_thread([thread_index, &failed, get_next_entry] { 
+	{
+		timed_block("typecheck");
+		for (umm thread_index = 0; thread_index < thread_count; ++thread_index) {
+			threads[thread_index] = create_thread([thread_index, &failed, get_next_entry] { 
 #if 0
-			auto log = open_file(format("tmp/logs/log{}.txt\0"s, thread_index).data, {.read = true, .write = true});
-			current_printer = {
-				.func = [] (Span<utf8> string, void *state) {
-					auto log = File{state};
-					write(log, as_bytes(string));
-				},
-				.state = log.handle
-			};
+				auto log = open_file(format("tmp/logs/log{}.txt\0"s, thread_index).data, {.read = true, .write = true});
+				current_printer = {
+					.func = [] (Span<utf8> string, void *state) {
+						auto log = File{state};
+						write(log, as_bytes(string));
+					},
+					.state = log.handle
+				};
 #endif
 
-			auto my_fiber = fiber_init(0);
+				auto my_fiber = fiber_init(0);
 
-			while (true) {
-				auto entry = [&]() -> TypecheckEntry * {
-					u32 done_entries_count = 0;
-					while (true) {
-						auto entry = get_next_entry();
+				while (true) {
+					auto entry = [&]() -> TypecheckEntry * {
+						u32 done_entries_count = 0;
+						while (true) {
+							auto entry = get_next_entry();
 
-						scoped(entry->lock);
+							scoped(entry->lock);
 
-						switch (entry->status) {
-							case TypecheckEntryStatus::suspended: {
-								// NOTE: This prevents a single thread running single typechecker all the time and gives opportunity to do this to others.
-								//       I added this because one thread was waiting on an identifier all the time and i guess it was the only one who could
-								//       hold the entry lock.
-								//       I'm not sure if this really solves the 
-								// if (entry->last_thread_index == thread_index) {
-								// 	entry->last_thread_index = -1;
-								// 	done_entries_count = 0;
-								// 	break;
-								// }
-								// entry->last_thread_index = thread_index;
+							switch (entry->status) {
+								case TypecheckEntryStatus::suspended: {
+									// NOTE: This prevents a single thread running single typechecker all the time and gives opportunity to do this to others.
+									//       I added this because one thread was waiting on an identifier all the time and i guess it was the only one who could
+									//       hold the entry lock.
+									//       I'm not sure if this really solves the 
+									// if (entry->last_thread_index == thread_index) {
+									// 	entry->last_thread_index = -1;
+									// 	done_entries_count = 0;
+									// 	break;
+									// }
+									// entry->last_thread_index = thread_index;
 
-								entry->status = TypecheckEntryStatus::in_progress;
-								if (!entry->typechecker) {
-									entry->typechecker = Typechecker::create(entry->node);
+									entry->status = TypecheckEntryStatus::in_progress;
+									if (!entry->typechecker) {
+										entry->typechecker = Typechecker::create(entry->node);
+									}
+
+									// println("{} took {} {}", thread_index, entry->typechecker->uid, entry->node->location);
+									return entry;
 								}
-
-								// println("{} took {} {}", thread_index, entry->typechecker->uid, entry->node->location);
-								return entry;
-							}
-							case TypecheckEntryStatus::in_progress: {
-								done_entries_count = 0;
-								break;
-							}
-							case TypecheckEntryStatus::succeeded:
-							case TypecheckEntryStatus::failed: {
-								++done_entries_count;
-								if (done_entries_count == typecheck_entries.count)
-									return 0;
-								break;
+								case TypecheckEntryStatus::in_progress: {
+									done_entries_count = 0;
+									break;
+								}
+								case TypecheckEntryStatus::succeeded:
+								case TypecheckEntryStatus::failed: {
+									++done_entries_count;
+									if (done_entries_count == typecheck_entries.count)
+										return 0;
+									break;
+								}
 							}
 						}
+					}();
+
+					if (!entry) {
+						// println("{} exit", thread_index);
+						return;
 					}
-				}();
 
-				if (!entry) {
-					// println("{} exit", thread_index);
-					return;
-				}
-
-				auto result = entry->typechecker->continue_typechecking(my_fiber, thread_index, entry);
-
-				if (result == YieldResult::wait) {
-					// println("{} wait {} {}", thread_index, entry->typechecker->uid, entry->node->location);
-				} else {
-					// println("{} done {} {} {}", thread_index, entry->typechecker->uid, entry->node->location, result == YieldResult::fail ? "fail" : "success");
-				}
-
-				{
-					scoped(entry->lock);
-					entry->typechecker->stop();
+					auto result = entry->typechecker->continue_typechecking(my_fiber, thread_index, entry);
 
 					if (result == YieldResult::wait) {
-						entry->status = TypecheckEntryStatus::suspended;
-
-						// NOTE: put waiting entry to the back of the list to give priority to others.
-						//auto found = find(typecheck_entries, entry);
-						//assert(found);
-						//while (found < typecheck_entries.end() && found[1]->status != TypecheckEntryStatus::suspended) {
-						//	Swap(found[0], found[1]);
-						//}
+						// println("{} wait {} {}", thread_index, entry->typechecker->uid, entry->node->location);
 					} else {
-						entry->typechecker->retire();
+						// println("{} done {} {} {}", thread_index, entry->typechecker->uid, entry->node->location, result == YieldResult::fail ? "fail" : "success");
+					}
 
-						if (result == YieldResult::fail) {
-							entry->status = TypecheckEntryStatus::failed;
-							failed = true;
+					{
+						scoped(entry->lock);
+						entry->typechecker->stop();
 
-							scoped(entry->dependants_lock);
-							for (auto dependant : entry->dependants) {
-								dependant->dependency_failed = true;
-							}
+						if (result == YieldResult::wait) {
+							entry->status = TypecheckEntryStatus::suspended;
+
+							// NOTE: put waiting entry to the back of the list to give priority to others.
+							//auto found = find(typecheck_entries, entry);
+							//assert(found);
+							//while (found < typecheck_entries.end() && found[1]->status != TypecheckEntryStatus::suspended) {
+							//	Swap(found[0], found[1]);
+							//}
 						} else {
-							entry->status = TypecheckEntryStatus::succeeded;
+							entry->typechecker->retire();
+
+							if (result == YieldResult::fail) {
+								entry->status = TypecheckEntryStatus::failed;
+								failed = true;
+
+								scoped(entry->dependants_lock);
+								for (auto dependant : entry->dependants) {
+									dependant->dependency_failed = true;
+								}
+							} else {
+								entry->status = TypecheckEntryStatus::succeeded;
+							}
 						}
 					}
 				}
-			}
-		});
-	}
+			});
+		}
 	
-	for (umm thread_index = 0; thread_index < thread_count; ++thread_index) {
-		join(threads[thread_index]);
+		for (umm thread_index = 0; thread_index < thread_count; ++thread_index) {
+			join(threads[thread_index]);
+		}
 	}
 
 	for (auto &entry : typecheck_entries) {
