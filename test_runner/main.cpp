@@ -5,6 +5,7 @@
 #include <tl/thread.h>
 #include <tl/cpu.h>
 #include <conio.h>
+#include <algorithm>
 
 using namespace tl;
 
@@ -82,7 +83,7 @@ s32 tl_main(Span<String> arguments) {
 	auto executable_path = get_executable_path();
 	auto executable_directory = parse_path(executable_path).directory;
 
-	auto test_directory = format(u8"{}\\..\\tests\\", executable_directory);
+	auto test_directory = format(u8"{}\\..\\tests", executable_directory);
 
 	// Don't show error box if test crashes
 	SetErrorMode(SEM_NOGPFAULTERRORBOX);
@@ -97,10 +98,27 @@ s32 tl_main(Span<String> arguments) {
 	}
 
 	if (all) {
-		for (auto item : get_items_in_directory(test_directory)) {
-			if (item.kind == FileItem_file && ends_with(item.name, u8".sp"s))
-				test_filenames.add(item.name);
-		}
+		auto add_tests_from_directory = [&] (this auto &&self, String directory, String dirname = {}) -> void {
+			for (auto item : get_items_in_directory(directory)) {
+				if (item.kind == FileItem_file) {
+					if (ends_with(item.name, u8".sp"s)) {
+						if (dirname.count) {
+							test_filenames.add(format(u8"{}\\{}"s, dirname, item.name));
+						} else {
+							test_filenames.add(item.name);
+						}
+					}
+				} else if (item.kind == FileItem_directory) {
+					if (dirname.count) {
+						self(format(u8"{}\\{}"s, directory, item.name), format(u8"{}\\{}"s, dirname, item.name));
+					} else {
+						self(format(u8"{}\\{}"s, directory, item.name), item.name);
+					}
+				}
+			}
+		};
+
+		add_tests_from_directory(test_directory);
 	}
 
 	u32 n_failed = 0;
@@ -108,6 +126,7 @@ s32 tl_main(Span<String> arguments) {
 
 	ThreadPool pool;
 	init_thread_pool(pool, get_cpu_info().logical_processor_count - 1);
+	defer { deinit_thread_pool(&pool); };
 
 	auto queue = make_work_queue(pool);
 
@@ -119,7 +138,7 @@ s32 tl_main(Span<String> arguments) {
 				atomic_add(&n_succeeded, !fail);
 			};
 
-			auto test_path = format("{}{}", test_directory, test_filename);
+			auto test_path = format("{}\\{}", test_directory, test_filename);
 
 			with(stdout_lock, print("{}\n", test_filename));
 
@@ -151,7 +170,7 @@ s32 tl_main(Span<String> arguments) {
 			String expected_program_output = find_param(u8"// PROGRAM OUTPUT "s);
 			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
 
-			auto actual_compiler = run_process(format(u8"simplex {}"s, test_path));
+			auto actual_compiler = run_process(format(u8"simplex \"{}\""s, test_path));
 
 			if (actual_compiler.timed_out) {
 				do_fail([&] {

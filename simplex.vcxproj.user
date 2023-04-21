@@ -8,7 +8,7 @@
     <RemoteDebuggerCommandArguments>a.sp</RemoteDebuggerCommandArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LocalDebuggerCommandArguments>a.sp</LocalDebuggerCommandArguments>
-    <RemoteDebuggerCommandArguments>a.sp</RemoteDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>"tests\cyclic dependency.sp"</LocalDebuggerCommandArguments>
+    <RemoteDebuggerCommandArguments>"tests\cyclic dependency.sp"</RemoteDebuggerCommandArguments>
   </PropertyGroup>
 </Project>

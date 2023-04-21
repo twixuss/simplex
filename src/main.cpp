@@ -1,10 +1,20 @@
 // TODO: track current node for assertion messages.
 
-void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function);
-template <class ...Args>
-void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, char const *format, Args ...args);
+namespace tl {
+template <class, class>
+struct Span;
+}
+using String = tl::Span<char8_t, unsigned long long>;
 
-#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure_impl(cause_string, expression, __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__), debug_break())
+void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function);
+template <class ...Args>
+void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, char const *format, Args ...args);
+
+void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location);
+template <class ...Args>
+void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, char const *format, Args ...args);
+
+#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__), debug_break())
 
 #define TL_DEBUG BUILD_DEBUG
 #define TL_IMPL
@@ -35,8 +45,6 @@ constexpr u64 read_u64(utf8 *data) {
 		return *(u64 *)data;
 	}
 }
-
-using String = Span<utf8>;
 
 inline bool operator==(String a, char const *b) {
 	return a == as_utf8(as_span(b));
@@ -141,12 +149,6 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	x('0') x('1') x('2') x('3') x('4') \
 	x('5') x('6') x('7') x('8') x('9') \
 
-#define ENUMERATE_CHARS_SYMBOL(x) \
-	x("(") x(")") x("[") x("]") x("{") x("}") x("<") x(">") \
-	x("`") x("~") x("!") x("@") x("$") x("%") x("^") x("&") \
-	x("*") x("-") x("=") x("+") x("\\") x("|") x(";") x(":") \
-	x(",") x(".") x("?") x("\n") \
-
 #define ENUMERATE_SINGLE_CHAR_TOKENS(x) \
 	x("(") x(")") x("[") x("]") x("{") x("}") x("<") x(">") \
 	x("`") x("~") x("!") x("@") x("#") x("$") x("%") x("^") \
@@ -171,12 +173,14 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	x("||") \
 	x("<<") \
 	x(">>") \
+	x("..") \
 
 #define ENUMERATE_TRIPLE_CHAR_TOKENS(x) \
 	x("<<=") \
 	x(">>=") \
 
-#define ENUMERATE_BUILTIN_TYPES(x) \
+
+#define ENUMERATE_CONCRETE_BUILTIN_TYPES(x) \
 	x(Type, 0x80) \
 	x(U8,   0x81) \
 	x(U16,  0x82) \
@@ -189,8 +193,15 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	x(Bool, 0x89) \
 	x(None, 0x8a) \
 
+#define ENUMERATE_ABSTRACT_BUILTIN_TYPES(x) \
+	x(UnsizedInteger, 0x8b) \
+
+#define ENUMERATE_BUILTIN_TYPES(x) \
+	ENUMERATE_CONCRETE_BUILTIN_TYPES(x) \
+	ENUMERATE_ABSTRACT_BUILTIN_TYPES(x) \
+
 #define ENUMERATE_KEYWORDS(x) \
-	ENUMERATE_BUILTIN_TYPES(x) \
+	ENUMERATE_CONCRETE_BUILTIN_TYPES(x) \
 	x(const,    0x90) \
 	x(let,      0x91) \
 	x(var,      0x92) \
@@ -205,30 +216,31 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	x(continue, 0x9b) \
 
 // #define x(name, token, precedence)
-// Sorry, I want these names to be short ;)
 #define ENUMERATE_BINARY_OPERATIONS(x) \
-	x(mul, "*" , 6) \
-	x(div, "/" , 6) \
-	x(mod, "%" , 6) \
+	x(mul, "*" , 7) \
+	x(div, "/" , 7) \
+	x(mod, "%" , 7) \
 	\
-	x(add, "+" , 5) \
-	x(sub, "-" , 5) \
+	x(add, "+" , 6) \
+	x(sub, "-" , 6) \
 	\
-	x(bor, "|" , 4) \
-	x(ban, "&" , 4) \
-	x(bxo, "^" , 4) \
-	x(bsl, "<<", 4) \
-	x(bsr, ">>", 4) \
+	x(bor, "|" , 5) \
+	x(ban, "&" , 5) \
+	x(bxo, "^" , 5) \
+	x(bsl, "<<", 5) \
+	x(bsr, ">>", 5) \
 	\
-	x(equ, "==", 3) \
-	x(neq, "!=", 3) \
-	x(les, "<" , 3) \
-	x(leq, "<=", 3) \
-	x(grt, ">" , 3) \
-	x(grq, ">=", 3) \
+	x(equ, "==", 4) \
+	x(neq, "!=", 4) \
+	x(les, "<" , 4) \
+	x(leq, "<=", 4) \
+	x(grt, ">" , 4) \
+	x(grq, ">=", 4) \
 	\
-	x(lan, "||", 2) \
-	x(lor, "&&", 2) \
+	x(lan, "||", 3) \
+	x(lor, "&&", 3) \
+	\
+	x(ran, "..", 2) \
 	\
 	x(ass, "=" , 1) \
 	\
@@ -245,11 +257,11 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 
 #define ENUMERATE_TOKEN_KIND(x) \
 	ENUMERATE_KEYWORDS(x) \
-	x(end_of_file, 0) \
-	x(end_of_line, '\n') \
-	x(name,        'a') \
-	x(number,      '0') \
-	x(directive,   '#') \
+	x(eof,       0   ) \
+	x(eol,       '\n') \
+	x(name,      'a' ) \
+	x(number,    '0' ) \
+	x(directive, '#' ) \
 
 #define ENUMERATE_EXPRESSION_KIND(x) \
 	x(Block) \
@@ -286,6 +298,15 @@ consteval u8 const_string_to_token_kind(Span<char> token) {
 
 	*(int *)0 = 0; /*invalid token*/;
 }
+consteval u8 const_string_to_token_kind(char a, char b) {
+	char buffer[] { a, b };
+	return const_string_to_token_kind(array_as_span(buffer));
+}
+consteval u8 const_string_to_token_kind(char a, char b, char c) {
+	char buffer[] { a, b, c };
+	return const_string_to_token_kind(array_as_span(buffer));
+}
+
 
 enum TokenKind : u8 {
 #define x(name, value) Token_##name = value,
@@ -295,8 +316,8 @@ enum TokenKind : u8 {
 
 inline umm append(StringBuilder &builder, TokenKind kind) {
 	switch (kind) {
-		case Token_end_of_file: return append(builder, "end of file");
-		case Token_end_of_line: return append(builder, "end of line");
+		case Token_eof: return append(builder, "end of file");
+		case Token_eol: return append(builder, "end of line");
 	}
 
 	if (0x21 <= kind && kind <= 0x7e)
@@ -318,8 +339,8 @@ struct Token {
 
 inline umm append(StringBuilder &builder, Token token) {
 	switch (token.kind) {
-		case Token_end_of_file: return append(builder, "end of file");
-		case Token_end_of_line: return append(builder, "end of line");
+		case Token_eof: return append(builder, "end of file");
+		case Token_eol: return append(builder, "end of line");
 	}
 
 	return append(builder, token.string);
@@ -491,7 +512,7 @@ struct Report {
 			println("{}:{}:{}: ", source_location.file, source_location.line, source_location.column);
 			print_report_kind(kind);
 			println(": {}",  message);
-			::print("{}| ", Format(source_location.line, align_right(4, ' ')));
+			::print(" {} | ", source_location.line);
 			print_replacing_tabs_with_spaces(String(source_location.line_string.begin(), location.begin()));
 			with(get_color(kind), print_replacing_tabs_with_spaces(location));
 			print_replacing_tabs_with_spaces(String(location.end(), source_location.line_string.end()));
@@ -547,16 +568,25 @@ struct ImmediateReporter : ReporterBase {
 
 thread_local String debug_current_location;
 
-void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function) {
+void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, Span<char> message) {
+	if (!location.data)
+		location = debug_current_location;
 	immediate_reporter.error(debug_current_location, "COMPILER ERROR: {} {} at {}:{} in function {}", cause_string, expression, file, line, function);
-}
-void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, Span<char> message) {
-	assertion_failure_impl(cause_string, expression, file, line, function);
 	println("Message: {}", message);
 }
+
+void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function) {
+	assertion_failure_impl(cause_string, expression, file, line, function, {}, {});
+}
+
 template <class ...Args>
-void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, char const *format, Args ...args) {
-	assertion_failure_impl(cause_string, expression, file, line, function, tformat(format, args...));
+void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, char const *format, Args ...args) {
+	assertion_failure_impl(cause_string, expression, file, line, function, location, tformat(format, args...));
+}
+
+template <class ...Args>
+void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, char const *format, Args ...args) {
+	assertion_failure_impl(cause_string, expression, file, line, function, {}, tformat(format, args...));
 }
 
 Optional<List<Token>> source_to_tokens(String source, String path) {
@@ -564,74 +594,169 @@ Optional<List<Token>> source_to_tokens(String source, String path) {
 
 	List<Token> tokens;
 
-	utf8 *cursor = 0;
-	utf8 *next_cursor = source.begin();
-	utf32 code_point = 0;
+	utf8 *cursor = source.data;
 
 	auto print_invalid_character_error = [&] {
 		immediate_reporter.error({cursor, 1}, "Invalid uft8 character.");
 	};
 
-#define next_char()                                                                 \
-	do {                                                                            \
-		cursor = next_cursor;                                                       \
-		Optional<utf32> maybe_code_point = get_char_and_advance_utf8(&next_cursor); \
-		if (!maybe_code_point) {                                                    \
-			print_invalid_character_error();                                        \
-			return {};                                                              \
-		}                                                                           \
-		code_point = maybe_code_point.value();                                      \
-	} while (0)
-
-	auto go_back = [&](u32 bytes) {
-		cursor -= bytes;
-		next_cursor -= bytes;
-	};
-
-	next_char();
-
 	while (true) {
 
 		while (true) {
-			if (code_point == ' ' || code_point == '\t' || code_point == '\r')
-				next_char();
+			if (*cursor == ' ' || *cursor == '\t' || *cursor == '\r')
+				++cursor;
 			else
 				break;
 		}
 
-		if (code_point == '\0')
+		if (*cursor == '\0')
 			break;
 
 		Token token;
 		token.string.data = cursor;
 
-		switch (code_point) {
-			case '/': {
-				token.kind = (TokenKind)code_point;
-				next_char();
-				token.string.set_end(cursor);
+		// a &
+		// b =
+		// &
+		// &=
+#define CASE_SINGLE_OR_DOUBLE(a, b)                                   \
+	case a: {                                                         \
+		++cursor;                                                     \
+		if (*cursor == b) {                                           \
+			++cursor;                                                 \
+			token.kind = (TokenKind)const_string_to_token_kind(a, b); \
+			token.string.count = 2;                                   \
+		} else {                                                      \
+			token.kind = (TokenKind)a;                                \
+			token.string.count = 1;                                   \
+		}                                                             \
+		tokens.add(token);                                            \
+		break;                                                        \
+	}
 
-				if (code_point == '/') {
-					while (code_point != '\n') {
-						next_char();
+		// a &
+		// b =
+		// &
+		// &&
+		// &=
+#define CASE_SINGLE_OR_TWO_DOUBLES(a, b)                                  \
+	case a: {                                                             \
+		++cursor;                                                         \
+		switch (*cursor) {                                                \
+			case a:                                                       \
+				++cursor;                                                 \
+				token.kind = (TokenKind)const_string_to_token_kind(a, a); \
+				token.string.count = 2;                                   \
+				break;                                                    \
+			case b:                                                       \
+				++cursor;                                                 \
+				token.kind = (TokenKind)const_string_to_token_kind(a, b); \
+				token.string.count = 2;                                   \
+				break;                                                    \
+			default: {                                                    \
+				token.kind = (TokenKind)a;                                \
+				token.string.count = 1;                                   \
+				break;	                                                  \
+			}                                                             \
+		}                                                                 \
+		tokens.add(token);                                                \
+		break;                                                            \
+	}
+		// a <
+		// b =
+		// <
+		// <=
+		// <<
+		// <<=
+#define CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE(a, b)                               \
+	case a: {																	 \
+		++cursor; 																 \
+		switch (*cursor) {														 \
+			case b:																 \
+				token.kind = (TokenKind)const_string_to_token_kind(a, b); 		 \
+				++cursor;														 \
+				token.string.count = 2; 										 \
+				break; 															 \
+			case a: {															 \
+				++cursor;														 \
+				if (*cursor == b) {												 \
+					++cursor;													 \
+					token.kind = (TokenKind)const_string_to_token_kind(a, a, b); \
+					token.string.count = 3;										 \
+				} else {														 \
+					token.kind = (TokenKind)const_string_to_token_kind(a, a); 	 \
+					token.string.count = 2; 									 \
+				}																 \
+				break;															 \
+			}																	 \
+			default: {															 \
+				token.kind = (TokenKind)a; 										 \
+				token.string.count = 1;											 \
+				break;															 \
+			}																	 \
+		}																		 \
+		tokens.add(token); 														 \
+		break;																	 \
+	}
+		switch (*cursor) {
+			case '(': case ')':
+			case '[': case ']':
+			case '{': case '}':
+			case '`': case '~':
+			case '!': case '@':
+			case '$': case ';':
+			case ':': case ',':
+			case '?':
+			case '\\': case '\n': {
+				token.kind = (TokenKind)*cursor;
+				token.string.count = 1;
+				tokens.add(token);
+				++cursor;
+				break;
+			}
+			CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE('>', '=')
+			CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE('<', '=')
+			CASE_SINGLE_OR_DOUBLE('.', '.');
+			CASE_SINGLE_OR_DOUBLE('=', '=');
+			CASE_SINGLE_OR_DOUBLE('+', '=');
+			CASE_SINGLE_OR_DOUBLE('-', '=');
+			CASE_SINGLE_OR_DOUBLE('*', '=');
+			CASE_SINGLE_OR_DOUBLE('%', '=');
+			CASE_SINGLE_OR_DOUBLE('^', '=');
+			CASE_SINGLE_OR_TWO_DOUBLES('&', '=');
+			CASE_SINGLE_OR_TWO_DOUBLES('|', '=');
+			case '/': {
+				token.kind = (TokenKind)*cursor;
+				++cursor;
+				if (*cursor == '/') {
+					while (*cursor != '\n') {
+						++cursor;
 					}
-					next_char();
+				} else if (*cursor == '*') {
+					while (true) {
+						if (String(cursor, 2) == "*/") {
+							cursor += 2;
+							break;
+						}
+						++cursor;
+					}
 				} else {
-					go_back(1);
-					goto default_case;
+					token.kind = (TokenKind)'/';
+					token.string.count = 1;
+					tokens.add(token);
 				}
 				break;
 			}
 			case '#': {
 				token.kind = Token_directive;
 
-				next_char();
+				++cursor;
 				while (true) {
-					switch (code_point) {
+					switch (*cursor) {
 						ENUMERATE_CHARS_ALPHA(PASTE_CASE)
 						ENUMERATE_CHARS_DIGIT(PASTE_CASE)
 						case '_': {
-							next_char();
+							++cursor;
 							break;
 						}
 						default:
@@ -645,95 +770,51 @@ Optional<List<Token>> source_to_tokens(String source, String path) {
 				break;
 			}
 
-			ENUMERATE_CHARS_ALPHA(PASTE_CASE)
-			case '_': {
-				token.kind = Token_name;
-
-				next_char();
-				while (true) {
-					switch (code_point) {
-						ENUMERATE_CHARS_ALPHA(PASTE_CASE)
-						ENUMERATE_CHARS_DIGIT(PASTE_CASE)
-						case '_': {
-							next_char();
-							break;
-						}
-						default:
-							goto name_loop_end;
-					}
-				}
-			name_loop_end:;
-				
-				token.string.set_end(cursor);
-
-				if (auto keyword = keywords.find(token.string))
-					token.kind = keyword->value;
-				
-				tokens.add(token);
-				break;
-			}
-
 			ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
 				token.kind = Token_number;
 
 				while (true) {
-					switch (code_point) {
+					switch (*cursor) {
 						ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
-							next_char();
+							++cursor;
 							break;
 						}
-					default:
-						goto number_loop_end;
+						default:
+							goto number_loop_end;
 					}
 				}
 			number_loop_end:;
-				
+
 				token.string.set_end(cursor);
 				tokens.add(token);
 				break;
 			}
 			default: {
-			default_case:;
+				token.kind = Token_name;
 
-				next_char();
 				while (true) {
-					switch (code_point) {
-						ENUMERATE_CHARS_SYMBOL(PASTE_CASE_0) {
-							next_char();
-							break;
-						}
-						default:
-							goto symbol_loop_end;
+					if ((0x00 <= *cursor && *cursor <= 0x2f) ||
+						(0x3a <= *cursor && *cursor <= 0x40) ||
+						(0x5b <= *cursor && *cursor <= 0x5e) ||
+						(0x7c <= *cursor && *cursor <= 0x7f) ||
+						(*cursor == 0x60)
+					) {
+						goto name_loop_end;
 					}
+					
+					++cursor;
 				}
-			symbol_loop_end:;
+			name_loop_end:;
 
-				auto remaining_symbols = token.string;
-				remaining_symbols.set_end(cursor);
-
-				while (remaining_symbols.count) {
-					for (umm i = count_of(multichar_tokens) - 1; i != -1; --i) {
-						auto possible_tokens = multichar_tokens[i];
-						auto token_char_count = i + 1;
-
-						auto x = String { remaining_symbols.data, token_char_count };
-						if (auto found = possible_tokens.find(x)) {
-							token.kind = found->value;
-							token.string = { remaining_symbols.data, token_char_count };
-							tokens.add(token);
-
-							remaining_symbols.set_begin(remaining_symbols.begin() + token_char_count);
-						
-							goto continue_remaining_symbols;
-						}
-					}
-
-					immediate_reporter.error({remaining_symbols.data, 1}, "Could not parse token.");
-					return {};
-
-				continue_remaining_symbols:;
+				token.string.set_end(cursor);
+				if (token.string.count == 0) {
+					immediate_reporter.error({token.string.data, 1}, "Invalid character ({}).", (u32)*cursor);
 				}
 
+				if (auto keyword = keywords.find(token.string))
+					token.kind = keyword->value;
+
+				tokens.add(token);
 				break;
 			}
 		} 
@@ -869,11 +950,10 @@ struct NodeBase {
 	}
 };
 
-// NOTE: pointer to variable can't be converted to pointer to readonly.
 enum class Mutability : u8 {
-	constant,
-	readonly,
-	variable,
+	constant, // known at compile time. can be casted to readonly
+	readonly, // can not be modified by anyone.
+	variable, // can     be modified by anyone.
 };
 
 #define DEFINE_EXPRESSION(name) struct name : Expression, NodeBase<name>
@@ -885,6 +965,16 @@ enum class BuiltinTypeKind : u8 {
 #undef x
 	count,
 };
+
+umm append(StringBuilder &builder, BuiltinTypeKind type_kind) {
+	switch (type_kind) {
+#define x(name, value) case BuiltinTypeKind::name: return append(builder, #name);
+		ENUMERATE_BUILTIN_TYPES(x)
+#undef x
+	}
+	return append_format(builder, "(unknown BuiltinTypeKind {})", (u32)type_kind);
+}
+
 
 DEFINE_EXPRESSION(Block) {
 	Block *parent = 0;
@@ -925,6 +1015,8 @@ DEFINE_EXPRESSION(Lambda) {
 	Definition *definition = 0;
 	Expression *body = 0;
 	LambdaHead head;
+
+	List<Return *> returns;
 };
 DEFINE_EXPRESSION(Name) {
 	String name;
@@ -962,6 +1054,8 @@ void Block::add(Node *child) {
 }
 
 BuiltinType *builtin_types[(u32)BuiltinTypeKind::count];
+
+// NOTE: Do not use this for types in the source code. These do not have a location.
 BuiltinType *&get_builtin_type(BuiltinTypeKind kind) {
 	return builtin_types[(u32)kind];
 }
@@ -1011,11 +1105,103 @@ bool types_match(Expression *a, Expression *b) {
 
 	if (auto ab = as<BuiltinType>(a)) {
 		if (auto bb = as<BuiltinType>(b)) {
-			return ab->kind == bb->kind;
+			return ab->type_kind == bb->type_kind;
 		}
 	}
 
 	return false;
+}
+
+bool types_match(Expression *a, BuiltinTypeKind b) {
+	a = direct(a);
+
+	if (auto ab = as<BuiltinType>(a)) {
+		return ab->type_kind == b;
+	}
+
+	return false;
+}
+bool types_match(BuiltinTypeKind a, Expression *b) {
+	return types_match(b, a);
+}
+
+bool is_integer(Expression *type) {
+	type = direct(type);
+	if (auto builtin_type = as<BuiltinType>(type)) {
+		switch (builtin_type->type_kind) {
+			case BuiltinTypeKind::U8:
+			case BuiltinTypeKind::U16:
+			case BuiltinTypeKind::U32:
+			case BuiltinTypeKind::U64:
+			case BuiltinTypeKind::S8:
+			case BuiltinTypeKind::S16:
+			case BuiltinTypeKind::S32:
+			case BuiltinTypeKind::S64:
+				return true;
+		}
+	}
+
+	return false;
+}
+
+bool is_concrete(Expression *type) {
+	type = direct(type);
+	if (auto builtin_type = as<BuiltinType>(type)) {
+		switch (builtin_type->type_kind) {
+			case BuiltinTypeKind::UnsizedInteger:
+				return false;
+		}
+	}
+
+	return true;
+}
+
+void make_concrete(Expression *expression) {
+	auto type = direct(expression->type);
+
+	if (auto builtin_type = as<BuiltinType>(type)) {
+		switch (builtin_type->type_kind) {
+			case BuiltinTypeKind::UnsizedInteger: {
+				expression->type = get_builtin_type(BuiltinTypeKind::S64);
+				return;
+			}
+		}
+	}
+}
+
+u64 get_size(BuiltinTypeKind type_kind) {
+	switch (type_kind) {
+		case BuiltinTypeKind::U8:  return 1;
+		case BuiltinTypeKind::U16: return 2;
+		case BuiltinTypeKind::U32: return 4;
+		case BuiltinTypeKind::U64: return 8;
+		case BuiltinTypeKind::S8:  return 1;
+		case BuiltinTypeKind::S16: return 2;
+		case BuiltinTypeKind::S32: return 4;
+		case BuiltinTypeKind::S64: return 8;
+		default: invalid_code_path("Invalid BuiltinTypeKind {}", type_kind);
+	}
+}
+
+enum class Sign : u8 {
+	Unsigned,
+	Signed
+};
+ 
+Sign get_sign(BuiltinTypeKind type_kind) {
+	switch (type_kind) {
+		case BuiltinTypeKind::U8: 
+		case BuiltinTypeKind::U16:
+		case BuiltinTypeKind::U32:
+		case BuiltinTypeKind::U64: 
+			return Sign::Unsigned;
+		case BuiltinTypeKind::S8:  
+		case BuiltinTypeKind::S16: 
+		case BuiltinTypeKind::S32: 
+		case BuiltinTypeKind::S64: 
+			return Sign::Signed;
+		default: invalid_code_path("Invalid BuiltinTypeKind {}", type_kind);
+	}
 }
 
 void print_ast(Node *node);
@@ -1054,8 +1240,20 @@ void print_ast_impl(Definition *definition) {
 	print(" {} = ", definition->name);
 	print_ast(definition->initial_value);
 }
-void print_ast_impl(IntegerLiteral *literal) { print(literal->value); }
-void print_ast_impl(BooleanLiteral *literal) { print(literal->value); }
+void print_ast_impl(IntegerLiteral *literal) {
+	print('(');
+	print(literal->value);
+	print(" as ");
+	print_ast(literal->type);
+	print(')');
+}
+void print_ast_impl(BooleanLiteral *literal) {
+	print('(');
+	print(literal->value);
+	print(" as ");
+	print_ast(literal->type);
+	print(')');
+}
 void print_ast_impl(LambdaHead *head) {
 	print("(");
 
@@ -1177,7 +1375,63 @@ struct Parser {
 	Expression *current_container = 0;
 	Reporter reporter;
 
+	// Parses parse_expression_1 with binary operators and definitions.
 	Expression *parse_expression(bool whitespace_is_skippable_before_binary_operator = false, int right_precedence = 0) {
+		switch (token->kind) {
+			case Token_var:
+			case Token_let:
+			case Token_const: {
+				auto definition = Definition::create();
+				definition->mutability = [&] {
+					switch (token->kind) {
+						case Token_const: return Mutability::constant;
+						case Token_let:   return Mutability::readonly;
+						case Token_var:   return Mutability::variable;
+						default: invalid_code_path();
+					}
+				}();
+
+				next();
+				skip_lines();
+
+				if (!expect(Token_name))
+					return 0;
+
+				definition->name = token->string;
+				definition->location = token->string;
+
+				next();
+				skip_lines();
+
+				if (token->kind == ':') {
+					next();
+					skip_lines();
+
+					definition->parsed_type = parse_expression_1(); // NOTE: don't parse '='
+				}
+
+				if (token->kind == '=') {
+					next();
+					skip_lines();
+
+					definition->initial_value = parse_expression();
+					if (!definition->initial_value)
+						return 0;
+
+					if (definition->mutability == Mutability::constant) {
+						if (auto lambda = as<Lambda>(definition->initial_value)) {
+							lambda->definition = definition;
+						}
+					}
+				} else {
+					if (!expect({'\n', Token_eof}))
+						return 0;
+				}
+				return definition;
+			}
+		}
+
+
 		//null denotation
 		auto left = parse_expression_1();
 		if (!left)
@@ -1242,48 +1496,8 @@ struct Parser {
 		}
 		return left;
 	}
+	// Parses parse_expression_0 plus parentheses or brackets after, e.g. calls, subscripts.
 	Expression *parse_expression_1() {
-		switch (token->kind) {
-			case Token_var:
-			case Token_let:
-			case Token_const: {
-				auto definition = Definition::create();
-				definition->mutability = [&] {
-					switch (token->kind) {
-						case Token_const: return Mutability::constant;
-						case Token_let:   return Mutability::readonly;
-						case Token_var:   return Mutability::variable;
-						default: invalid_code_path();
-					}
-				}();
-
-				next();
-				if (!expect(Token_name))
-					return 0;
-
-				definition->name = token->string;
-				definition->location = token->string;
-
-				next();
-				if (!expect('='))
-					return 0;
-
-				next();
-
-				definition->initial_value = parse_expression();
-				if (!definition->initial_value)
-					return 0;
-
-				if (definition->mutability == Mutability::constant) {
-					if (auto lambda = as<Lambda>(definition->initial_value)) {
-						lambda->definition = definition;
-					}
-				}
-
-				return definition;
-			}
-		}
-
 		auto node = parse_expression_0();
 		if (!node)
 			return 0;
@@ -1321,6 +1535,7 @@ struct Parser {
 		}
 		return node;
 	}
+	// Parses single-part experssions
 	Expression *parse_expression_0() {
 		switch (token->kind) {
 			case '(': {
@@ -1348,9 +1563,11 @@ struct Parser {
 						}
 
 						next();
+						skip_lines();
 
 						while (token->kind == ',') {
 							next();
+							skip_lines();
 							if (!expect(Token_name))
 								return 0;
 
@@ -1364,6 +1581,7 @@ struct Parser {
 							return 0;
 
 						next();
+						skip_lines();
 
 						auto parsed_type = parse_expression();
 
@@ -1376,6 +1594,7 @@ struct Parser {
 						skip_lines();
 						if (token->kind == ',') {
 							next();
+							skip_lines();
 							continue;
 						}
 						if (token->kind == ')') {
@@ -1383,8 +1602,8 @@ struct Parser {
 						}
 					}
 				}
+				
 				next();
-
 				skip_lines();
 
 				if (token->kind != ':') {
@@ -1395,8 +1614,9 @@ struct Parser {
 					if (!expect(':'))
 						return 0;
 				}
-				next();
 
+				next();
+				skip_lines();
 
 				if (token->kind == Token_directive && token->string == u8"#intrinsic"s) {
 					next();
@@ -1437,8 +1657,7 @@ struct Parser {
 				next();
 
 				for (auto child : block->children.skip(-1)) {
-					if (!allowed_in_statement_context(child)) {
-						reporter.error(child->location, "{}s are not allowed in statement context.", child->kind);
+					if (!ensure_allowed_in_statement_context(child)) {
 						return 0;
 					}
 				}
@@ -1480,6 +1699,7 @@ struct Parser {
 				auto If = If::create();
 				If->location = token->string;
 				next();
+				skip_lines();
 
 				If->condition = parse_expression();
 				if (!If->condition)
@@ -1495,6 +1715,7 @@ struct Parser {
 				if (!If->true_branch)
 					return 0;
 
+				auto saved = token;
 				skip_lines();
 				if (token->kind == Token_else) {
 					next();
@@ -1503,19 +1724,22 @@ struct Parser {
 					If->false_branch = parse_statement();
 					if (!If->false_branch)
 						return 0;
+				} else {
+					token = saved;
 				}
 
 				return If;
 			}
 
 #define x(name, value) case value:
-			ENUMERATE_BUILTIN_TYPES(x)
+			ENUMERATE_CONCRETE_BUILTIN_TYPES(x)
 #undef x
 			{
-
-				auto type = (BuiltinTypeKind)token->kind;
+				auto type = BuiltinType::create();
+				type->location = token->string;
+				type->type_kind = (BuiltinTypeKind)token->kind;
 				next();
-				return get_builtin_type(type);
+				return type;
 			}
 
 			default: 
@@ -1528,6 +1752,13 @@ struct Parser {
 			case Token_return: {
 				auto return_ = Return::create();
 				return_->location = token->string;
+
+				if (auto lambda = as<Lambda>(current_container)) {
+					lambda->returns.add(return_);
+				} else {
+					reporter.error(return_->location, "Return statement can only appear in a lambda. But current container is {}.", current_container->kind);
+					return 0;
+				}
 
 				next();
 
@@ -1592,7 +1823,8 @@ struct Parser {
 
 		return expression;
 	}
-	bool allowed_in_statement_context(Node *node) {
+
+	bool ensure_allowed_in_statement_context(Node *node) {
 		switch (node->kind) {
 			case NodeKind::Definition:
 			case NodeKind::Block:
@@ -1603,26 +1835,35 @@ struct Parser {
 			case NodeKind::Continue:
 			case NodeKind::Break:
 				return true;
-			case NodeKind::Binary:
-				switch (((Binary *)node)->operation) {
+			case NodeKind::Binary: {
+				auto binary = (Binary *)node;
+				switch (binary->operation) {
 					case BinaryOperation::ass:
+					case BinaryOperation::addass:
+					case BinaryOperation::subass:
+					case BinaryOperation::mulass:
+					case BinaryOperation::divass:
+					case BinaryOperation::modass:
+					case BinaryOperation::borass:
+					case BinaryOperation::banass:
+					case BinaryOperation::bxoass:
+					case BinaryOperation::bslass:
+					case BinaryOperation::bsrass:
 						return true;
 				}
-				break;
+
+				reporter.error(node->location, "{} {} are not allowed in statement context.", node->kind, binary->operation);
+				return false;
+			}
 		}
+
+		reporter.error(node->location, "{}s are not allowed in statement context.", node->kind);
 		return false;
-	}
-	bool ensure_allowed_in_statement_context(Node *node) {
-		if (!allowed_in_statement_context(node)) {
-			reporter.error(node->location, "{}s are not allowed in statement context.", node->kind);
-			return false;
-		}
-		return true;
 	}
 	bool next() {
 		++token;
 		debug_current_location = token->string;
-		return token->kind != Token_end_of_file;
+		return token->kind != Token_eof;
 	}
 	bool expect(std::underlying_type_t<TokenKind> expected_kind) {
 		if (token->kind != expected_kind) {
@@ -1668,7 +1909,7 @@ Optional<List<Node *>> tokens_to_nodes(Span<Token> tokens) {
 	while (true) {
 		auto saved = parser.token;
 		parser.skip_lines();
-		if (parser.token->kind == Token_end_of_file) {
+		if (parser.token->kind == Token_eof) {
 			break;
 		}
 
@@ -1686,22 +1927,39 @@ Optional<List<Node *>> tokens_to_nodes(Span<Token> tokens) {
 	return nodes;
 }
 
+//#define x(name)
+#define ENUMERATE_EXECUTION_VALUE_KIND \
+	x(none) \
+	x(integer) \
+	x(boolean) \
+	x(lambda) \
+	x(type) \
+	x(break_) \
+	x(continue_) \
+	x(return_) \
+
 struct ExecutionContext {
 	enum class ValueKind : u8 {
-		nothing,
-		integer,
-		boolean,
-		lambda,
-		break_,
-		continue_,
-		return_,
+#define x(name) name,
+		ENUMERATE_EXECUTION_VALUE_KIND
+#undef x
 	};
+
+	friend umm append(StringBuilder &builder, ValueKind kind) {
+		switch (kind) {
+#define x(name) case ValueKind::name: return append(builder, #name);
+			ENUMERATE_EXECUTION_VALUE_KIND
+#undef x
+		}
+		return append_format(builder, "(unknown ExecutionContext::ValueKind {})", (u32)kind);
+	}
 
 	struct Value {
 		ValueKind kind = {};
 		u64 integer = 0;
 		bool boolean = false;
 		Lambda *lambda = 0;
+		Expression *type = 0;
 	};
 
 	struct Scope {
@@ -1768,7 +2026,9 @@ struct ExecutionContext {
 	Value execute_impl(Lambda *lambda) {
 		return {.kind = ValueKind::lambda, .lambda = lambda}; 
 	}
-	Value execute_impl(LambdaHead *head) { not_implemented(); }
+	Value execute_impl(LambdaHead *head) {
+		return {.kind = ValueKind::type, .type = head};
+	}
 	Value execute_impl(Name *name) {
 		assert(name->definition);
 		for (auto &scope : reverse_iterate(scope_stack)) {
@@ -1867,7 +2127,9 @@ struct ExecutionContext {
 	}
 	Value execute_impl(Continue *Continue) { return { .kind = ValueKind::continue_ }; }
 	Value execute_impl(Break *Break) { return { .kind = ValueKind::break_ }; }
-	Value execute_impl(BuiltinType *type) { not_implemented(); }
+	Value execute_impl(BuiltinType *type) {
+		return {.kind = ValueKind::type, .type = type};
+	}
 	Value execute_impl(Binary *binary) {
 		if (binary->operation == BinaryOperation::ass) {
 			if (auto name = as<Name>(binary->left)) {
@@ -1918,10 +2180,12 @@ struct ExecutionContext {
 
 umm append(StringBuilder &builder, ExecutionContext::Value value) {
 	switch (value.kind) {
+		case ExecutionContext::ValueKind::none: return 0;
 		case ExecutionContext::ValueKind::integer: return append(builder, value.integer);
 		case ExecutionContext::ValueKind::boolean: return append(builder, value.boolean);
+		case ExecutionContext::ValueKind::type:    return append(builder, value.type);
 	}
-	return 0;
+	return append_format(builder, "(unknown ExecutionContext::Value {})", value.kind);
 }
 
 bool is_constant(Expression *expression);
@@ -2171,9 +2435,8 @@ private:
 
 		scoped_replace(status.waiting, true);
 
-		// TODO: FIXME: Get rid of the limits.
-		const int wait_sleep_limit = 16;
-		const int wait_fatal_limit = INT_MAX;
+		// TODO: FIXME: Get rid of this threshold.
+		const int wait_sleep_threshold = 16;
 
 		int iteration = 0;
 		while (true) {
@@ -2182,13 +2445,9 @@ private:
 					return false;
 				}
 
-				if (iteration >= wait_sleep_limit) {
+				if (iteration >= wait_sleep_threshold) {
 					// HACK: This feels bad, but it doesn't fail as much.
 					sleep_nanoseconds(1000);
-				}
-				if (iteration >= wait_fatal_limit) {
-					debug_break();
-					return false;
 				}
 				++iteration;
 
@@ -2236,6 +2495,96 @@ private:
 			auto success = typecheck(initial_node);
 			yield(success ? YieldResult::success : YieldResult::fail);
 		}
+	}
+
+	bool implicitly_cast(Expression **_expression, Expression *target_type, Reporter *reporter, bool apply) {
+		auto expression = *_expression;
+		defer {
+			*_expression = expression;
+		};
+
+		auto source_type = expression->type;
+		auto direct_source_type = direct(source_type);
+		auto direct_target_type = direct(target_type);
+
+		if (types_match(direct_source_type, direct_target_type)) {
+			return true;
+		}
+
+		switch (expression->kind) {
+			case NodeKind::IntegerLiteral: {
+				if (::is_integer(direct_target_type)) {
+					if (apply) {
+						expression->type = target_type;
+					}
+					return true;
+				}
+				break;
+			}
+		}
+
+		if (auto src_builtin_type = as<BuiltinType>(direct_source_type)) {
+			switch (src_builtin_type->type_kind) {
+				case BuiltinTypeKind::U8:
+				case BuiltinTypeKind::U16:
+				case BuiltinTypeKind::U32:
+				case BuiltinTypeKind::U64:
+				case BuiltinTypeKind::S8:
+				case BuiltinTypeKind::S16:
+				case BuiltinTypeKind::S32:
+				case BuiltinTypeKind::S64: {
+					if (auto dst_builtin_type = as<BuiltinType>(direct_target_type)) {
+						switch (dst_builtin_type->type_kind) {
+							case BuiltinTypeKind::U8:
+							case BuiltinTypeKind::U16:
+							case BuiltinTypeKind::U32:
+							case BuiltinTypeKind::U64:
+							case BuiltinTypeKind::S8:
+							case BuiltinTypeKind::S16:
+							case BuiltinTypeKind::S32:
+							case BuiltinTypeKind::S64: {
+								auto src_size = get_size(src_builtin_type->type_kind);
+								auto dst_size = get_size(dst_builtin_type->type_kind);
+								auto src_sign = get_sign(src_builtin_type->type_kind);
+								auto dst_sign = get_sign(dst_builtin_type->type_kind);
+
+								if (src_sign == dst_sign) {
+									if (src_size <= dst_size) {
+										if (apply)
+											expression->type = target_type;
+										return true;
+									} else {
+										if (reporter)
+											reporter->error(expression->location, "Can't implicitly convert {} to {}, because source is bigger than destination, meaning that there could be information loss.", source_type, target_type);
+										return false;
+									}
+								} else {
+									if (src_size <= dst_size) {
+										if (reporter)
+											reporter->error(expression->location, "Can't implicitly convert {} to {}, because the signs don't match.", source_type, target_type);
+										return false;
+									} else {
+										if (reporter)
+											reporter->error(expression->location, "Can't implicitly convert {} to {}, because source is bigger than destination, meaning that there could be information loss, and the signs don't match.", source_type, target_type);
+										return false;
+									}
+								}
+
+								break;
+							}
+						}
+					}
+					break;
+				}
+			}
+		}
+
+		if (reporter)
+			reporter->error(expression->location, "Expression of type {} is not implicitly convertible to {}.", source_type, target_type);
+		return false;
+	}
+	bool implicitly_cast(Expression **expression, Expression *target_type, bool apply) {
+		return implicitly_cast(expression, target_type, &reporter, apply);
 	}
 
 	bool typecheck(Node *node) {
@@ -2293,7 +2642,9 @@ private:
 				return false;
 
 			if (definition->parsed_type) {
-				reporter.warning(definition->location, "TODO: Make sure parsed_type and initial_value->type match");
+				if (!implicitly_cast(&definition->initial_value, definition->parsed_type, true)) {
+					return false;
+				}
 			}
 
 			switch (definition->mutability) {
@@ -2329,7 +2680,7 @@ private:
 		return true;
 	}
 	bool typecheck_impl(IntegerLiteral *literal) {
-		literal->type = get_builtin_type(BuiltinTypeKind::S64);
+		literal->type = get_builtin_type(BuiltinTypeKind::UnsizedInteger);
 		return true; 
 	}
 	bool typecheck_impl(BooleanLiteral *literal) {
@@ -2368,10 +2719,55 @@ private:
 				return false;
 		}
 
-		if (!lambda->head.return_type) {
+		if (lambda->head.return_type) {
+			for (auto ret : lambda->returns) {
+				if (!implicitly_cast(&ret->value, lambda->head.return_type, true)) {
+					reporter.info(lambda->head.return_type->location, "Return type specified here:");
+					return false;
+				}
+			}
+		} else {
 			if (lambda->body) {
-				reporter.warning(lambda->location, "TODO: proper return type deduction. For now using body type {}.", lambda->body->type);
-				lambda->head.return_type = lambda->body->type;
+				auto body_type = lambda->body->type;
+				if (lambda->returns.count) {
+					List<Expression *> concrete_return_types;
+					List<Return *> empty_returns;
+
+					for (auto ret : lambda->returns) {
+						if (!ret->value) {
+							empty_returns.add(ret);
+						} else if (is_concrete(ret->value->type)) {
+							concrete_return_types.add(ret->value->type);
+						}
+					}
+
+					if (empty_returns.count > lambda->returns.count) {
+						reporter.error(empty_returns[0]->location, "TODO: Using both valued and empty return statement in a single function is not yet implemented.");
+						return false;
+					}
+
+					if (concrete_return_types.count) {
+						lambda->head.return_type = concrete_return_types[0];
+					} else if (empty_returns.count) {
+						lambda->head.return_type = get_builtin_type(BuiltinTypeKind::None);
+					} else {
+						make_concrete(lambda->returns[0]->value);
+						lambda->head.return_type = lambda->returns[0]->value->type;
+					}
+
+					for (auto ret : lambda->returns) {
+						if (ret->value) {
+							if (!types_match(ret->value->type, lambda->head.return_type)) {
+								reporter.error(ret->location, "Type {} does not match previously deduced return type {}.", ret->value->type, lambda->head.return_type);
+								reporter.info(lambda->returns[0]->location, "First deduced here:");
+								return false;
+							}
+						}
+					}
+				} else {
+					make_concrete(lambda->body);
+					lambda->head.return_type = lambda->body->type;
+				}
 			} else {
 				lambda->head.return_type = get_builtin_type(BuiltinTypeKind::None);
 			}
@@ -2524,7 +2920,10 @@ private:
 	}
 	bool typecheck_impl(Continue *Continue) { return true; }
 	bool typecheck_impl(Break *Break) { return true; }
-	bool typecheck_impl(BuiltinType *type) { return true; }
+	bool typecheck_impl(BuiltinType *type) { 
+		type->type = get_builtin_type(BuiltinTypeKind::Type);
+		return true; 
+	}
 	bool typecheck_impl(Binary *binary) {
 		if (!typecheck(binary->left))
 			return false;
@@ -2535,12 +2934,24 @@ private:
 		auto dleft  = direct(binary->left->type);
 		auto dright = direct(binary->right->type);
 
+		if (binary->operation == BinaryOperation::ass) {
+			if (!is_mutable(binary->left)) {
+				reporter.error(binary->left->location, "This expression is read-only.");
+				return false;
+			}
+			if (!implicitly_cast(&binary->right, binary->left->type, true)) {
+				return false;
+			}
+			binary->type = get_builtin_type(BuiltinTypeKind::None);
+			return true;
+		}
+
 		if (auto found = binary_typecheckers.find({ dleft, dright, binary->operation })) {
 			return (this->*found->value)(binary);
 		}
 
 		if (!types_match(binary->left->type, binary->right->type)) {
-			reporter.error(binary->location, "No binary operation defined for types {} and {}.", binary->left->type, binary->right->type);
+			reporter.error(binary->location, "No binary operation {} defined for types {} and {}.", binary->operation, binary->left->type, binary->right->type);
 			return false;
 		}
 
@@ -2558,14 +2969,6 @@ private:
 			case BinaryOperation::grt:
 			case BinaryOperation::grq:
 				binary->type = get_builtin_type(BuiltinTypeKind::Bool);
-				break;
-
-			case BinaryOperation::ass:
-				if (!is_mutable(binary->left)) {
-					reporter.error(binary->left->location, "This expression is read-only.");
-					return false;
-				}
-				binary->type = get_builtin_type(BuiltinTypeKind::None);
 				break;
 
 			default:
@@ -2726,6 +3129,8 @@ void init_builtin_types() {
 }
 
 s32 tl_main(Span<Span<utf8>> args) {
+	SetConsoleOutputCP(CP_UTF8);
+
 	defer {
 		for (auto time : timed_results) {
 			println("{} took {} ms", time.name, time.seconds * 1000);
@@ -2741,7 +3146,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 	auto maybe_arguments = parse_arguments(args);
 	if (!maybe_arguments)
-		return {};
+		return 1;
 	auto arguments = maybe_arguments.value();
 
 	auto source_contents_buffer = read_entire_file(arguments.source_name, {.extra_space_before = 1, .extra_space_after = 1});
@@ -2761,7 +3166,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 	auto global_nodes = tokens_to_nodes(tokens.value());
 	if (!global_nodes)
-		return 0;
+		return 1;
 
 	for (auto node : global_nodes.value())
 		global_block.add(node);
@@ -3021,6 +3426,18 @@ s32 tl_main(Span<Span<utf8>> args) {
 					immediate_reporter.error(definition->location, "main must be a lambda");
 					return 1;
 				}
+
+				if (!types_match(lambda->head.return_type, get_builtin_type(BuiltinTypeKind::None)) &&
+					!::is_integer(lambda->head.return_type)) 
+				{
+					immediate_reporter.error(definition->location, "main must return integer or None, not {}.", lambda->head.return_type);
+					return 1;
+				}
+
+				println(" ==== EXECUTING main ==== ");
+				defer { println(" ==== EXECUTION ENDED ==== "); };
+
+				timed_block("execution");
 
 				auto call = Call::create();
 				call->callable = lambda;
