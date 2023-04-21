@@ -414,9 +414,9 @@ constexpr MulticharTokens multichar_tokens[2] = {
 
 struct SourceLocation {
 	String file;
-	u32 line = 0;
-	u32 column = 0;
-	String line_string;
+	u32 line_number = 0;
+	u32 column_number = 0;
+	List<String> lines;
 };
 
 HashMap<utf8 *, String> content_start_to_file_name;
@@ -425,27 +425,32 @@ SourceLocation get_source_location(String location) {
 	SourceLocation result;
 
 	auto cursor = location.data;
-	result.column = 0;
+	result.column_number = 0;
 	while (*cursor != '\n' && *cursor != '\0') {
-		++result.column;
+		++result.column_number;
 		--cursor;
 	}
 
 	if (location == u8"\n"s) {
-		result.line_string = location;
+		result.lines.add({location});
 	} else {
-		result.line_string.data = cursor + 1;
-		while (*result.line_string.end() != '\n' && *result.line_string.end() != '\0')
-			++result.line_string.count;
+		String combined_lines;
+		combined_lines.data = cursor + 1;
+		combined_lines.set_end(location.end());
+
+		while (*combined_lines.end() != '\n' && *combined_lines.end() != '\0')
+			++combined_lines.count;
+
+		split(combined_lines, u8'\n', [&](String line){ result.lines.add({ line }); });
 	}
 
-	assert(result.line_string.begin() <= location.begin());
-	assert(result.line_string.end() >= location.end());
+	assert(result.lines.front().begin() <= location.begin());
+	assert(result.lines.back().end() >= location.end());
 
-	result.line = 1;
+	result.line_number = 1;
 	while (*cursor != '\0') {
 		if (*cursor == '\n') 
-			++result.line;
+			++result.line_number;
 		--cursor;
 	}
 
@@ -509,14 +514,48 @@ struct Report {
 	void print() {
 		if (location.data) {
 			auto source_location = get_source_location(location);
-			println("{}:{}:{}: ", source_location.file, source_location.line, source_location.column);
+
+			println("{}:{}:{}: ", source_location.file, source_location.line_number, source_location.column_number);
 			print_report_kind(kind);
 			println(": {}",  message);
-			::print(" {} | ", source_location.line);
-			print_replacing_tabs_with_spaces(String(source_location.line_string.begin(), location.begin()));
-			with(get_color(kind), print_replacing_tabs_with_spaces(location));
-			print_replacing_tabs_with_spaces(String(location.end(), source_location.line_string.end()));
-			println();
+
+			auto max_line_number = source_location.line_number + source_location.lines.count - 1;
+			auto line_number_width = log10(max_line_number);
+			auto line_number_alignment = align_right(line_number_width, ' ');
+
+			if (source_location.lines.count == 1) {
+				auto line = source_location.lines[0];
+				auto line_number = source_location.line_number;
+				::print(" {} | ", Format(line_number, line_number_alignment));
+				print_replacing_tabs_with_spaces(String(line.begin(), location.begin()));
+				with(get_color(kind), print_replacing_tabs_with_spaces(location));
+				print_replacing_tabs_with_spaces(String(location.end(), line.end()));
+				println();
+			} else {
+				assert(source_location.lines.count > 1);
+				{
+					auto line = source_location.lines[0];
+					auto line_number = source_location.line_number;
+					::print(" {} | ", Format(line_number, line_number_alignment));
+					print_replacing_tabs_with_spaces(String(line.begin(), location.begin()));
+					with(get_color(kind), print_replacing_tabs_with_spaces(String(location.begin(), line.end())));
+					println();
+				}
+				for (auto &line : source_location.lines.skip(1).skip(-1)) {
+					auto line_number = source_location.line_number + index_of(source_location.lines, &line);
+					::print(" {} | ", Format(line_number, line_number_alignment));
+					with(get_color(kind), print_replacing_tabs_with_spaces(line));
+					println();
+				}
+				{
+					auto line = source_location.lines.back();
+					auto line_number = source_location.line_number + source_location.lines.count - 1;
+					::print(" {} | ", Format(line_number, line_number_alignment));
+					with(get_color(kind), print_replacing_tabs_with_spaces(String(line.begin(), location.end())));
+					print_replacing_tabs_with_spaces(String(location.end(), line.end()));
+					println();
+				}
+			}
 		} else {
 			print_report_kind(kind);
 			println(": {}", message);
@@ -948,6 +987,9 @@ struct NodeBase {
 	static T *create() {
 		return new T();
 	}
+	void free() {
+		((T *)this)->free_impl();
+	}
 };
 
 enum class Mutability : u8 {
@@ -985,6 +1027,11 @@ DEFINE_EXPRESSION(Block) {
 	HashMap<String, List<Definition *>> definition_map;
 
 	void add(Node *child);
+	void free_impl() {
+		tl::free(children);
+		tl::free(definition_list);
+		tl::free(definition_map);
+	}
 };
 DEFINE_EXPRESSION(Call) {
 	Expression *callable = 0;
@@ -1009,7 +1056,6 @@ DEFINE_EXPRESSION(LambdaHead) {
 	}
 	Block parameters_block;
 	Expression *return_type = 0;
-	bool is_intrinsic : 1 = false;
 };
 DEFINE_EXPRESSION(Lambda) {
 	Definition *definition = 0;
@@ -1017,6 +1063,8 @@ DEFINE_EXPRESSION(Lambda) {
 	LambdaHead head;
 
 	List<Return *> returns;
+	
+	bool is_intrinsic : 1 = false;
 };
 DEFINE_EXPRESSION(Name) {
 	String name;
@@ -1237,22 +1285,20 @@ void print_ast_impl(Definition *definition) {
 		case Mutability::variable: print("var"); break;
 		default: invalid_code_path();
 	}
-	print(" {} = ", definition->name);
+	print(" {}: ", definition->name);
+	print_ast(definition->type);
+	print(" = ");
 	print_ast(definition->initial_value);
 }
 void print_ast_impl(IntegerLiteral *literal) {
-	print('(');
+	print('{');
 	print(literal->value);
 	print(" as ");
 	print_ast(literal->type);
-	print(')');
+	print('}');
 }
 void print_ast_impl(BooleanLiteral *literal) {
-	print('(');
 	print(literal->value);
-	print(" as ");
-	print_ast(literal->type);
-	print(')');
 }
 void print_ast_impl(LambdaHead *head) {
 	print("(");
@@ -1286,11 +1332,11 @@ void print_ast_impl(LambdaHead *head) {
 		print_ast(head->return_type);
 	}
 	print(':');
-
-	if (head->is_intrinsic) print(" #intrinsic");
 }
 void print_ast_impl(Lambda *lambda) {
 	print_ast(&lambda->head);
+	if (lambda->is_intrinsic) 
+		print(" #intrinsic");
 	if (lambda->body) {
 		print(' ');
 		print_ast(lambda->body);
@@ -1331,13 +1377,13 @@ void print_ast_impl(BuiltinType *type) {
 void print_ast_impl(Continue *) { print("continue"); }
 void print_ast_impl(Break *) { print("break"); }
 void print_ast_impl(Binary *binary) {
-	print('(');
+	print('{');
 	print_ast(binary->left);
 	print(' ');
 	print(binary->operation);
 	print(' ');
 	print_ast(binary->right);
-	print(')');
+	print('}');
 }
 void print_ast(Node *node) {
 	switch (node->kind) {
@@ -1621,7 +1667,7 @@ struct Parser {
 				if (token->kind == Token_directive && token->string == u8"#intrinsic"s) {
 					next();
 
-					lambda->head.is_intrinsic = true;
+					lambda->is_intrinsic = true;
 				} else {
 					lambda->body = parse_expression();
 					if (!lambda->body)
@@ -1644,6 +1690,11 @@ struct Parser {
 
 				while (true) {
 					skip_lines();
+					while (token->kind == ';') {
+						next();
+						skip_lines();
+					}
+
 					if (token->kind == '}') {
 						break;
 					}
@@ -1654,11 +1705,19 @@ struct Parser {
 
 					block->add(child);
 				}
+				block->location = {block->location.begin(), token->string.end()};
 				next();
 
 				for (auto child : block->children.skip(-1)) {
 					if (!ensure_allowed_in_statement_context(child)) {
 						return 0;
+					}
+				}
+
+				if (block->children.count == 1) {
+					if (auto expression = as<Expression>(block->children[0])) {
+						block->free();
+						return expression;
 					}
 				}
 
@@ -1724,8 +1783,11 @@ struct Parser {
 					If->false_branch = parse_statement();
 					if (!If->false_branch)
 						return 0;
+					
+					If->location = {If->location.begin(), If->false_branch->location.end()};
 				} else {
 					token = saved;
+					If->location = {If->location.begin(), If->true_branch->location.end()};
 				}
 
 				return If;
@@ -2048,7 +2110,7 @@ struct ExecutionContext {
 		}
 		auto &parameters = lambda->head.parameters_block.definition_list;
 
-		if (lambda->head.is_intrinsic) {
+		if (lambda->is_intrinsic) {
 			assert(lambda->definition);
 
 			List<Value> argument_values;
@@ -2891,14 +2953,44 @@ private:
 			if (!typecheck(If->false_branch))
 				return false;
 
-		reporter.warning(If->location, "TODO: proper type deduction");
 		if (If->false_branch) {
 			if (auto true_branch_expression = as<Expression>(If->true_branch)) {
 				if (auto false_branch_expression = as<Expression>(If->false_branch)) {
-					If->type = true_branch_expression->type;
+					if (types_match(true_branch_expression->type, false_branch_expression->type)) {
+						If->type = true_branch_expression->type;
+					} else {
+						defer {
+							If->true_branch = true_branch_expression;
+							If->false_branch = false_branch_expression;
+						};
+
+						Reporter cast_reporter;
+						cast_reporter.reports.allocator = temporary_allocator;
+						auto t2f = implicitly_cast(&true_branch_expression, false_branch_expression->type, &cast_reporter, false);
+						auto f2t = implicitly_cast(&false_branch_expression, true_branch_expression->type, &cast_reporter, false);
+
+						if (!t2f && !f2t) {
+							reporter.error(If->location, "Branch types {} and {} don't match in any way.", true_branch_expression->type, false_branch_expression->type);
+							reporter.reports.add(cast_reporter.reports);
+							cast_reporter.reports.clear();
+							return false;
+						} else if (t2f && f2t) {
+							reporter.error(If->location, "Branch types {} and {} are both implicitly convertible to each other.", true_branch_expression->type, false_branch_expression->type);
+							reporter.reports.add(cast_reporter.reports);
+							cast_reporter.reports.clear();
+							return false;
+						} else if (t2f) {
+							assert_always(implicitly_cast(&true_branch_expression, false_branch_expression->type, &cast_reporter, true));
+							If->type = true_branch_expression->type;
+						} else {
+							assert_always(implicitly_cast(&false_branch_expression, true_branch_expression->type, &cast_reporter, true));
+							If->type = false_branch_expression->type;
+						}
+					}
 				}
 			}
 		}
+
 		if (!If->type)
 			If->type = get_builtin_type(BuiltinTypeKind::None);
 
