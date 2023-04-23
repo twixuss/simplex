@@ -166,7 +166,15 @@ s32 tl_main(Span<String> arguments) {
 				return {};
 			};
 
-			String expected_compiler_output = find_param(u8"// COMPILER OUTPUT "s);
+			auto find_all_params = [&](String param_prefix) -> List<String> {
+				List<String> result;
+				find_all(test_source, param_prefix, [&] (String prefix) {
+					result.add(unescape_string({prefix.end(), find_any(String{prefix.end(), test_source.end()}, {u8'\r', u8'\n'})}));
+				});
+				return result;
+			};
+
+			List<String> expected_compiler_output = find_all_params(u8"// COMPILER OUTPUT "s);
 			String expected_program_output = find_param(u8"// PROGRAM OUTPUT "s);
 			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
 
@@ -179,14 +187,18 @@ s32 tl_main(Span<String> arguments) {
 				return;
 			}
 
-			if (expected_compiler_output.count && !find(actual_compiler.output, expected_compiler_output)) {
-				do_fail([&] {
-					with(ConsoleColor::red, print("Compiler output mismatch:\n"));
-					with(ConsoleColor::cyan, print("Expected:\n"));
-					print("{}\n", expected_compiler_output);
-					with(ConsoleColor::cyan, print("Actual:\n"));
-					print("{}\n", actual_compiler.output);
-				});
+			if (expected_compiler_output.count) {
+				for (auto expected_string : expected_compiler_output) {
+					if (!find(actual_compiler.output, expected_string)) {
+						do_fail([&] {
+							with(ConsoleColor::red, print("Compiler output mismatch:\n"));
+							with(ConsoleColor::cyan, print("Expected:\n"));
+							print("{}\n", expected_string);
+							with(ConsoleColor::cyan, print("Actual:\n"));
+							print("{}\n", actual_compiler.output);
+						});
+					}
+				}
 
 				return;
 			}

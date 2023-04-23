@@ -14,7 +14,7 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 template <class ...Args>
 void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, char const *format, Args ...args);
 
-#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__), debug_break())
+#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCSIG__, __VA_ARGS__), debug_break())
 
 #define TL_DEBUG BUILD_DEBUG
 #define TL_IMPL
@@ -82,6 +82,7 @@ struct TimedResult {
 List<TimedResult> timed_results;
 
 #define timed_block(name) \
+	println("{} ...", name); \
 	auto timer = create_precise_timer(); \
 	defer { timed_results.add({name, get_time(timer)}); }
 
@@ -130,6 +131,67 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	write(buffer.span());
 }
 
+struct GlobalAllocator : AllocatorBase<GlobalAllocator> {
+
+	static void init() {
+		base = (u8 *)VirtualAlloc(0, buffer_size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+		cursor = base;
+	}
+
+	static AllocationResult allocate_impl(umm size, umm alignment TL_LP) {
+		scoped(lock);
+
+		assert(size <= buffer_size);
+
+		auto target = ceil(cursor, alignment);
+		cursor = target + size;
+		if (cursor > base + buffer_size) {
+			// No memory left. Allocate new block.
+			base = (u8 *)VirtualAlloc(0, buffer_size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+			cursor = base;
+			target = base;
+		}
+		return AllocationResult { .data = target, .count = size, .is_zeroed = true };
+	}
+	static AllocationResult reallocate_impl(void *old_data, umm old_size, umm new_size, umm alignment TL_LP) {
+		tl::lock(lock);
+
+		if (cursor == (u8 *)old_data + old_size && (u8 *)old_data + new_size < base + buffer_size) {
+			// This allocation is at the end of the buffer and it can be extended.
+			cursor = (u8 *)old_data + new_size;
+			
+			tl::unlock(lock);
+
+			return { .data = old_data, .count = new_size, .is_zeroed = true };
+		} else {
+			// This allocation is in the middle of the buffer or it can't be extended. We have to allocate new memory.
+
+			tl::unlock(lock);
+
+			auto new_data = allocate_impl(new_size, alignment);
+			memcpy(new_data.data, old_data, old_size);
+			
+			return new_data;
+		}
+	}
+	static void deallocate_impl(void *data, umm size, umm alignment TL_LP) {}
+
+	static GlobalAllocator current() { return {}; }
+
+private:
+
+	inline static constexpr umm buffer_size = 2 * GiB;
+	inline static u8 *base = 0;
+	inline static u8 *cursor = 0;
+	inline static SpinLock lock;
+};
+
+template <class T>
+using GList = tl::List<T, GlobalAllocator>;
+
+template <class Key, class Value, class Traits = DefaultHashTraits<Key>>
+using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, GlobalAllocator>;
+
 #define ENUMERATE_CHARS_ALPHA(x) \
 	x('a') x('A') x('n') x('N') \
 	x('b') x('B') x('o') x('O') \
@@ -149,13 +211,6 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	x('0') x('1') x('2') x('3') x('4') \
 	x('5') x('6') x('7') x('8') x('9') \
 
-#define ENUMERATE_SINGLE_CHAR_TOKENS(x) \
-	x("(") x(")") x("[") x("]") x("{") x("}") x("<") x(">") \
-	x("`") x("~") x("!") x("@") x("#") x("$") x("%") x("^") \
-	x("&") x("*") x("-") x("=") x("+") x(";") x(":") x(",") \
-	x(".") x("/") x("?") \
-	x("\n") x("\\") \
-
 #define ENUMERATE_DOUBLE_CHAR_TOKENS(x) \
 	x("==") \
 	x("!=") \
@@ -174,6 +229,7 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	x("<<") \
 	x(">>") \
 	x("..") \
+	x("=>") \
 
 #define ENUMERATE_TRIPLE_CHAR_TOKENS(x) \
 	x("<<=") \
@@ -181,20 +237,20 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 
 
 #define ENUMERATE_CONCRETE_BUILTIN_TYPES(x) \
-	x(Type, 0x80) \
-	x(U8,   0x81) \
-	x(U16,  0x82) \
-	x(U32,  0x83) \
-	x(U64,  0x84) \
-	x(S8,   0x85) \
-	x(S16,  0x86) \
-	x(S32,  0x87) \
-	x(S64,  0x88) \
-	x(Bool, 0x89) \
-	x(None, 0x8a) \
+	x(Type) \
+	x(U8) \
+	x(U16) \
+	x(U32) \
+	x(U64) \
+	x(S8) \
+	x(S16) \
+	x(S32) \
+	x(S64) \
+	x(Bool) \
+	x(None) \
 
 #define ENUMERATE_ABSTRACT_BUILTIN_TYPES(x) \
-	x(UnsizedInteger, 0x8b) \
+	x(UnsizedInteger) \
 
 #define ENUMERATE_BUILTIN_TYPES(x) \
 	ENUMERATE_CONCRETE_BUILTIN_TYPES(x) \
@@ -202,18 +258,19 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 
 #define ENUMERATE_KEYWORDS(x) \
 	ENUMERATE_CONCRETE_BUILTIN_TYPES(x) \
-	x(const,    0x90) \
-	x(let,      0x91) \
-	x(var,      0x92) \
-	x(return,   0x93) \
-	x(if,       0x94) \
-	x(then,     0x95) \
-	x(else,     0x96) \
-	x(false,    0x97) \
-	x(true,     0x98) \
-	x(while,    0x99) \
-	x(break,    0x9a) \
-	x(continue, 0x9b) \
+	x(const) \
+	x(let) \
+	x(var) \
+	x(return) \
+	x(if) \
+	x(then) \
+	x(else) \
+	x(false) \
+	x(true) \
+	x(while) \
+	x(break) \
+	x(continue) \
+	x(match) \
 
 // #define x(name, token, precedence)
 #define ENUMERATE_BINARY_OPERATIONS(x) \
@@ -255,13 +312,14 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	x(bslass, "<<=", 1) \
 	x(bsrass, ">>=", 1) \
 
-#define ENUMERATE_TOKEN_KIND(x) \
+#define ENUMERATE_TOKEN_KIND(x, y) \
+	y(eof, '\0') \
+	y(eol, '\n') \
+	y(name, 'a') \
+	y(number, '0') \
+	y(directive, '#') \
+	y(unused__, 0x7fff) \
 	ENUMERATE_KEYWORDS(x) \
-	x(eof,       0   ) \
-	x(eol,       '\n') \
-	x(name,      'a' ) \
-	x(number,    '0' ) \
-	x(directive, '#' ) \
 
 #define ENUMERATE_EXPRESSION_KIND(x) \
 	x(Block) \
@@ -275,6 +333,7 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	x(If) \
 	x(BuiltinType) \
 	x(Binary) \
+	x(Match) \
 
 #define ENUMERATE_STATEMENT_KIND(x) \
 	x(Return) \
@@ -286,31 +345,37 @@ inline void escape_string_buffered(Span<utf8> string, auto write) {
 	ENUMERATE_EXPRESSION_KIND(x) \
 	ENUMERATE_STATEMENT_KIND(x) \
 
-consteval u8 const_string_to_token_kind(Span<char> token) {
-	if (token.count == 1)
-		return token[0];
+consteval u16 const_string_to_token_kind(Span<char> token) {
+	if (token.count <= 2) {
+		u16 result = 0;
+		for (auto c : token) {
+			result <<= 8;
+			result |= c;
+		}
+		return result;
+	}
 
-	u8 iota = 0xa0;
+	u16 iota = 0x9000;
 #define x(string) if (token == string##s) return iota; ++iota;
-	ENUMERATE_DOUBLE_CHAR_TOKENS(x)
 	ENUMERATE_TRIPLE_CHAR_TOKENS(x)
 #undef x
 
 	*(int *)0 = 0; /*invalid token*/;
 }
-consteval u8 const_string_to_token_kind(char a, char b) {
+consteval u32 const_string_to_token_kind(char a, char b) {
 	char buffer[] { a, b };
 	return const_string_to_token_kind(array_as_span(buffer));
 }
-consteval u8 const_string_to_token_kind(char a, char b, char c) {
+consteval u32 const_string_to_token_kind(char a, char b, char c) {
 	char buffer[] { a, b, c };
 	return const_string_to_token_kind(array_as_span(buffer));
 }
 
-
-enum TokenKind : u8 {
-#define x(name, value) Token_##name = value,
-	ENUMERATE_TOKEN_KIND(x)
+enum TokenKind : u16 {
+#define x(name) Token_##name,
+#define y(name, value) Token_##name = value,
+	ENUMERATE_TOKEN_KIND(x, y)
+#undef y
 #undef x
 };
 
@@ -320,12 +385,12 @@ inline umm append(StringBuilder &builder, TokenKind kind) {
 		case Token_eol: return append(builder, "end of line");
 	}
 
-	if (0x21 <= kind && kind <= 0x7e)
+	if ((u32)kind <= 0xff)
 		return append(builder, (char)kind);
 
 	switch (kind) {
-#define x(name, value) case Token_##name: return append(builder, #name);
-		ENUMERATE_TOKEN_KIND(x)
+#define x(name) case Token_##name: return append(builder, #name);
+		ENUMERATE_TOKEN_KIND(x, x)
 #undef x
 	}
 
@@ -391,26 +456,6 @@ constexpr auto keywords = []() consteval {
 #undef x
 	return keywords;
 }();
-
-using MulticharTokens = FixedHashMap<512, String, TokenKind>;
-
-// 0th map contains tokens with length 1, 1st map - length 2, etc...
-constexpr MulticharTokens multichar_tokens[2] = {
-	[]() consteval {
-		MulticharTokens multichar_tokens_0;
-#define x(token) multichar_tokens_0.insert(u8##token##s, (TokenKind)const_string_to_token_kind(token##s));
-		ENUMERATE_SINGLE_CHAR_TOKENS(x)
-#undef x
-		return multichar_tokens_0;
-	}(),
-	[]() consteval {
-		MulticharTokens multichar_tokens_1;
-#define x(token) multichar_tokens_1.insert(u8##token##s, (TokenKind)const_string_to_token_kind(token##s));
-		ENUMERATE_DOUBLE_CHAR_TOKENS(x)
-#undef x
-		return multichar_tokens_1;
-	}(),
-};
 
 struct SourceLocation {
 	String file;
@@ -482,8 +527,7 @@ struct Report {
 	String location;
 	String message;
 
-	template <class ...Args>
-	static Report create(ReportKind kind, String location, char const *format, Args ...args) {
+	static Report create(ReportKind kind, String location, char const *format, auto const &...args) {
 		return {
 			.kind = kind,
 			.location = location,
@@ -567,19 +611,19 @@ struct Report {
 bool break_on_error = false;
 
 struct ReporterBase {
-	template <class ...Args> void info   (this auto &&self, String location, char const *format, Args const &...args) { self.on_report(Report::create(ReportKind::info,    location, format, args...)); }
-	template <class ...Args> void warning(this auto &&self, String location, char const *format, Args const &...args) { self.on_report(Report::create(ReportKind::warning, location, format, args...)); }
-	template <class ...Args> void error  (this auto &&self, String location, char const *format, Args const &...args) {
+	void info   (this auto &&self, String location, char const *format, auto const &...args) { self.on_report(Report::create(ReportKind::info,    location, format, args...)); }
+	void warning(this auto &&self, String location, char const *format, auto const &...args) { self.on_report(Report::create(ReportKind::warning, location, format, args...)); }
+	void error  (this auto &&self, String location, char const *format, auto const &...args) {
 		if (break_on_error) {
 			debug_break();
 		}
 		self.on_report(Report::create(ReportKind::error,   location, format, args...));
 	}
-	template <class ...Args> void help   (this auto &&self, String location, char const *format, Args const &...args) { self.on_report(Report::create(ReportKind::help,    location, format, args...)); }
-	template <class ...Args> void info   (this auto &&self, char const *format, Args const &...args) { return self.info   (String{}, format, args...); }
-	template <class ...Args> void warning(this auto &&self, char const *format, Args const &...args) { return self.warning(String{}, format, args...); }
-	template <class ...Args> void error  (this auto &&self, char const *format, Args const &...args) { return self.error  (String{}, format, args...); }
-	template <class ...Args> void help   (this auto &&self, char const *format, Args const &...args) { return self.help   (String{}, format, args...); }
+	void help   (this auto &&self, String location, char const *format, auto const &...args) { self.on_report(Report::create(ReportKind::help,    location, format, args...)); }
+	void info   (this auto &&self, char const *format, auto const &...args) { return self.info   (String{}, format, args...); }
+	void warning(this auto &&self, char const *format, auto const &...args) { return self.warning(String{}, format, args...); }
+	void error  (this auto &&self, char const *format, auto const &...args) { return self.error  (String{}, format, args...); }
+	void help   (this auto &&self, char const *format, auto const &...args) { return self.help   (String{}, format, args...); }
 };
 
 SpinLock stdout_mutex;
@@ -628,10 +672,13 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 	assertion_failure_impl(cause_string, expression, file, line, function, {}, tformat(format, args...));
 }
 
-Optional<List<Token>> source_to_tokens(String source, String path) {
+using Tokens = GList<Token>;
+
+Optional<Tokens> source_to_tokens(String source, String path) {
 	timed_function();
 
-	List<Token> tokens;
+	Tokens tokens;
+	tokens.reserve(source.count / 4); // NOTE: predict 4 characters per token on average.
 
 	utf8 *cursor = source.data;
 
@@ -756,12 +803,12 @@ Optional<List<Token>> source_to_tokens(String source, String path) {
 			CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE('>', '=')
 			CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE('<', '=')
 			CASE_SINGLE_OR_DOUBLE('.', '.');
-			CASE_SINGLE_OR_DOUBLE('=', '=');
 			CASE_SINGLE_OR_DOUBLE('+', '=');
 			CASE_SINGLE_OR_DOUBLE('-', '=');
 			CASE_SINGLE_OR_DOUBLE('*', '=');
 			CASE_SINGLE_OR_DOUBLE('%', '=');
 			CASE_SINGLE_OR_DOUBLE('^', '=');
+			CASE_SINGLE_OR_TWO_DOUBLES('=', '>');
 			CASE_SINGLE_OR_TWO_DOUBLES('&', '=');
 			CASE_SINGLE_OR_TWO_DOUBLES('|', '=');
 			case '/': {
@@ -870,7 +917,7 @@ Optional<List<Token>> source_to_tokens(String source, String path) {
 
 constexpr u32 custom_precedence = 4;
 
-enum class BinaryOperation : u8 {
+enum class BinaryOperation : u16 {
 #define x(name, token, precedence) name = const_string_to_token_kind(token##s),
 	ENUMERATE_BINARY_OPERATIONS(x)
 #undef x
@@ -896,7 +943,7 @@ u32 get_precedence(BinaryOperation operation) {
 
 Optional<BinaryOperation> as_binary_operation(TokenKind kind) {
 	switch (kind) {
-#define x(name, token, precedence) case const_string_to_token_kind(token##s): return BinaryOperation::name;
+#define x(name, token, precedence) case (TokenKind)const_string_to_token_kind(token##s): return BinaryOperation::name;
 		ENUMERATE_BINARY_OPERATIONS(x)
 #undef x
 	}
@@ -985,7 +1032,7 @@ struct NodeBase {
 		((T *)this)->kind = NodeTypeToKind<T>::kind;
 	}
 	static T *create() {
-		return new T();
+		return GlobalAllocator{}.allocate<T>();
 	}
 	void free() {
 		((T *)this)->free_impl();
@@ -998,11 +1045,21 @@ enum class Mutability : u8 {
 	variable, // can     be modified by anyone.
 };
 
+inline umm append(StringBuilder &builder, Mutability mutability) {
+	switch (mutability) {
+		case Mutability::constant: return append(builder, "const");
+		case Mutability::readonly: return append(builder, "let");
+		case Mutability::variable: return append(builder, "var");
+	}
+	return append_format(builder, "(unknown Mutability {})", (u32)mutability);
+}
+ 
+
 #define DEFINE_EXPRESSION(name) struct name : Expression, NodeBase<name>
 #define DEFINE_STATEMENT(name) struct name : Statement, NodeBase<name>
 
 enum class BuiltinTypeKind : u8 {
-#define x(name, value) name = value,
+#define x(name) name,
 	ENUMERATE_BUILTIN_TYPES(x)
 #undef x
 	count,
@@ -1017,14 +1074,24 @@ umm append(StringBuilder &builder, BuiltinTypeKind type_kind) {
 	return append_format(builder, "(unknown BuiltinTypeKind {})", (u32)type_kind);
 }
 
+inline BuiltinTypeKind token_kind_to_builtin_type_kind(TokenKind kind) {
+	switch (kind) {
+#define x(name) case Token_##name: return BuiltinTypeKind::name;
+		ENUMERATE_CONCRETE_BUILTIN_TYPES(x);
+#undef x
+	}
+
+	invalid_code_path();
+	return {};
+}
 
 DEFINE_EXPRESSION(Block) {
 	Block *parent = 0;
 	Expression *container = 0;
 
-	List<Node *> children;
-	List<Definition *> definition_list;
-	HashMap<String, List<Definition *>> definition_map;
+	GList<Node *> children;
+	GList<Definition *> definition_list;
+	GHashMap<String, GList<Definition *>> definition_map;
 
 	void add(Node *child);
 	void free_impl() {
@@ -1035,7 +1102,7 @@ DEFINE_EXPRESSION(Block) {
 };
 DEFINE_EXPRESSION(Call) {
 	Expression *callable = 0;
-	List<Expression *> arguments;
+	GList<Expression *> arguments;
 };
 DEFINE_EXPRESSION(Definition) {
 	String name;
@@ -1062,7 +1129,7 @@ DEFINE_EXPRESSION(Lambda) {
 	Expression *body = 0;
 	LambdaHead head;
 
-	List<Return *> returns;
+	GList<Return *> returns;
 	
 	bool is_intrinsic : 1 = false;
 };
@@ -1082,6 +1149,15 @@ DEFINE_EXPRESSION(Binary) {
 	Expression *left = 0;
 	Expression *right = 0;
 	BinaryOperation operation = {};
+};
+DEFINE_EXPRESSION(Match) {
+	struct Case {
+		Expression *from = 0; // null in default case.
+		Expression *to = 0;
+	};
+
+	Expression *expression = 0;
+	GList<Case> cases;
 };
 DEFINE_STATEMENT(Return) {
 	Expression *value = 0;
@@ -1151,13 +1227,34 @@ bool types_match(Expression *a, Expression *b) {
 	a = direct(a);
 	b = direct(b);
 
-	if (auto ab = as<BuiltinType>(a)) {
-		if (auto bb = as<BuiltinType>(b)) {
-			return ab->type_kind == bb->type_kind;
+	if (a->kind != b->kind)
+		return false;
+
+	switch (a->kind) {
+		case NodeKind::BuiltinType: {
+			REDECLARE_VAL(a, (BuiltinType *)a);
+			REDECLARE_VAL(b, (BuiltinType *)b);
+
+			return a->type_kind == b->type_kind;
+		}
+		case NodeKind::LambdaHead: {
+			REDECLARE_VAL(a, (LambdaHead *)a);
+			REDECLARE_VAL(b, (LambdaHead *)b);
+
+			if (a->parameters_block.definition_list.count != b->parameters_block.definition_list.count)
+				return false;
+
+			if (!types_match(a->return_type, b->return_type))
+				return false;
+
+			for (umm i = 0; i < a->parameters_block.definition_list.count; ++i) {
+				if (!types_match(a->parameters_block.definition_list[i]->type, b->parameters_block.definition_list[i]->type))
+					return false;
+			}
+			return true;
 		}
 	}
-
-	return false;
+	invalid_code_path("invalid node kind {} in types_match", a->kind);
 }
 
 bool types_match(Expression *a, BuiltinTypeKind b) {
@@ -1326,19 +1423,15 @@ void print_ast_impl(LambdaHead *head) {
 		print_ast(group[0]->parsed_type);
 	}
 
-	print(')');
-	if (head->return_type) {
-		print(" ");
-		print_ast(head->return_type);
-	}
-	print(':');
+	print("): ");
+	print_ast(head->return_type);
 }
 void print_ast_impl(Lambda *lambda) {
 	print_ast(&lambda->head);
+	print(" => ");
 	if (lambda->is_intrinsic) 
-		print(" #intrinsic");
+		print("#intrinsic");
 	if (lambda->body) {
-		print(' ');
 		print_ast(lambda->body);
 	}
 }
@@ -1385,6 +1478,22 @@ void print_ast_impl(Binary *binary) {
 	print_ast(binary->right);
 	print('}');
 }
+void print_ast_impl(Match *match) {
+	print("match ");
+	print_ast(match->expression);
+	print(" {\n");
+	tabbed {
+		for (auto Case : match->cases) {
+			print_tabs();
+			print_ast(Case.from);
+			print(" => ");
+			print_ast(Case.to);
+			print("\n");
+		}
+	};
+	print_tabs();
+	print("}");
+}
 void print_ast(Node *node) {
 	switch (node->kind) {
 #define x(name) case NodeKind::name: return print_ast_impl((##name *)node);
@@ -1406,6 +1515,29 @@ umm append(StringBuilder &builder, Node *node) {
 			}
 			return append(builder, "(unknown BuiltinType)");
 		}
+		case NodeKind::LambdaHead: {
+			auto head = (LambdaHead *)node;
+
+			umm result = 0;
+			auto write = [&] (auto &&...args) {
+				result += append(builder, args...);
+			};
+
+			write('(');
+			for (auto &parameter : head->parameters_block.definition_list) {
+				if (&parameter != head->parameters_block.definition_list.data) {
+					write(", ");
+				}
+
+				write(parameter->name);
+				write(": ");
+				write(parameter->type);
+			}
+			write(") ");
+			write(head->return_type);
+
+			return result;
+		}
 		default: {
 			return append(builder, "(unknown)");
 		}
@@ -1420,6 +1552,9 @@ struct Parser {
 	While *current_loop = 0;
 	Expression *current_container = 0;
 	Reporter reporter;
+	Fiber parent_fiber = {};
+	List<Node *> result_nodes;
+	bool success = false;
 
 	// Parses parse_expression_1 with binary operators and definitions.
 	Expression *parse_expression(bool whitespace_is_skippable_before_binary_operator = false, int right_precedence = 0) {
@@ -1440,14 +1575,15 @@ struct Parser {
 				next();
 				skip_lines();
 
-				if (!expect(Token_name))
-					return 0;
+				expect(Token_name);
 
 				definition->name = token->string;
 				definition->location = token->string;
 
 				next();
 				skip_lines();
+
+				expect({':', '='});
 
 				if (token->kind == ':') {
 					next();
@@ -1461,8 +1597,6 @@ struct Parser {
 					skip_lines();
 
 					definition->initial_value = parse_expression();
-					if (!definition->initial_value)
-						return 0;
 
 					if (definition->mutability == Mutability::constant) {
 						if (auto lambda = as<Lambda>(definition->initial_value)) {
@@ -1470,8 +1604,13 @@ struct Parser {
 						}
 					}
 				} else {
-					if (!expect({'\n', Token_eof}))
-						return 0;
+					if (definition->mutability != Mutability::variable) {
+						reporter.error(definition->location, "Definitions can't be marked as {} and have no initial expression.", definition->mutability);
+						reporter.help(definition->location, "You can either change {} to {}, or provide an initial expression.", definition->mutability, Mutability::variable);
+						yield(false);
+					}
+
+					expect({Token_eol, Token_eof});
 				}
 				return definition;
 			}
@@ -1480,8 +1619,6 @@ struct Parser {
 
 		//null denotation
 		auto left = parse_expression_1();
-		if (!left)
-			return 0;
 
 		// left binding power
 		Optional<BinaryOperation> operation;
@@ -1504,8 +1641,6 @@ struct Parser {
 					skip_lines();
 
 					auto right = parse_expression(whitespace_is_skippable_before_binary_operator, custom_precedence);
-					if (!right)
-						return 0;
 
 					auto name = Name::create();
 					name->name = location;
@@ -1530,9 +1665,7 @@ struct Parser {
 					skip_lines();
 
 					binop->right = parse_expression(whitespace_is_skippable_before_binary_operator, get_precedence(binop->operation) - is_right_associative(operation.value()));
-
-					if (!binop->right)
-						return 0;
+					binop->location = { binop->left->location.begin(), binop->right->location.end() };
 
 					left = binop;
 					continue;
@@ -1545,8 +1678,6 @@ struct Parser {
 	// Parses parse_expression_0 plus parentheses or brackets after, e.g. calls, subscripts.
 	Expression *parse_expression_1() {
 		auto node = parse_expression_0();
-		if (!node)
-			return 0;
 
 		while (token->kind == '(') {
 			auto call = Call::create();
@@ -1558,8 +1689,6 @@ struct Parser {
 			if (token->kind != ')') {
 				while (true) {
 					auto argument = parse_expression();
-					if (!argument)
-						return 0;
 
 					call->arguments.add(argument);
 
@@ -1571,6 +1700,9 @@ struct Parser {
 					if (token->kind == ')') {
 						break;
 					}
+
+					reporter.error(token->string, "Unexpected token {} when parsing call argument list. Expected ',' or ')'.", token->string);
+					yield(false);
 				}
 			}
 
@@ -1592,13 +1724,13 @@ struct Parser {
 				scoped_replace(current_block, &lambda->head.parameters_block);
 				scoped_replace(current_loop, 0);
 				scoped_replace(current_container, lambda);
+				assert(current_container->kind == NodeKind::Lambda);
 
 				next();
 				skip_lines();
 				if (token->kind != ')') {
 					while (true) {
-						if (!expect(Token_name))
-							return 0;
+						expect(Token_name);
 
 						List<Definition *> parameter_group;
 
@@ -1614,8 +1746,7 @@ struct Parser {
 						while (token->kind == ',') {
 							next();
 							skip_lines();
-							if (!expect(Token_name))
-								return 0;
+							expect(Token_name);
 
 							auto parameter = Definition::create();
 							parameter->name = token->string;
@@ -1623,8 +1754,7 @@ struct Parser {
 							next();
 						}
 
-						if (!expect(':'))
-							return 0;
+						expect(':');
 
 						next();
 						skip_lines();
@@ -1652,30 +1782,39 @@ struct Parser {
 				next();
 				skip_lines();
 
-				if (token->kind != ':') {
-					lambda->head.return_type = parse_expression();
-					if (!lambda->head.return_type)
-						 return 0;
-
-					if (!expect(':'))
-						return 0;
-				}
-
-				next();
-				skip_lines();
-
-				if (token->kind == Token_directive && token->string == u8"#intrinsic"s) {
+				if (token->kind == ':') {
 					next();
+					skip_lines();
 
-					lambda->is_intrinsic = true;
-				} else {
-					lambda->body = parse_expression();
-					if (!lambda->body)
-						return 0;
+					lambda->head.return_type = parse_expression_0();
 				}
 
+				constexpr auto arrow = const_string_to_token_kind("=>"s);
+				if (token->kind == arrow) {
+					next();
+					skip_lines();
 
-				return lambda;
+					while (token->kind == Token_directive) {
+						if (token->string == u8"#intrinsic"s) {
+							lambda->is_intrinsic = true;
+						} else {
+							reporter.error(token->string, "Unknown lambda directive '{}'.", token->string);
+							yield(false);
+						}
+						next();
+					}
+
+					if (lambda->is_intrinsic) {
+						return lambda;
+					}
+
+					lambda->body = parse_expression();
+
+					return lambda;
+				}
+
+				// LEAK: the rest of the lambda is unused.
+				return &lambda->head;
 			}
 			case '{': {
 				auto block = Block::create();
@@ -1700,8 +1839,6 @@ struct Parser {
 					}
 
 					auto child = parse_statement();
-					if (!child)
-						return 0;
 
 					block->add(child);
 				}
@@ -1709,9 +1846,7 @@ struct Parser {
 				next();
 
 				for (auto child : block->children.skip(-1)) {
-					if (!ensure_allowed_in_statement_context(child)) {
-						return 0;
-					}
+					ensure_allowed_in_statement_context(child);
 				}
 
 				if (block->children.count == 1) {
@@ -1737,7 +1872,7 @@ struct Parser {
 				auto parsed = parse_u64(token->string);
 				if (!parsed) {
 					reporter.error(token->string, "Could not parse number {}", token->string);
-					return 0;
+					yield(false);
 				}
 
 				literal->value = parsed.value();
@@ -1761,8 +1896,6 @@ struct Parser {
 				skip_lines();
 
 				If->condition = parse_expression();
-				if (!If->condition)
-					return 0;
 
 				skip_lines();
 				if (token->kind == Token_then) {
@@ -1771,8 +1904,6 @@ struct Parser {
 				}
 
 				If->true_branch = parse_statement();
-				if (!If->true_branch)
-					return 0;
 
 				auto saved = token;
 				skip_lines();
@@ -1781,8 +1912,6 @@ struct Parser {
 					skip_lines();
 
 					If->false_branch = parse_statement();
-					if (!If->false_branch)
-						return 0;
 					
 					If->location = {If->location.begin(), If->false_branch->location.end()};
 				} else {
@@ -1792,20 +1921,59 @@ struct Parser {
 
 				return If;
 			}
+			case Token_match: {
+				auto match = Match::create();
+				match->location = token->string;
+				next();
+				skip_lines();
 
-#define x(name, value) case value:
+				match->expression = parse_expression();
+
+				skip_lines();
+				expect('{');
+
+				next();
+				skip_lines();
+
+				while (true) {
+					auto from = parse_expression();
+
+					skip_lines();
+					expect('=>');
+					next();
+					skip_lines();
+
+					auto to = parse_expression();
+
+					match->cases.add({from, to});
+
+					skip_lines();
+					while (token->kind == ';') {
+						next();
+						skip_lines();
+					}
+					if (token->kind == '}')
+						break;
+				}
+				next();
+
+				return match;
+			}
+
+#define x(name) case Token_##name:
 			ENUMERATE_CONCRETE_BUILTIN_TYPES(x)
 #undef x
 			{
 				auto type = BuiltinType::create();
 				type->location = token->string;
-				type->type_kind = (BuiltinTypeKind)token->kind;
+				type->type_kind = token_kind_to_builtin_type_kind(token->kind);
 				next();
 				return type;
 			}
 
 			default: 
 				reporter.error(token->string, "Unexpected token '{}' when parsing expression.", *token);
+				yield(false);
 				return 0;
 		}
 	}
@@ -1819,15 +1987,13 @@ struct Parser {
 					lambda->returns.add(return_);
 				} else {
 					reporter.error(return_->location, "Return statement can only appear in a lambda. But current container is {}.", current_container->kind);
-					return 0;
+					yield(false);
 				}
 
 				next();
 
 				if (token->kind != '\n') {
 					return_->value = parse_expression();
-					if (!return_->value)
-						return 0;
 				}
 
 				return return_;
@@ -1840,8 +2006,6 @@ struct Parser {
 				scoped_replace(current_loop, While);
 
 				While->condition = parse_expression();
-				if (!While->condition)
-					return 0;
 
 				skip_lines();
 				if (token->kind == Token_then) {
@@ -1850,15 +2014,13 @@ struct Parser {
 				}
 
 				While->body = parse_statement();
-				if (!While->body)
-					return 0;
 
 				return While;
 			}
 			case Token_continue: {
 				if (!current_loop) {
 					reporter.error(token->string, "`continue` must be inside a loop.");
-					return 0;
+					yield(false);
 				}
 
 				auto Continue = Continue::create();
@@ -1869,7 +2031,7 @@ struct Parser {
 			case Token_break: {
 				if (!current_loop) {
 					reporter.error(token->string, "`break` must be inside a loop.");
-					return 0;
+					yield(false);
 				}
 
 				auto Break = Break::create();
@@ -1880,13 +2042,47 @@ struct Parser {
 		}
 
 		auto expression = parse_expression();
-		if (!expression)
-			return 0;
 
 		return expression;
 	}
 
-	bool ensure_allowed_in_statement_context(Node *node) {
+	void yield(bool result) {
+		if (result)
+			success = true;
+		fiber_yield(parent_fiber);
+	}
+	void main() {
+		defer { reporter.print_all(); };
+
+		scoped_replace(debug_current_location, {});
+
+		while (true) {
+			auto saved = token;
+			skip_lines();
+			while (token->kind == ';') {
+				next();
+				skip_lines();
+			}
+
+			if (token->kind == Token_eof) {
+				break;
+			}
+
+			auto child = parse_statement();
+
+			ensure_allowed_in_statement_context(child);
+
+			result_nodes.add(child);
+		}
+
+		yield(true);
+	}
+	static void fiber_main(void *param) {
+		auto parser = (Parser *)param;
+		parser->main();
+	}
+
+	void ensure_allowed_in_statement_context(Node *node) {
 		switch (node->kind) {
 			case NodeKind::Definition:
 			case NodeKind::Block:
@@ -1896,7 +2092,7 @@ struct Parser {
 			case NodeKind::While:
 			case NodeKind::Continue:
 			case NodeKind::Break:
-				return true;
+				return;
 			case NodeKind::Binary: {
 				auto binary = (Binary *)node;
 				switch (binary->operation) {
@@ -1911,33 +2107,32 @@ struct Parser {
 					case BinaryOperation::bxoass:
 					case BinaryOperation::bslass:
 					case BinaryOperation::bsrass:
-						return true;
+						return;
 				}
 
 				reporter.error(node->location, "{} {} are not allowed in statement context.", node->kind, binary->operation);
-				return false;
+				yield(false);
 			}
 		}
 
 		reporter.error(node->location, "{}s are not allowed in statement context.", node->kind);
-		return false;
+		yield(false);
 	}
 	bool next() {
 		++token;
 		debug_current_location = token->string;
 		return token->kind != Token_eof;
 	}
-	bool expect(std::underlying_type_t<TokenKind> expected_kind) {
+	void expect(std::underlying_type_t<TokenKind> expected_kind) {
 		if (token->kind != expected_kind) {
 			reporter.error(token->string, "Expected '{}', but got '{}'", (TokenKind)expected_kind, *token);
-			return false;
+			yield(false);
 		}
-		return true;
 	}
-	bool expect(std::initializer_list<std::underlying_type_t<TokenKind>> expected_kinds) {
+	void expect(std::initializer_list<std::underlying_type_t<TokenKind>> expected_kinds) {
 		for (auto expected_kind : expected_kinds) {
 			if (token->kind == expected_kind) {
-				return true;
+				return;
 			}
 		}
 
@@ -1948,7 +2143,7 @@ struct Parser {
 		}
 		append_format(builder, "but got '{}'.\0"s, *token);
 		reporter.error(token->string, (char *)to_string(builder).data);
-		return false;
+		yield(false);
 	}
 	void skip_lines() {
 		while (token->kind == '\n')
@@ -1957,36 +2152,20 @@ struct Parser {
 	}
 };
 
-Optional<List<Node *>> tokens_to_nodes(Span<Token> tokens) {
+Optional<List<Node *>> tokens_to_nodes(Fiber parent_fiber, Span<Token> tokens) {
 	timed_function();
 
-	Parser parser;
+	Parser parser = {};
+	parser.parent_fiber = parent_fiber;
 	parser.token = tokens.data;
-	List<Node *> nodes;
-	
-	defer { parser.reporter.print_all(); };
 
-	scoped_replace(debug_current_location, {});
+	auto fiber = fiber_create(Parser::fiber_main, &parser);
+	fiber_yield(fiber);
 
-	while (true) {
-		auto saved = parser.token;
-		parser.skip_lines();
-		if (parser.token->kind == Token_eof) {
-			break;
-		}
+	if (parser.success)
+		return parser.result_nodes;
 
-		auto child = parser.parse_statement();
-		if (!child)
-			return {};
-
-		if (!parser.ensure_allowed_in_statement_context(child)) {
-			return {};
-		}
-
-		nodes.add(child);
-	}
-
-	return nodes;
+	return {};
 }
 
 //#define x(name)
@@ -2228,6 +2407,20 @@ struct ExecutionContext {
 		immediate_reporter.error(binary->location, "Invalid binary operation");
 		invalid_code_path();
 	}
+	Value execute_impl(Match *match) {
+		auto value = execute(match->expression);
+		assert(value.kind == ValueKind::integer, "Only this is implemented");
+
+		for (auto Case : match->cases) {
+			auto from = execute(Case.from);
+			assert(from.kind == ValueKind::integer, "Only this is implemented");
+			if (value.integer == from.integer) {
+				return execute(Case.to);
+			}
+		}
+
+		invalid_code_path(match->location, "match did not match value {}", value);
+	}
 
 	Value *get_stored_value(Name *name) {
 		assert(name->definition);
@@ -2269,6 +2462,7 @@ bool is_constant_impl(Call *call) { not_implemented(); }
 bool is_constant_impl(If *If) { not_implemented(); }
 bool is_constant_impl(BuiltinType *type) { return true; }
 bool is_constant_impl(Binary *binary) { return is_constant(binary->left) && is_constant(binary->right); }
+bool is_constant_impl(Match *) { not_implemented(); }
 bool is_constant(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
@@ -2291,6 +2485,7 @@ bool is_mutable_impl(Call *call) { not_implemented(); }
 bool is_mutable_impl(If *If) { not_implemented(); }
 bool is_mutable_impl(BuiltinType *type) { return false; }
 bool is_mutable_impl(Binary *binary) { return false; }
+bool is_mutable_impl(Match *) { not_implemented(); }
 bool is_mutable(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
@@ -2357,7 +2552,6 @@ struct Typechecker {
 				// println("created cached typechecker {}", typechecker->uid);
 
 				assert(typechecker->debug_stopped);
-				assert(typechecker->parent_fiber == 0);
 				assert(typechecker->yield_result == YieldResult{});
 				assert(typechecker->reporter.reports.count == 0);
 				assert(typechecker->initial_node == 0);
@@ -2408,7 +2602,7 @@ struct Typechecker {
 	}
 
 	void stop() {
-		status.finished = true;
+		status.status = Status::finished;
 		debug_stop();
 	}
 	void retire() {
@@ -2421,13 +2615,15 @@ struct Typechecker {
 		with(retired_typecheckers_lock, retired_typecheckers.add(this));
 	}
 
-	inline static HashMap<BinaryTypecheckerKey, bool (Typechecker::*)(Binary *)> binary_typecheckers;
-
 private:
 	struct Status {
 		u32 progress = 0;
-		bool waiting = false;
-		bool finished = false;
+
+		enum {
+			working,
+			waiting,
+			finished,
+		} status = {};
 	};
 
 	using TypecheckProgress = List<Status>;
@@ -2452,7 +2648,7 @@ private:
 				progress.add(typechecker->status);
 			} else {
 				// NOTE: Typechecker was not created yet. This means that progress can always be made.
-				progress.add({ .waiting = false });
+				progress.add({ .status = Status::waiting});
 			}
 		}
 	}
@@ -2463,11 +2659,13 @@ private:
 		if (!old.count)
 			return true;
 
-		for (auto status : now) {
-			if (status.finished)
-				continue;
+		auto is_finished = [&](Status s) { return s.status == Status::finished; }; 
 
-			if (!status.waiting) {
+		if (all(old, is_finished) && all(now, is_finished))
+			return false;
+
+		for (auto status : now) {
+			if (status.status == Status::working) {
 				return true;
 			}
 		}
@@ -2475,10 +2673,11 @@ private:
 		assert(old.count == now.count);
 
 		for (umm i = 0; i < old.count; ++i) {
-			if (now[i].finished > old[i].finished)
+			if (now[i].status == Status::finished && old[i].status != Status::finished) {
 				return true;
+			}
 
-			if (now[i].waiting <= old[i].waiting)
+			if (now[i].status != Status::waiting || old[i].status == Status::waiting)
 				return true;
 
 			if (now[i].progress > old[i].progress)
@@ -2495,7 +2694,7 @@ private:
 		TypecheckProgress old_progress;
 		TypecheckProgress current_progress;
 
-		scoped_replace(status.waiting, true);
+		scoped_replace(status.status, Status::waiting);
 
 		// TODO: FIXME: Get rid of this threshold.
 		const int wait_sleep_threshold = 16;
@@ -2515,7 +2714,6 @@ private:
 
 				get_total_progress(current_progress);
 				if (!has_progress(old_progress, current_progress)) {
-					debug_break();
 					return false;
 				}
 				Swap(old_progress, current_progress);
@@ -2546,16 +2744,25 @@ private:
 		});
 	}
 
+	struct Unwind {};
+
 	void yield(YieldResult result) {
 		yield_result = result;
 		scoped_replace(debug_current_location, {});
 		fiber_yield(parent_fiber);
+		if (result == YieldResult::fail) {
+			throw Unwind{};
+		}
 	}
 
 	void fiber_main() {
 		while (true) {
-			auto success = typecheck(initial_node);
-			yield(success ? YieldResult::success : YieldResult::fail);
+			try {
+				typecheck(initial_node);
+				yield(YieldResult::success);
+			} catch (Unwind) {
+
+			}
 		}
 	}
 
@@ -2642,14 +2849,14 @@ private:
 		}
 
 		if (reporter)
-			reporter->error(expression->location, "Expression of type {} is not implicitly convertible to {}.", source_type, target_type);
+			reporter->error(expression->location, "Expression of type `{}` is not implicitly convertible to `{}`.", source_type, target_type);
 		return false;
 	}
 	bool implicitly_cast(Expression **expression, Expression *target_type, bool apply) {
 		return implicitly_cast(expression, target_type, &reporter, apply);
 	}
 
-	bool typecheck(Node *node) {
+	void typecheck(Node *node) {
 		++status.progress;
 		defer{ ++status.progress; };
 
@@ -2659,7 +2866,7 @@ private:
 		defer { node_stack.pop(); };
 
 		switch (node->kind) {
-#define x(name) case NodeKind::name: if (!typecheck_impl((##name *)node)) return false; break;
+#define x(name) case NodeKind::name: typecheck_impl((##name *)node); break;
 			ENUMERATE_NODE_KIND(x)
 #undef x
 			default:
@@ -2669,16 +2876,14 @@ private:
 		if (auto expression = as<Expression>(node)) {
 			if (!expression->type) {
 				reporter.error(expression->location, "Could not compute the type of this expression.");
-				return false;
+				yield(YieldResult::fail);
 			}
 		}
-		return true;
 	}
-	bool typecheck_impl(Block *block) {
+	void typecheck_impl(Block *block) {
 		scoped_replace(current_block, block);
 		for (auto child : block->children) {
-			if (!typecheck(child))
-				return false;
+			typecheck(child);
 		}
 
 		if (block->children.count) {
@@ -2688,24 +2893,20 @@ private:
 
 		if (!block->type)
 			block->type = get_builtin_type(BuiltinTypeKind::None);
-
-		return true;
 	}
-	bool typecheck_impl(Definition *definition) {
+	void typecheck_impl(Definition *definition) {
 		if (definition->parsed_type) {
-			if (!typecheck(definition->parsed_type))
-				return false;
+			typecheck(definition->parsed_type);
 		} else {
 			assert(definition->initial_value);
 		}
 
 		if (definition->initial_value) {
-			if (!typecheck(definition->initial_value))
-				return false;
+			typecheck(definition->initial_value);
 
 			if (definition->parsed_type) {
 				if (!implicitly_cast(&definition->initial_value, definition->parsed_type, true)) {
-					return false;
+					yield(YieldResult::fail);
 				}
 			}
 
@@ -2713,7 +2914,7 @@ private:
 				case Mutability::constant: {
 					if (!is_constant(definition->initial_value)) {
 						reporter.error(definition->location, "Definition marked constant, but its initial value is not.");
-						return false;
+						yield(YieldResult::fail);
 					}
 					break;
 				}
@@ -2738,33 +2939,24 @@ private:
 				definition->type = definition->initial_value->type;
 			}
 		}
-
-		return true;
 	}
-	bool typecheck_impl(IntegerLiteral *literal) {
+	void typecheck_impl(IntegerLiteral *literal) {
 		literal->type = get_builtin_type(BuiltinTypeKind::UnsizedInteger);
-		return true; 
 	}
-	bool typecheck_impl(BooleanLiteral *literal) {
+	void typecheck_impl(BooleanLiteral *literal) {
 		literal->type = get_builtin_type(BuiltinTypeKind::Bool);
-		return true;
 	}
-	bool typecheck_impl(LambdaHead *head) {
-		if (!typecheck(&head->parameters_block))
-			return false;
+	void typecheck_impl(LambdaHead *head) {
+		typecheck(&head->parameters_block);
 
 		if (head->return_type) {
-			if (!typecheck(head->return_type))
-				return false;
+			typecheck(head->return_type);
 		}
 
 		head->type = get_builtin_type(BuiltinTypeKind::Type);
-
-		return true;
 	}
-	bool typecheck_impl(Lambda *lambda) {
-		if (!typecheck_impl(&lambda->head))
-			return false;
+	void typecheck_impl(Lambda *lambda) {
+		typecheck(&lambda->head);
 
 		lambda->type = &lambda->head;
 
@@ -2777,15 +2969,14 @@ private:
 		if (lambda->body) {
 			scoped_replace(current_block, &lambda->head.parameters_block);
 
-			if (!typecheck(lambda->body))
-				return false;
+			typecheck(lambda->body);
 		}
 
 		if (lambda->head.return_type) {
 			for (auto ret : lambda->returns) {
 				if (!implicitly_cast(&ret->value, lambda->head.return_type, true)) {
 					reporter.info(lambda->head.return_type->location, "Return type specified here:");
-					return false;
+					yield(YieldResult::fail);
 				}
 			}
 		} else {
@@ -2805,7 +2996,7 @@ private:
 
 					if (empty_returns.count > lambda->returns.count) {
 						reporter.error(empty_returns[0]->location, "TODO: Using both valued and empty return statement in a single function is not yet implemented.");
-						return false;
+						yield(YieldResult::fail);
 					}
 
 					if (concrete_return_types.count) {
@@ -2822,7 +3013,7 @@ private:
 							if (!types_match(ret->value->type, lambda->head.return_type)) {
 								reporter.error(ret->location, "Type {} does not match previously deduced return type {}.", ret->value->type, lambda->head.return_type);
 								reporter.info(lambda->returns[0]->location, "First deduced here:");
-								return false;
+								yield(YieldResult::fail);
 							}
 						}
 					}
@@ -2836,9 +3027,8 @@ private:
 		}
 
 		assert(lambda->head.return_type);
-		return true;
 	}
-	bool typecheck_impl(Name *name) {
+	void typecheck_impl(Name *name) {
 		for (auto block = current_block; block; block = block->parent) {
 			if (auto found_definitions = block->definition_map.find(name->name)) {
 				auto definitions = found_definitions->value;
@@ -2858,7 +3048,7 @@ private:
 								if (parent_index < definition_index) {
 									reporter.error(name->location, "Can't access definition because it is declared after.");
 									reporter.info(definition->location, "Here is the definition.");
-									return false;
+									yield(YieldResult::fail);
 								}
 								break;
 							}
@@ -2883,7 +3073,7 @@ private:
 
 					if (!yield_while_null(name->location, &definition->type)) {
 						reporter.error(name->location, "Couldn't wait for definition type.");
-						return false;
+						yield(YieldResult::fail);
 					}
 
 					if (dependency_entry) {
@@ -2892,7 +3082,7 @@ private:
 					}
 
 					name->type = definition->type;
-					return true;
+					return;
 				}
 
 				if (definitions.count == 0) {
@@ -2903,27 +3093,22 @@ private:
 				for (auto definition : definitions) {
 					reporter.info(definition->location, "Declared here:");
 				}
-				return false;
+				yield(YieldResult::fail);
 			}
 		}
 		reporter.error(name->location, "`{}` was not declared.", name->name);
-		return false;
+		yield(YieldResult::fail);
 	}
-	bool typecheck_impl(Return *return_) {
+	void typecheck_impl(Return *return_) {
 		if (return_->value)
-			if (!typecheck(return_->value))
-				return false;
-
-		return true;
+			typecheck(return_->value);
 	}
-	bool typecheck_impl(Call *call) {
-		if (!typecheck(call->callable))
-			return false;
+	void typecheck_impl(Call *call) {
+		typecheck(call->callable);
 		
 		auto &arguments = call->arguments;
 		for (auto argument : arguments) {
-			if (!typecheck(argument))
-				return false;
+			typecheck(argument);
 		}
 
 		auto lambda = direct_as<Lambda>(call->callable);
@@ -2935,23 +3120,18 @@ private:
 		if (arguments.count != parameters.count) {
 			reporter.error(call->location, "Too {} arguments. Expected {}, but got {}.", arguments.count > parameters.count ? "much"s : "few"s, parameters.count, arguments.count);
 			reporter.info(lambda->location, "Lamda is here:");
-			return false;
+			yield(YieldResult::fail);
 		}
 
 		call->type = lambda->head.return_type;
-
-		return true;
 	}
-	bool typecheck_impl(If *If) {
-		if (!typecheck(If->condition))
-			return false;
+	void typecheck_impl(If *If) {
+		typecheck(If->condition);
 
-		if (!typecheck(If->true_branch))
-			return false;
+		typecheck(If->true_branch);
 
 		if (If->false_branch)
-			if (!typecheck(If->false_branch))
-				return false;
+			typecheck(If->false_branch);
 
 		if (If->false_branch) {
 			if (auto true_branch_expression = as<Expression>(If->true_branch)) {
@@ -2973,12 +3153,12 @@ private:
 							reporter.error(If->location, "Branch types {} and {} don't match in any way.", true_branch_expression->type, false_branch_expression->type);
 							reporter.reports.add(cast_reporter.reports);
 							cast_reporter.reports.clear();
-							return false;
+							yield(YieldResult::fail);
 						} else if (t2f && f2t) {
 							reporter.error(If->location, "Branch types {} and {} are both implicitly convertible to each other.", true_branch_expression->type, false_branch_expression->type);
 							reporter.reports.add(cast_reporter.reports);
 							cast_reporter.reports.clear();
-							return false;
+							yield(YieldResult::fail);
 						} else if (t2f) {
 							assert_always(implicitly_cast(&true_branch_expression, false_branch_expression->type, &cast_reporter, true));
 							If->type = true_branch_expression->type;
@@ -2993,35 +3173,26 @@ private:
 
 		if (!If->type)
 			If->type = get_builtin_type(BuiltinTypeKind::None);
-
-		return true;
 	}
-	bool typecheck_impl(While *While) {
-		if (!typecheck(While->condition))
-			return false;
+	void typecheck_impl(While *While) {
+		typecheck(While->condition);
 
 		if (auto builtin_type = direct_as<BuiltinType>(While->condition->type); !builtin_type || builtin_type->type_kind != BuiltinTypeKind::Bool) {
 			reporter.error(While->condition->location, "Condition type must be Bool.");
-			return false;
+			yield(YieldResult::fail);
 		}
 
-		if (!typecheck(While->body))
-			return false;
-
-		return true;
+		typecheck(While->body);
 	}
-	bool typecheck_impl(Continue *Continue) { return true; }
-	bool typecheck_impl(Break *Break) { return true; }
-	bool typecheck_impl(BuiltinType *type) { 
+	void typecheck_impl(Continue *Continue) {}
+	void typecheck_impl(Break *Break) {}
+	void typecheck_impl(BuiltinType *type) { 
 		type->type = get_builtin_type(BuiltinTypeKind::Type);
-		return true; 
 	}
-	bool typecheck_impl(Binary *binary) {
-		if (!typecheck(binary->left))
-			return false;
+	void typecheck_impl(Binary *binary) {
+		typecheck(binary->left);
 
-		if (!typecheck(binary->right))
-			return false;
+		typecheck(binary->right);
 
 		auto dleft  = direct(binary->left->type);
 		auto dright = direct(binary->right->type);
@@ -3029,22 +3200,23 @@ private:
 		if (binary->operation == BinaryOperation::ass) {
 			if (!is_mutable(binary->left)) {
 				reporter.error(binary->left->location, "This expression is read-only.");
-				return false;
+				yield(YieldResult::fail);
 			}
 			if (!implicitly_cast(&binary->right, binary->left->type, true)) {
-				return false;
+				yield(YieldResult::fail);
 			}
 			binary->type = get_builtin_type(BuiltinTypeKind::None);
-			return true;
+			return;
 		}
 
 		if (auto found = binary_typecheckers.find({ dleft, dright, binary->operation })) {
-			return (this->*found->value)(binary);
+			(this->*found->value)(binary);
+			return;
 		}
 
 		if (!types_match(binary->left->type, binary->right->type)) {
 			reporter.error(binary->location, "No binary operation {} defined for types {} and {}.", binary->operation, binary->left->type, binary->right->type);
-			return false;
+			yield(YieldResult::fail);
 		}
 
 		switch (binary->operation) {
@@ -3066,8 +3238,42 @@ private:
 			default:
 				invalid_code_path("Invalid binary operation {}.", binary->operation);
 		}
+	}
+	void typecheck_impl(Match *match) {
+		typecheck(match->expression);
 
-		return true;
+		make_concrete(match->expression);
+
+		for (auto &Case : match->cases) {
+			typecheck(Case.from);
+			
+			if (!is_constant(Case.from)) {
+				reporter.error(Case.from->location, "Match case expression must be constant.");
+				yield(YieldResult::fail);
+			}
+
+			if (!implicitly_cast(&Case.from, match->expression->type, true))
+				yield(YieldResult::fail);
+
+			typecheck(Case.to);
+		}
+
+		for (auto &Case : match->cases) {
+			if (is_concrete(Case.to->type)) {
+				match->type = Case.to->type;
+			}
+		}
+
+		if (!match->type) {
+			make_concrete(match->cases[0].to);
+			match->type = match->cases[0].to->type;
+		}
+
+		for (auto &Case : match->cases) {
+			if (!implicitly_cast(&Case.to, match->type, true)) {
+				yield(YieldResult::fail);
+			}
+		}
 	}
 
 
@@ -3089,14 +3295,14 @@ public:
 	/////////////////////////
 	// Binary Typecheckers //
 	/////////////////////////
+	
+	inline static HashMap<BinaryTypecheckerKey, void (Typechecker::*)(Binary *)> binary_typecheckers;
 
-	bool bt_take_left(Binary *binary) {
+	void bt_take_left(Binary *binary) {
 		binary->type = binary->left->type;
-		return true;
 	}
-	bool bt_set_bool(Binary *binary) {
+	void bt_set_bool(Binary *binary) {
 		binary->type = get_builtin_type(BuiltinTypeKind::Bool);
-		return true;
 	}
 
 	static void init_binary_typecheckers() {
@@ -3156,25 +3362,23 @@ public:
 void init_globals() {
 	construct(timed_results);
 	timed_results.reserve(16);
-
-	timed_function();
-
 	construct(content_start_to_file_name);
 	construct(retired_typecheckers);
 	construct(global_block);
 	construct(builtin_types);
 	construct(typecheck_entries);
 	construct(deferred_reports);
+
+	GlobalAllocator::init();
 }
 
 struct ParsedArguments {
 	String source_name;
 	u32 thread_count = 0;
+	bool print_ast = false;
 };
 
 Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
-	timed_function();
-
 	ParsedArguments result;
 
 	for (umm i = 1; i < args.count; ++i) {
@@ -3187,6 +3391,8 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 			} else {
 				immediate_reporter.error("Could not parse number after -t. Defaulting to all threads.");
 			}
+		} else if (args[i] == "-print-ast") {
+			result.print_ast = true;
 		} else {
 			if (result.source_name.count) {
 				with(ConsoleColor::red, println("No multiple input files allowed"));
@@ -3206,8 +3412,6 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 }
 
 void init_builtin_types() {
-	timed_function();
-
 #define x(name, value) \
 	static BuiltinType _builtin_type_##name; \
 	{ \
@@ -3221,7 +3425,9 @@ void init_builtin_types() {
 }
 
 s32 tl_main(Span<Span<utf8>> args) {
-	SetConsoleOutputCP(CP_UTF8);
+	auto main_fiber = fiber_init(0);
+
+	set_console_encoding(Encoding_utf8);
 
 	defer {
 		for (auto time : timed_results) {
@@ -3235,6 +3441,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 	init_globals();
 	init_builtin_types();
+	
+	timed_function();
 
 	auto maybe_arguments = parse_arguments(args);
 	if (!maybe_arguments)
@@ -3256,7 +3464,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 	if (!tokens)
 		return 1;
 
-	auto global_nodes = tokens_to_nodes(tokens.value());
+	auto global_nodes = tokens_to_nodes(main_fiber, tokens.value());
 	if (!global_nodes)
 		return 1;
 
@@ -3486,6 +3694,29 @@ s32 tl_main(Span<Span<utf8>> args) {
 			immediate_reporter.warning("Cycle #{}:", i);
 			auto &cycle = cyclic_dependencies[i];
 
+			bool all_are_lambdas = true;
+			Lambda *lambda_with_no_return_type = 0;
+			for (umm j = 0; j < cycle.count; ++j) {
+				auto &entry = typecheck_entries[cycle[j]];
+
+				if (auto definition = as<Definition>(entry.node); definition && definition->initial_value) {
+					if (auto lambda = as<Lambda>(definition->initial_value)) {
+						if (!lambda->head.return_type) {
+							lambda_with_no_return_type = lambda;
+						}
+					} else {
+						all_are_lambdas = false;
+					}
+				} else {
+					all_are_lambdas = false;
+				}
+			}
+
+			if (all_are_lambdas && lambda_with_no_return_type) {
+				immediate_reporter.help(lambda_with_no_return_type->location, "All nodes in this cycle are lambdas. Recursive functions must have explicit return types. This lambda does not have one.");
+			}
+
+
 			for (umm j = 0; j < cycle.count; ++j) {
 				auto &entry = typecheck_entries[cycle[j]];
 				auto &next_entry = typecheck_entries[cycle[(j + 1) % cycle.count]];
@@ -3503,7 +3734,9 @@ s32 tl_main(Span<Span<utf8>> args) {
 		return 1;
 	}
 
-	print_ast(&global_block);
+	if (arguments.print_ast) {
+		print_ast(&global_block);
+	}
 
 	for (auto node : global_nodes.value()) {
 		if (auto definition = as<Definition>(node)) {
@@ -3528,8 +3761,6 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 				println(" ==== EXECUTING main ==== ");
 				defer { println(" ==== EXECUTION ENDED ==== "); };
-
-				timed_block("execution");
 
 				auto call = Call::create();
 				call->callable = lambda;

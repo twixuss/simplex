@@ -12,4 +12,9 @@ set bar=%bar%.
 if "%bar%" equ "................................................................" (
     set bar=
 )
-bin-Debug\simplex.exe a.sp -t0 && goto loop
+bin-Debug\tests
+if "%errorlevel%" equ "0" (
+    goto loop
+)
+echo Exiting. errorlevel=%errorlevel%
+exit /b %errorlevel%
