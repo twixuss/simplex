@@ -2552,6 +2552,20 @@ umm append(StringBuilder &builder, ExecutionContext::Value value) {
 	return append_format(builder, "(unknown ExecutionContext::Value {})", value.kind);
 }
 
+Expression *make_pointer(Expression *type, Mutability mutability) {
+	auto pointer = Unary::create();
+	pointer->expression = type;
+	pointer->operation = UnaryOperation::pointer;
+	pointer->mutability = mutability;
+	return pointer;
+}
+Unary *as_pointer(Expression *type) {
+	if (auto unary = as<Unary>(type); unary && unary->operation == UnaryOperation::pointer) {
+		return unary;
+	}
+	return 0;
+}
+
 bool is_constant(Expression *expression);
 bool is_constant_impl(Block *block) {
 	assert(block->children.count == 1, "not implemented");
@@ -2598,7 +2612,9 @@ bool is_mutable_impl(Binary *binary) { return false; }
 bool is_mutable_impl(Match *) { not_implemented(); }
 bool is_mutable_impl(Unary *unary) {
 	if (unary->operation == UnaryOperation::dereference) {
-		return unary->mutability == Mutability::variable;
+		auto pointer = as_pointer(unary->expression->type);
+		assert(pointer);
+		return pointer->mutability == Mutability::variable;
 	}
 
 	return false;
@@ -2971,19 +2987,6 @@ private:
 	}
 	bool implicitly_cast(Expression **expression, Expression *target_type, bool apply) {
 		return implicitly_cast(expression, target_type, &reporter, apply);
-	}
-
-	Expression *make_pointer(Expression *type) {
-		auto pointer = Unary::create();
-		pointer->expression = type;
-		pointer->operation = UnaryOperation::pointer;
-		return pointer;
-	}
-	Unary *as_pointer(Expression *type) {
-		if (auto unary = as<Unary>(type); unary && unary->operation == UnaryOperation::pointer) {
-			return unary;
-		}
-		return 0;
 	}
 
 	void why_is_this_immutable(Expression *expr) {
@@ -3445,12 +3448,11 @@ private:
 			}
 			case UnaryOperation::addr: {
 				if (auto name = as<Name>(unary->expression)) {
-					unary->mutability = name->definition->mutability;
+					unary->type = make_pointer(unary->expression->type, name->definition->mutability);
 				} else {
 					reporter.error(unary->location, "You can take address of names only.");
 					yield(YieldResult::fail);
 				}
-				unary->type = make_pointer(unary->expression->type);
 				break;
 			}
 			default:

@@ -19,6 +19,9 @@
             <Item Name="[value]" Condition="kind==NodeKind::While              " Optional="true">*(While              *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::Continue           " Optional="true">*(Continue           *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::Break              " Optional="true">*(Break              *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Binary             " Optional="true">*(Binary             *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Match              " Optional="true">*(Match              *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Unary              " Optional="true">*(Unary              *)this</Item>
         </Expand>
     </Type>
     <Type Name="Name">
