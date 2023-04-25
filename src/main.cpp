@@ -312,6 +312,16 @@ using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, GlobalAllocator>;
 	x(bslass, "<<=", 1) \
 	x(bsrass, ">>=", 1) \
 
+// #define x(name, token)
+// #define y(name)
+#define ENUMERATE_UNARY_OPERATIONS(x, y) \
+	x(plus, "+") \
+	x(minus, "-") \
+	x(star, "*") \
+	x(addr, "&") \
+	y(pointer) \
+	y(dereference) \
+
 #define ENUMERATE_TOKEN_KIND(x, y) \
 	y(eof, '\0') \
 	y(eol, '\n') \
@@ -334,6 +344,7 @@ using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, GlobalAllocator>;
 	x(BuiltinType) \
 	x(Binary) \
 	x(Match) \
+	x(Unary) \
 
 #define ENUMERATE_STATEMENT_KIND(x) \
 	x(Return) \
@@ -464,7 +475,7 @@ struct SourceLocation {
 	List<String> lines;
 };
 
-HashMap<utf8 *, String> content_start_to_file_name;
+GHashMap<utf8 *, String> content_start_to_file_name;
 
 SourceLocation get_source_location(String location) {
 	SourceLocation result;
@@ -923,13 +934,40 @@ enum class BinaryOperation : u16 {
 #undef x
 };
 
+enum class UnaryOperation : u16 {
+#define x(name, token) name = const_string_to_token_kind(token##s),
+#define y(name)
+	ENUMERATE_UNARY_OPERATIONS(x, y)
+#undef y
+#undef x
+
+	_unused = 0xefff,
+
+#define x(name, token)
+#define y(name) name,
+	ENUMERATE_UNARY_OPERATIONS(x, y)
+#undef y
+#undef x
+};
+
 umm append(StringBuilder &builder, BinaryOperation operation) {
 	switch (operation) {
 #define x(name, token, precedence) case BinaryOperation::name: return append(builder, token);
 		ENUMERATE_BINARY_OPERATIONS(x)
 #undef x
 	}
-	return append(builder, "(unknown binary)");
+	return append_format(builder, "(unknown binary {})", (u32)operation);
+}
+
+umm append(StringBuilder &builder, UnaryOperation operation) {
+	switch (operation) {
+#define x(name, token) case UnaryOperation::name: return append(builder, token);
+#define y(name) case UnaryOperation::name: return append(builder, #name);
+		ENUMERATE_UNARY_OPERATIONS(x, y)
+#undef y
+#undef x
+	}
+	return append_format(builder, "(unknown unary {})", (u32)operation);
 }
 
 u32 get_precedence(BinaryOperation operation) {
@@ -945,6 +983,17 @@ Optional<BinaryOperation> as_binary_operation(TokenKind kind) {
 	switch (kind) {
 #define x(name, token, precedence) case (TokenKind)const_string_to_token_kind(token##s): return BinaryOperation::name;
 		ENUMERATE_BINARY_OPERATIONS(x)
+#undef x
+	}
+	return {};
+}
+
+Optional<UnaryOperation> as_unary_operation(TokenKind kind) {
+	switch (kind) {
+#define x(name, token) case (TokenKind)const_string_to_token_kind(token##s): return UnaryOperation::name;
+#define y(name)
+		ENUMERATE_UNARY_OPERATIONS(x, y)
+#undef y
 #undef x
 	}
 	return {};
@@ -1158,6 +1207,11 @@ DEFINE_EXPRESSION(Match) {
 
 	Expression *expression = 0;
 	GList<Case> cases;
+};
+DEFINE_EXPRESSION(Unary) {
+	Expression *expression = 0;
+	UnaryOperation operation = {};
+	Mutability mutability = {};
 };
 DEFINE_STATEMENT(Return) {
 	Expression *value = 0;
@@ -1494,6 +1548,12 @@ void print_ast_impl(Match *match) {
 	print_tabs();
 	print("}");
 }
+void print_ast_impl(Unary *unary) {
+	print('{');
+	print(unary->operation);
+	print_ast(unary->expression);
+	print('}');
+}
 void print_ast(Node *node) {
 	switch (node->kind) {
 #define x(name) case NodeKind::name: return print_ast_impl((##name *)node);
@@ -1813,6 +1873,10 @@ struct Parser {
 					return lambda;
 				}
 
+				if (token->kind == '{') {
+					reporter.warning(token->string, "Did you mean this to be a lambda? If so you missed an '=>'.");
+				}
+
 				// LEAK: the rest of the lambda is unused.
 				return &lambda->head;
 			}
@@ -1971,10 +2035,22 @@ struct Parser {
 				return type;
 			}
 
-			default: 
+			default: {
+				if (auto operation = as_unary_operation(token->kind)) {
+					auto unop = Unary::create();
+					unop->operation = operation.value();
+					unop->location = token->string;
+					next();
+					skip_lines();
+					unop->expression = parse_expression_1();
+					unop->location = {unop->location.begin(), unop->expression->location.end()};
+					return unop;
+				}
+
 				reporter.error(token->string, "Unexpected token '{}' when parsing expression.", *token);
 				yield(false);
 				return 0;
+			}
 		}
 	}
 	Node *parse_statement() {
@@ -2052,8 +2128,6 @@ struct Parser {
 		fiber_yield(parent_fiber);
 	}
 	void main() {
-		defer { reporter.print_all(); };
-
 		scoped_replace(debug_current_location, {});
 
 		while (true) {
@@ -2158,6 +2232,7 @@ Optional<List<Node *>> tokens_to_nodes(Fiber parent_fiber, Span<Token> tokens) {
 	Parser parser = {};
 	parser.parent_fiber = parent_fiber;
 	parser.token = tokens.data;
+	defer { parser.reporter.print_all(); };
 
 	auto fiber = fiber_create(Parser::fiber_main, &parser);
 	fiber_yield(fiber);
@@ -2175,6 +2250,7 @@ Optional<List<Node *>> tokens_to_nodes(Fiber parent_fiber, Span<Token> tokens) {
 	x(boolean) \
 	x(lambda) \
 	x(type) \
+	x(pointer) \
 	x(break_) \
 	x(continue_) \
 	x(return_) \
@@ -2201,10 +2277,11 @@ struct ExecutionContext {
 		bool boolean = false;
 		Lambda *lambda = 0;
 		Expression *type = 0;
+		Value *pointer = 0;
 	};
 
 	struct Scope {
-		// Make this pointer-stable just in case.
+		// This needs to be pointer-stable
 		BucketHashMap<Definition *, Value> variables;
 	};
 
@@ -2218,6 +2295,47 @@ struct ExecutionContext {
 		ExecutionContext result;
 		result.scope_stack.add(); // global scope
 		return result;
+	}
+
+	Value *load_address(Expression *expression) {
+		scoped_replace(debug_current_location, expression->location);
+
+		switch (expression->kind) {
+#define x(name) case NodeKind::name: return load_address_impl((##name *)expression);
+			ENUMERATE_EXPRESSION_KIND(x)
+#undef x
+		}
+		invalid_code_path();
+	}
+	Value *load_address_impl(IntegerLiteral *) { invalid_code_path(); }
+	Value *load_address_impl(BooleanLiteral *) { invalid_code_path(); }
+	Value *load_address_impl(Definition *definition) {
+		for (auto &scope : reverse_iterate(scope_stack)) {
+			if (auto found = scope.variables.find(definition)) {
+				return &found->value;
+			}
+		}
+		invalid_code_path();
+	}
+	Value *load_address_impl(Block *) { not_implemented(); }
+	Value *load_address_impl(Lambda *) { not_implemented(); }
+	Value *load_address_impl(LambdaHead *) { invalid_code_path(); }
+	Value *load_address_impl(Name *name) {
+		assert(name->definition);
+		return load_address_impl(name->definition);
+	}
+	Value *load_address_impl(Call *) { not_implemented(); }
+	Value *load_address_impl(If *) { not_implemented(); }
+	Value *load_address_impl(BuiltinType *) { not_implemented(); }
+	Value *load_address_impl(Binary *) { not_implemented(); }
+	Value *load_address_impl(Match *) { not_implemented(); }
+	Value *load_address_impl(Unary *unary) {
+		if (unary->operation == UnaryOperation::dereference) {
+			auto pointer = execute(unary->expression);
+			assert(pointer.kind == ValueKind::pointer);
+			return pointer.pointer;
+		}
+		not_implemented();
 	}
 
 	Value execute(Node *node) {
@@ -2373,16 +2491,8 @@ struct ExecutionContext {
 	}
 	Value execute_impl(Binary *binary) {
 		if (binary->operation == BinaryOperation::ass) {
-			if (auto name = as<Name>(binary->left)) {
-				auto stored_value = get_stored_value(name);
-				if (!stored_value) {
-					immediate_reporter.error(name->location, "Could not find stored value for this name.");
-					return {};
-				}
-				*stored_value = execute(binary->right);
-			} else {
-				immediate_reporter.error(binary->location, "TODO: Left expression must be a name for now.");
-			}
+			auto address = load_address(binary->left);
+			*address = execute(binary->right);
 			return {};
 		}
 
@@ -2421,15 +2531,14 @@ struct ExecutionContext {
 
 		invalid_code_path(match->location, "match did not match value {}", value);
 	}
-
-	Value *get_stored_value(Name *name) {
-		assert(name->definition);
-		for (auto &scope : reverse_iterate(scope_stack)) {
-			if (auto found = scope.variables.find(name->definition)) {
-				return &found->value;
+	Value execute_impl(Unary *unary) {
+		switch (unary->operation) {
+			case UnaryOperation::addr: {
+				return { .kind = ValueKind::pointer, .pointer = load_address(unary->expression) };
 			}
+			default:
+				not_implemented();
 		}
-		invalid_code_path();
 	}
 };
 
@@ -2463,6 +2572,7 @@ bool is_constant_impl(If *If) { not_implemented(); }
 bool is_constant_impl(BuiltinType *type) { return true; }
 bool is_constant_impl(Binary *binary) { return is_constant(binary->left) && is_constant(binary->right); }
 bool is_constant_impl(Match *) { not_implemented(); }
+bool is_constant_impl(Unary *) { not_implemented(); }
 bool is_constant(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
@@ -2486,6 +2596,13 @@ bool is_mutable_impl(If *If) { not_implemented(); }
 bool is_mutable_impl(BuiltinType *type) { return false; }
 bool is_mutable_impl(Binary *binary) { return false; }
 bool is_mutable_impl(Match *) { not_implemented(); }
+bool is_mutable_impl(Unary *unary) {
+	if (unary->operation == UnaryOperation::dereference) {
+		return unary->mutability == Mutability::variable;
+	}
+
+	return false;
+}
 bool is_mutable(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
@@ -2856,6 +2973,39 @@ private:
 		return implicitly_cast(expression, target_type, &reporter, apply);
 	}
 
+	Expression *make_pointer(Expression *type) {
+		auto pointer = Unary::create();
+		pointer->expression = type;
+		pointer->operation = UnaryOperation::pointer;
+		return pointer;
+	}
+	Unary *as_pointer(Expression *type) {
+		if (auto unary = as<Unary>(type); unary && unary->operation == UnaryOperation::pointer) {
+			return unary;
+		}
+		return 0;
+	}
+
+	void why_is_this_immutable(Expression *expr) {
+		if (auto unary = as<Unary>(expr)) {
+			if (unary->operation == UnaryOperation::dereference) {
+				if (auto name = as<Name>(unary->expression)) {
+					reporter.info(name->definition->location, "Because {} is a pointer to {}.", name->name, name->definition->mutability);
+					if (name->definition->initial_value) {
+						why_is_this_immutable(name->definition->initial_value);
+					}
+				}
+			} else if (unary->operation == UnaryOperation::addr) {
+				if (auto name = as<Name>(unary->expression)) {
+					reporter.info(name->definition->location, "Because {} is marked as {}. Mark it with `var` instead to make it mutable.", name->name, name->definition->mutability);
+				}
+			}
+		} else if (auto name = as<Name>(expr)) {
+			reporter.info(name->definition->location, "Because {} is a pointer to {}.", name->name, name->definition->mutability);
+			why_is_this_immutable(name->definition->initial_value);
+		}
+	}
+
 	void typecheck(Node *node) {
 		++status.progress;
 		defer{ ++status.progress; };
@@ -3199,7 +3349,9 @@ private:
 
 		if (binary->operation == BinaryOperation::ass) {
 			if (!is_mutable(binary->left)) {
-				reporter.error(binary->left->location, "This expression is read-only.");
+				reporter.error(binary->left->location, "This expression can not be modified.");
+				why_is_this_immutable(binary->left);
+
 				yield(YieldResult::fail);
 			}
 			if (!implicitly_cast(&binary->right, binary->left->type, true)) {
@@ -3275,6 +3427,37 @@ private:
 			}
 		}
 	}
+	void typecheck_impl(Unary *unary) {
+		typecheck(unary->expression);
+
+		switch (unary->operation) {
+			case UnaryOperation::star: {
+				if (types_match(unary->expression->type, BuiltinTypeKind::Type)) {
+					unary->operation = UnaryOperation::pointer;
+					unary->type = get_builtin_type(BuiltinTypeKind::Type);
+				} else if (auto pointer = as_pointer(unary->expression->type)) {
+					unary->operation = UnaryOperation::dereference;
+					unary->type = pointer->expression;
+				} else {
+					not_implemented();
+				}
+				break;
+			}
+			case UnaryOperation::addr: {
+				if (auto name = as<Name>(unary->expression)) {
+					unary->mutability = name->definition->mutability;
+				} else {
+					reporter.error(unary->location, "You can take address of names only.");
+					yield(YieldResult::fail);
+				}
+				unary->type = make_pointer(unary->expression->type);
+				break;
+			}
+			default:
+				not_implemented();
+				break;
+		}
+	}
 
 
 	u32 debug_thread_id = 0;
@@ -3296,7 +3479,7 @@ public:
 	// Binary Typecheckers //
 	/////////////////////////
 	
-	inline static HashMap<BinaryTypecheckerKey, void (Typechecker::*)(Binary *)> binary_typecheckers;
+	inline static GHashMap<BinaryTypecheckerKey, void (Typechecker::*)(Binary *)> binary_typecheckers;
 
 	void bt_take_left(Binary *binary) {
 		binary->type = binary->left->type;
