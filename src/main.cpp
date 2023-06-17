@@ -1347,8 +1347,13 @@ bool types_match(BuiltinTypeKind a, Expression *b) {
 	return types_match(b, a);
 }
 
+bool is_type(Expression *expression) {
+	return types_match(expression->type, BuiltinTypeKind::Type);
+}
+
 bool is_integer(Expression *type) {
 	type = direct(type);
+	assert(is_type(type));
 	if (auto builtin_type = as<BuiltinType>(type)) {
 		switch (builtin_type->type_kind) {
 			case BuiltinTypeKind::U8:
@@ -1365,9 +1370,40 @@ bool is_integer(Expression *type) {
 
 	return false;
 }
+bool is_signed_integer(Expression *type) {
+	type = direct(type);
+	assert(is_type(type));
+	if (auto builtin_type = as<BuiltinType>(type)) {
+		switch (builtin_type->type_kind) {
+			case BuiltinTypeKind::S8:
+			case BuiltinTypeKind::S16:
+			case BuiltinTypeKind::S32:
+			case BuiltinTypeKind::S64:
+				return true;
+		}
+	}
+
+	return false;
+}
+bool is_unsigned_integer(Expression *type) {
+	type = direct(type);
+	assert(is_type(type));
+	if (auto builtin_type = as<BuiltinType>(type)) {
+		switch (builtin_type->type_kind) {
+			case BuiltinTypeKind::U8:
+			case BuiltinTypeKind::U16:
+			case BuiltinTypeKind::U32:
+			case BuiltinTypeKind::U64:
+				return true;
+		}
+	}
+
+	return false;
+}
 
 bool is_concrete(Expression *type) {
 	type = direct(type);
+	assert(is_type(type));
 	if (auto builtin_type = as<BuiltinType>(type)) {
 		switch (builtin_type->type_kind) {
 			case BuiltinTypeKind::UnsizedInteger:
@@ -2269,7 +2305,8 @@ Optional<List<Node *>> tokens_to_nodes(Fiber parent_fiber, Span<Token> tokens) {
 //#define x(name)
 #define ENUMERATE_EXECUTION_VALUE_KIND \
 	x(none) \
-	x(integer) \
+	x(u64) \
+	x(s64) \
 	x(boolean) \
 	x(lambda) \
 	x(type) \
@@ -2296,11 +2333,14 @@ struct ExecutionContext {
 
 	struct Value {
 		ValueKind kind = {};
-		u64 integer = 0;
-		bool boolean = false;
-		Lambda *lambda = 0;
-		Expression *type = 0;
-		Value *pointer = 0;
+		union {
+			u64 u64;
+			s64 s64;
+			bool boolean;
+			Lambda *lambda;
+			Expression *type;
+			Value *pointer;
+		};
 	};
 
 	struct Scope {
@@ -2340,25 +2380,25 @@ struct ExecutionContext {
 		}
 		invalid_code_path();
 	}
-	Value *load_address_impl(Block *) { not_implemented(); }
-	Value *load_address_impl(Lambda *) { not_implemented(); }
+	Value *load_address_impl(Block *) { invalid_code_path(); }
+	Value *load_address_impl(Lambda *) { invalid_code_path(); }
 	Value *load_address_impl(LambdaHead *) { invalid_code_path(); }
 	Value *load_address_impl(Name *name) {
 		assert(name->definition);
 		return load_address_impl(name->definition);
 	}
-	Value *load_address_impl(Call *) { not_implemented(); }
-	Value *load_address_impl(If *) { not_implemented(); }
-	Value *load_address_impl(BuiltinType *) { not_implemented(); }
-	Value *load_address_impl(Binary *) { not_implemented(); }
-	Value *load_address_impl(Match *) { not_implemented(); }
+	Value *load_address_impl(Call *) { invalid_code_path(); }
+	Value *load_address_impl(If *) { invalid_code_path(); }
+	Value *load_address_impl(BuiltinType *) { invalid_code_path(); }
+	Value *load_address_impl(Binary *) { invalid_code_path(); }
+	Value *load_address_impl(Match *) { invalid_code_path(); }
 	Value *load_address_impl(Unary *unary) {
 		if (unary->operation == UnaryOperation::dereference) {
 			auto pointer = execute(unary->expression);
 			assert(pointer.kind == ValueKind::pointer);
 			return pointer.pointer;
 		}
-		not_implemented();
+		invalid_code_path();
 	}
 
 	Value execute(Node *node) {
@@ -2372,7 +2412,13 @@ struct ExecutionContext {
 		invalid_code_path();
 	}
 	Value execute_impl(IntegerLiteral *literal) {
-		return { .kind = ValueKind::integer, .integer = literal->value };
+		if (::is_unsigned_integer(literal->type))
+			return { .kind = ValueKind::u64, .u64 = literal->value };
+		if (::is_signed_integer(literal->type))
+			return { .kind = ValueKind::s64, .s64 = (s64)literal->value };
+
+		invalid_code_path();
+		return {};
 	}
 	Value execute_impl(BooleanLiteral *literal) {
 		return { .kind = ValueKind::boolean, .boolean = literal->value };
@@ -2443,7 +2489,7 @@ struct ExecutionContext {
 			auto name = lambda->definition->name;
 
 			if (name == u8"println"s) {
-				println(argument_values[0].integer);
+				println(argument_values[0].s64);
 				return Value{};
 			}
 			
@@ -2522,19 +2568,34 @@ struct ExecutionContext {
 		auto left = execute(binary->left);
 		auto right = execute(binary->right);
 
-		assert(left.kind == ValueKind::integer);
-		assert(right.kind == ValueKind::integer);
-		switch (binary->operation) {
-			case BinaryOperation::add: return { .kind = ValueKind::integer, .integer = left.integer +  right.integer };
-			case BinaryOperation::sub: return { .kind = ValueKind::integer, .integer = left.integer -  right.integer };
-			case BinaryOperation::mul: return { .kind = ValueKind::integer, .integer = left.integer +  right.integer };
-			case BinaryOperation::div: return { .kind = ValueKind::integer, .integer = left.integer /  right.integer };
-			case BinaryOperation::equ: return { .kind = ValueKind::boolean, .boolean = left.integer == right.integer };
-			case BinaryOperation::neq: return { .kind = ValueKind::boolean, .boolean = left.integer != right.integer };
-			case BinaryOperation::les: return { .kind = ValueKind::boolean, .boolean = left.integer <  right.integer };
-			case BinaryOperation::leq: return { .kind = ValueKind::boolean, .boolean = left.integer <= right.integer };
-			case BinaryOperation::grt: return { .kind = ValueKind::boolean, .boolean = left.integer >  right.integer };
-			case BinaryOperation::grq: return { .kind = ValueKind::boolean, .boolean = left.integer >= right.integer };
+		if (left.kind == ValueKind::u64 && right.kind == ValueKind::u64) {
+			switch (binary->operation) {
+				case BinaryOperation::add: return { .kind = ValueKind::u64, .u64 = left.u64 + right.u64 };
+				case BinaryOperation::sub: return { .kind = ValueKind::u64, .u64 = left.u64 - right.u64 };
+				case BinaryOperation::mul: return { .kind = ValueKind::u64, .u64 = left.u64 + right.u64 };
+				case BinaryOperation::div: return { .kind = ValueKind::u64, .u64 = left.u64 / right.u64 };
+				case BinaryOperation::equ: return { .kind = ValueKind::boolean, .boolean = left.u64 == right.u64 };
+				case BinaryOperation::neq: return { .kind = ValueKind::boolean, .boolean = left.u64 != right.u64 };
+				case BinaryOperation::les: return { .kind = ValueKind::boolean, .boolean = left.u64 <  right.u64 };
+				case BinaryOperation::leq: return { .kind = ValueKind::boolean, .boolean = left.u64 <= right.u64 };
+				case BinaryOperation::grt: return { .kind = ValueKind::boolean, .boolean = left.u64 >  right.u64 };
+				case BinaryOperation::grq: return { .kind = ValueKind::boolean, .boolean = left.u64 >= right.u64 };
+				default: invalid_code_path();
+			}
+		} else if (left.kind == ValueKind::s64 && right.kind == ValueKind::s64) {
+			switch (binary->operation) {
+				case BinaryOperation::add: return { .kind = ValueKind::s64, .s64 = left.s64 + right.s64 };
+				case BinaryOperation::sub: return { .kind = ValueKind::s64, .s64 = left.s64 - right.s64 };
+				case BinaryOperation::mul: return { .kind = ValueKind::s64, .s64 = left.s64 + right.s64 };
+				case BinaryOperation::div: return { .kind = ValueKind::s64, .s64 = left.s64 / right.s64 };
+				case BinaryOperation::equ: return { .kind = ValueKind::boolean, .boolean = left.s64 == right.s64 };
+				case BinaryOperation::neq: return { .kind = ValueKind::boolean, .boolean = left.s64 != right.s64 };
+				case BinaryOperation::les: return { .kind = ValueKind::boolean, .boolean = left.s64 <  right.s64 };
+				case BinaryOperation::leq: return { .kind = ValueKind::boolean, .boolean = left.s64 <= right.s64 };
+				case BinaryOperation::grt: return { .kind = ValueKind::boolean, .boolean = left.s64 >  right.s64 };
+				case BinaryOperation::grq: return { .kind = ValueKind::boolean, .boolean = left.s64 >= right.s64 };
+				default: invalid_code_path();
+			}
 		}
 
 		immediate_reporter.error(binary->location, "Invalid binary operation");
@@ -2542,12 +2603,12 @@ struct ExecutionContext {
 	}
 	Value execute_impl(Match *match) {
 		auto value = execute(match->expression);
-		assert(value.kind == ValueKind::integer, "Only this is implemented");
+		assert(value.kind == ValueKind::s64, "Only this is implemented");
 
 		for (auto Case : match->cases) {
 			auto from = execute(Case.from);
-			assert(from.kind == ValueKind::integer, "Only this is implemented");
-			if (value.integer == from.integer) {
+			assert(from.kind == ValueKind::s64, "Only this is implemented");
+			if (value.s64 == from.s64) {
 				return execute(Case.to);
 			}
 		}
@@ -2556,11 +2617,23 @@ struct ExecutionContext {
 	}
 	Value execute_impl(Unary *unary) {
 		switch (unary->operation) {
-			case UnaryOperation::addr: {
-				return { .kind = ValueKind::pointer, .pointer = load_address(unary->expression) };
+			case UnaryOperation::plus: return execute(unary->expression);
+			case UnaryOperation::minus: {
+				auto value = execute(unary->expression);
+				switch (value.kind) {
+					case ValueKind::s64: value.s64 = -value.s64; break;
+					default: invalid_code_path();
+				}
+				return value;
+			}
+			case UnaryOperation::addr: return { .kind = ValueKind::pointer, .pointer = load_address(unary->expression) };
+			case UnaryOperation::dereference: {
+				auto pointer = execute(unary->expression);
+				assert(pointer.kind == ValueKind::pointer);
+				return *pointer.pointer;
 			}
 			default:
-				not_implemented();
+				invalid_code_path();
 		}
 	}
 };
@@ -2568,7 +2641,8 @@ struct ExecutionContext {
 umm append(StringBuilder &builder, ExecutionContext::Value value) {
 	switch (value.kind) {
 		case ExecutionContext::ValueKind::none: return 0;
-		case ExecutionContext::ValueKind::integer: return append(builder, value.integer);
+		case ExecutionContext::ValueKind::u64: return append(builder, value.u64);
+		case ExecutionContext::ValueKind::s64: return append(builder, value.s64);
 		case ExecutionContext::ValueKind::boolean: return append(builder, value.boolean);
 		case ExecutionContext::ValueKind::type:    return append(builder, value.type);
 	}
@@ -2840,6 +2914,35 @@ private:
 		}
 	}
 
+	void propagate_concrete_type(Expression *expression, Expression *type) {
+		switch (expression->kind) {
+			case NodeKind::IntegerLiteral: 
+			case NodeKind::Name:
+				expression->type = type;
+				break;
+			case NodeKind::Unary: {
+				auto unary = (Unary *)expression;
+				unary->type = type;
+				propagate_concrete_type(unary->expression, type);
+				break;
+			}
+			case NodeKind::If: {
+				auto If = (::If *)expression;
+				If->type = type;
+
+				if (auto true_expression = as<Expression>(If->true_branch)) {
+					if (auto false_expression = as<Expression>(If->false_branch)) {
+						propagate_concrete_type(true_expression, type);
+						propagate_concrete_type(false_expression, type);
+					}
+				}
+
+				break;
+			}
+			default: invalid_code_path(); break;
+		}
+	}
+
 	bool implicitly_cast(Expression **_expression, Expression *target_type, Reporter *reporter, bool apply) {
 		auto expression = *_expression;
 		defer {
@@ -2854,15 +2957,12 @@ private:
 			return true;
 		}
 
-		switch (expression->kind) {
-			case NodeKind::IntegerLiteral: {
-				if (::is_integer(direct_target_type)) {
-					if (apply) {
-						expression->type = target_type;
-					}
-					return true;
+		if (types_match(direct_source_type, BuiltinTypeKind::UnsizedInteger)) {
+			if (::is_integer(direct_target_type)) {
+				if (apply) {
+					propagate_concrete_type(expression, target_type);
 				}
-				break;
+				return true;
 			}
 		}
 
@@ -3002,6 +3102,8 @@ private:
 				if (!implicitly_cast(&definition->initial_value, definition->parsed_type, true)) {
 					yield(YieldResult::fail);
 				}
+			} else {
+				make_concrete(definition->initial_value);
 			}
 
 			switch (definition->mutability) {
@@ -3206,8 +3308,12 @@ private:
 		}
 
 		auto lambda = direct_as<Lambda>(call->callable);
-		assert(lambda, "Other stuff not implemented");
-		assert(lambda->head.return_type, "TODO: wait here");
+		assert(lambda, "Only lambdas can be called for now");
+
+		if (!yield_while_null(lambda->location, &lambda->head.return_type)) {
+			reporter.error(lambda->location, "Could not wait for lambda's return type");
+			yield(YieldResult::fail);
+		}
 
 		auto &parameters = lambda->head.parameters_block.definition_list;
 
@@ -3215,6 +3321,14 @@ private:
 			reporter.error(call->location, "Too {} arguments. Expected {}, but got {}.", arguments.count > parameters.count ? "much"s : "few"s, parameters.count, arguments.count);
 			reporter.info(lambda->location, "Lamda is here:");
 			yield(YieldResult::fail);
+		}
+
+		for (umm i = 0; i < arguments.count; ++i) {
+			auto &argument = arguments[i];
+			auto &parameter = lambda->head.parameters_block.definition_list[i];
+			if (!implicitly_cast(&argument, parameter->type, true)) {
+				yield(YieldResult::fail);
+			}
 		}
 
 		call->type = lambda->head.return_type;
@@ -3364,7 +3478,7 @@ private:
 			make_concrete(match->cases[0].to);
 			match->type = match->cases[0].to->type;
 		}
-
+		
 		for (auto &Case : match->cases) {
 			if (!implicitly_cast(&Case.to, match->type, true)) {
 				yield(YieldResult::fail);
@@ -3383,7 +3497,9 @@ private:
 					unary->operation = UnaryOperation::dereference;
 					unary->type = pointer->expression;
 				} else {
-					not_implemented();
+					reporter.error(unary->location, "Star is used to create pointer types and to dereference pointer values, but this expression is not a type nor a pointer.");
+					reporter.info(unary->expression->location, "Type of this expression is {}.", unary->expression->type);
+					yield(YieldResult::fail);
 				}
 				break;
 			}
@@ -3392,6 +3508,48 @@ private:
 					unary->type = make_pointer(unary->expression->type, name->definition->mutability);
 				} else {
 					reporter.error(unary->location, "You can take address of names only.");
+					yield(YieldResult::fail);
+				}
+				break;
+			}
+			case UnaryOperation::plus: {
+				if (auto builtin = as<BuiltinType>(unary->expression->type)) {
+					switch (builtin->type_kind) {
+						case BuiltinTypeKind::UnsizedInteger:
+						case BuiltinTypeKind::U8:
+						case BuiltinTypeKind::U16:
+						case BuiltinTypeKind::U32:
+						case BuiltinTypeKind::U64:
+						case BuiltinTypeKind::S8:
+						case BuiltinTypeKind::S16:
+						case BuiltinTypeKind::S32:
+						case BuiltinTypeKind::S64:
+							unary->type = unary->expression->type;
+							break;
+					}
+				}
+
+				if (!unary->type) {
+					reporter.error(unary->location, "Unary plus can't be applied to expression of type {}", unary->expression->type);
+					yield(YieldResult::fail);
+				}
+				break;
+			}
+			case UnaryOperation::minus: {
+				if (auto builtin = as<BuiltinType>(unary->expression->type)) {
+					switch (builtin->type_kind) {
+						case BuiltinTypeKind::UnsizedInteger:
+						case BuiltinTypeKind::S8:
+						case BuiltinTypeKind::S16:
+						case BuiltinTypeKind::S32:
+						case BuiltinTypeKind::S64:
+							unary->type = unary->expression->type;
+							break;
+					}
+				}
+
+				if (!unary->type) {
+					reporter.error(unary->location, "Unary minus can't be applied to expression of type {}", unary->expression->type);
 					yield(YieldResult::fail);
 				}
 				break;
@@ -3428,6 +3586,27 @@ public:
 		binary->type = binary->left->type;
 	}
 	void bt_set_bool(Binary *binary) {
+		binary->type = get_builtin_type(BuiltinTypeKind::Bool);
+	}
+	void bt_unsized_int_math(Binary *binary) {
+		auto sized = binary->left;
+		auto unsized = binary->right;
+
+		if (is_concrete(unsized)) {
+			Swap(sized, unsized);
+		}
+
+		binary->type = unsized->type = sized->type;
+	}
+	void bt_unsized_int_comp(Binary *binary) {
+		auto sized = binary->left;
+		auto unsized = binary->right;
+
+		if (is_concrete(unsized->type)) {
+			Swap(sized, unsized);
+		}
+
+		unsized->type = sized->type;
 		binary->type = get_builtin_type(BuiltinTypeKind::Bool);
 	}
 
@@ -3477,6 +3656,27 @@ public:
 		MATHABLE(S32);
 		MATHABLE(S64);
 
+#define UNSIZED_INT(t) \
+		x(t, UnsizedInteger, add) = &bt_unsized_int_math; \
+		x(t, UnsizedInteger, sub) = &bt_unsized_int_math; \
+		x(t, UnsizedInteger, mul) = &bt_unsized_int_math; \
+		x(t, UnsizedInteger, div) = &bt_unsized_int_math; \
+		x(t, UnsizedInteger, mod) = &bt_unsized_int_math; \
+		x(t, UnsizedInteger, les) = &bt_unsized_int_comp; \
+		x(t, UnsizedInteger, leq) = &bt_unsized_int_comp; \
+		x(t, UnsizedInteger, grt) = &bt_unsized_int_comp; \
+		x(t, UnsizedInteger, grq) = &bt_unsized_int_comp
+
+		UNSIZED_INT(U8);
+		UNSIZED_INT(U16);
+		UNSIZED_INT(U32);
+		UNSIZED_INT(U64);
+		UNSIZED_INT(S8);
+		UNSIZED_INT(S16);
+		UNSIZED_INT(S32);
+		UNSIZED_INT(S64);
+
+#undef UNSIZED_INT
 #undef MATHABLE
 #undef ORDERABLE
 #undef x
@@ -3576,6 +3776,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 	init_globals();
 	init_builtin_types();
+	Typechecker::init_binary_typecheckers();
 	
 	timed_function();
 
