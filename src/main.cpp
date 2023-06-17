@@ -1,5 +1,3 @@
-// TODO: track current node for assertion messages.
-
 namespace tl {
 template <class, class>
 struct Span;
@@ -135,6 +133,7 @@ struct GlobalAllocator : AllocatorBase<GlobalAllocator> {
 
 	static void init() {
 		base = (u8 *)VirtualAlloc(0, buffer_size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+		assert(base);
 		cursor = base;
 	}
 
@@ -148,6 +147,7 @@ struct GlobalAllocator : AllocatorBase<GlobalAllocator> {
 		if (cursor > base + buffer_size) {
 			// No memory left. Allocate new block.
 			base = (u8 *)VirtualAlloc(0, buffer_size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+			assert(base);
 			cursor = base;
 			target = base;
 		}
@@ -180,7 +180,7 @@ struct GlobalAllocator : AllocatorBase<GlobalAllocator> {
 
 private:
 
-	inline static constexpr umm buffer_size = 2 * GiB;
+	inline static constexpr umm buffer_size = 1 * MiB;
 	inline static u8 *base = 0;
 	inline static u8 *cursor = 0;
 	inline static SpinLock lock;
@@ -191,6 +191,7 @@ using GList = tl::List<T, GlobalAllocator>;
 
 template <class Key, class Value, class Traits = DefaultHashTraits<Key>>
 using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, GlobalAllocator>;
+//using GHashMap = tl::HashMap<Key, Value, Traits>;
 
 #define ENUMERATE_CHARS_ALPHA(x) \
 	x('a') x('A') x('n') x('N') \
@@ -429,7 +430,9 @@ inline umm append(StringBuilder &builder, Token token) {
 // mapping token strings to token kinds. Because all of them
 // are inserted at compile time, panic is not a problem.
 template <umm capacity_, class Key_, class Value_, class Traits = DefaultHashTraits<Key_, true>>
-struct FixedHashMap {
+struct FixedHashMap : Traits {
+	TL_USE_HASH_TRAITS_MEMBERS;
+
 	using Key = Key_;
 	using Value = Value_;
 	using KeyValue = KeyValue<Key, Value>;
@@ -437,11 +440,11 @@ struct FixedHashMap {
 	
 	KeyValue kv[capacity] {};
 	bool init[capacity] {};
-	
-	[[no_unique_address]] Traits traits = {};
+
+	inline constexpr umm get_index_from_key(Key const &key) const { return Traits::get_index_from_key(key, capacity); }
 
 	constexpr bool insert(Key const &key, Value value) {
-		auto index = traits.get_index(key, capacity);
+		auto index = get_index_from_key(key);
 		assert(!init[index]); // NOTE: if theres a compilation error, that means this assertion failed.
 		init[index] = true;
 		kv[index].key = key;
@@ -449,7 +452,7 @@ struct FixedHashMap {
 		return true;
 	}
 	constexpr const KeyValue *find(Key const &key) const {
-		auto index = traits.get_index(key, capacity);
+		auto index = get_index_from_key(key);
 		if (init[index] && kv[index].key == key) {
 			return &kv[index];
 		}
@@ -666,7 +669,8 @@ void assertion_failure_impl(char const *cause_string, char const *expression, ch
 	if (!location.data)
 		location = debug_current_location;
 	immediate_reporter.error(debug_current_location, "COMPILER ERROR: {} {} at {}:{} in function {}", cause_string, expression, file, line, function);
-	println("Message: {}", message);
+	if (message.count)
+		println("Message: {}", message);
 }
 
 void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function) {
@@ -688,8 +692,10 @@ using Tokens = GList<Token>;
 Optional<Tokens> source_to_tokens(String source, String path) {
 	timed_function();
 
+	const umm characters_per_token_prediction = 4;
+
 	Tokens tokens;
-	tokens.reserve(source.count / 4); // NOTE: predict 4 characters per token on average.
+	tokens.reserve(source.count / characters_per_token_prediction);
 
 	utf8 *cursor = source.data;
 
@@ -1102,7 +1108,24 @@ inline umm append(StringBuilder &builder, Mutability mutability) {
 	}
 	return append_format(builder, "(unknown Mutability {})", (u32)mutability);
 }
- 
+
+struct Meaning {
+	Mutability value = {};
+};
+
+Meaning meaning(Mutability mutability) {
+	return {mutability};
+}
+
+inline umm append(StringBuilder &builder, Meaning mutability) {
+	switch (mutability.value) {
+		case Mutability::constant: return append(builder, "constant");
+		case Mutability::readonly: return append(builder, "read-only");
+		case Mutability::variable: return append(builder, "variable");
+	}
+	return append_format(builder, "(unknown Mutability {})", (u32)mutability.value);
+}
+
 
 #define DEFINE_EXPRESSION(name) struct name : Expression, NodeBase<name>
 #define DEFINE_STATEMENT(name) struct name : Statement, NodeBase<name>
@@ -2640,9 +2663,10 @@ enum class YieldResult : u8 {
 
 volatile u32 typechecker_uid_counter;
 
+// TODO: this is redundant
 enum class TypecheckEntryStatus : u8 {
-	suspended,
-	in_progress,
+	unstarted,
+	unfinished,
 	succeeded,
 	failed,
 };
@@ -2650,12 +2674,10 @@ enum class TypecheckEntryStatus : u8 {
 struct TypecheckEntry {
 	Node* node = 0;
 	Typechecker* typechecker = 0;
-	TypecheckEntryStatus status = {};
-	SpinLock lock;
-	u32 last_thread_index = 0;
+	TypecheckEntryStatus status = TypecheckEntryStatus::unstarted;
+
 	SpinLock dependants_lock;
 	List<TypecheckEntry *> dependants;
-	bool dependency_failed = false;
 };
 
 List<TypecheckEntry> typecheck_entries;
@@ -2675,14 +2697,19 @@ u64 get_hash(BinaryTypecheckerKey const &key) {
 	return (u64)key.left_type ^ rotate_left((u64)key.left_type, 21) ^ rotate_left((u64)key.operation, 42);
 }
 
+bool no_more_progress = false;
+
 struct Typechecker {
 	const u32 uid = atomic_add(&typechecker_uid_counter, 1);
+	u32 progress = 0;
 
 	static Typechecker *create(Node *node) {
+		assert(node);
+
 		auto typechecker = [&] {
 			if (auto typechecker_ = with(retired_typecheckers_lock, retired_typecheckers.pop())) {
 				auto typechecker = typechecker_.value();
-				// println("created cached typechecker {}", typechecker->uid);
+				// immediate_reporter.info("created cached typechecker {} for node {}", typechecker->uid, node->location);
 
 				assert(typechecker->debug_stopped);
 				assert(typechecker->yield_result == YieldResult{});
@@ -2699,7 +2726,7 @@ struct Typechecker {
 				((Typechecker *)param)->fiber_main(); 
 			}, typechecker);
 
-			// println("created new typechecker {}", typechecker->uid);
+			// immediate_reporter.info("created new typechecker {} for node {}", typechecker->uid, node->location);
 
 			return typechecker;
 		}();
@@ -2711,7 +2738,9 @@ struct Typechecker {
 		return typechecker;
 	}
 
-	YieldResult continue_typechecking(Fiber parent_fiber, u32 thread_index, TypecheckEntry *entry) {
+	YieldResult continue_typechecking(Fiber parent_fiber, TypecheckEntry *entry) {
+		assert(parent_fiber.handle);
+
 		assert(debug_thread_id == 0);
 		debug_thread_id = get_current_thread_id();
 		defer { debug_thread_id = 0; };
@@ -2720,7 +2749,6 @@ struct Typechecker {
 
 		{
 			scoped_replace(this->parent_fiber, parent_fiber);
-			scoped_replace(this->thread_index, thread_index);
 			scoped_replace(this->entry, entry);
 
 			fiber_yield(fiber);
@@ -2735,7 +2763,6 @@ struct Typechecker {
 	}
 
 	void stop() {
-		status.status = Status::finished;
 		debug_stop();
 	}
 	void retire() {
@@ -2749,115 +2776,28 @@ struct Typechecker {
 	}
 
 private:
-	struct Status {
-		u32 progress = 0;
-
-		enum {
-			working,
-			waiting,
-			finished,
-		} status = {};
-	};
-
-	using TypecheckProgress = List<Status>;
-
 	Fiber parent_fiber = {};
 	Fiber fiber = {};
 	YieldResult yield_result = {};
 	Reporter reporter;
 	Node *initial_node = 0;
 	Block *current_block = 0;
-	Status status;
-	u32 thread_index = -1;
-	TypecheckEntry *entry = 0;
 	List<Node *> node_stack;
-
-	void get_total_progress(TypecheckProgress& progress) {
-		progress.clear();
-
-		for (auto &entry : typecheck_entries) {
-			auto typechecker = entry.typechecker;
-			if (typechecker) {
-				progress.add(typechecker->status);
-			} else {
-				// NOTE: Typechecker was not created yet. This means that progress can always be made.
-				progress.add({ .status = Status::waiting});
-			}
-		}
-	}
-
-	bool has_progress(TypecheckProgress old, TypecheckProgress now) {
-		// NOTE: yield_while does not query the progress before the waiting loop, because if 
-		//       predicate fails the first time, another query will be made almost immediately.
-		if (!old.count)
-			return true;
-
-		auto is_finished = [&](Status s) { return s.status == Status::finished; }; 
-
-		if (all(old, is_finished) && all(now, is_finished))
-			return false;
-
-		for (auto status : now) {
-			if (status.status == Status::working) {
-				return true;
-			}
-		}
-
-		assert(old.count == now.count);
-
-		for (umm i = 0; i < old.count; ++i) {
-			if (now[i].status == Status::finished && old[i].status != Status::finished) {
-				return true;
-			}
-
-			if (now[i].status != Status::waiting || old[i].status == Status::waiting)
-				return true;
-
-			if (now[i].progress > old[i].progress)
-				return true;
-		}
-
-		return false;
-	}
+	TypecheckEntry *entry = 0;
 
 	[[nodiscard]]
 	bool yield_while(String location, auto predicate) {
-		// TODO: Make this more robust. I'm not sure this will never fail to typecheck a valid program.
-
-		TypecheckProgress old_progress;
-		TypecheckProgress current_progress;
-
-		scoped_replace(status.status, Status::waiting);
-
-		// TODO: FIXME: Get rid of this threshold.
-		const int wait_sleep_threshold = 16;
-
-		int iteration = 0;
 		while (true) {
 			if (predicate()) {
-				if (entry->dependency_failed) {
-					return false;
-				}
-
-				if (iteration >= wait_sleep_threshold) {
-					// HACK: This feels bad, but it doesn't fail as much.
-					sleep_nanoseconds(1000);
-				}
-				++iteration;
-
-				get_total_progress(current_progress);
-				if (!has_progress(old_progress, current_progress)) {
-					return false;
-				}
-				Swap(old_progress, current_progress);
-
-				// NOTE: This breaks typechecking...
 				// immediate_reporter.info(location, "Yield");
 
 				yield_smt();
 				switch_thread();
 
 				yield(YieldResult::wait);
+
+				if (no_more_progress)
+					return false;
 			} else {
 				return true;
 			}
@@ -2891,6 +2831,7 @@ private:
 	void fiber_main() {
 		while (true) {
 			try {
+				assert(initial_node);
 				typecheck(initial_node);
 				yield(YieldResult::success);
 			} catch (Unwind) {
@@ -2993,7 +2934,7 @@ private:
 		if (auto unary = as<Unary>(expr)) {
 			if (unary->operation == UnaryOperation::dereference) {
 				if (auto name = as<Name>(unary->expression)) {
-					reporter.info(name->definition->location, "Because {} is a pointer to {}.", name->name, name->definition->mutability);
+					reporter.info(name->definition->location, "Because {} is a pointer to {}.", name->name, meaning(name->definition->mutability));
 					if (name->definition->initial_value) {
 						why_is_this_immutable(name->definition->initial_value);
 					}
@@ -3004,14 +2945,14 @@ private:
 				}
 			}
 		} else if (auto name = as<Name>(expr)) {
-			reporter.info(name->definition->location, "Because {} is a pointer to {}.", name->name, name->definition->mutability);
+			reporter.info(name->definition->location, "Because {} is a pointer to {}.", name->name, meaning(name->definition->mutability));
 			why_is_this_immutable(name->definition->initial_value);
 		}
 	}
 
 	void typecheck(Node *node) {
-		++status.progress;
-		defer{ ++status.progress; };
+		++progress;
+		defer { ++progress; };
 
 		scoped_replace(debug_current_location, node->location);
 
@@ -3544,6 +3485,15 @@ public:
 
 };
 
+u64 get_typechecking_progress() {
+	u64 result = 0;
+	for (auto &entry : typecheck_entries) {
+		if (entry.typechecker)
+			result += entry.typechecker->progress;
+	}
+	return result;
+}
+
 void init_globals() {
 	construct(timed_results);
 	timed_results.reserve(16);
@@ -3630,13 +3580,15 @@ s32 tl_main(Span<Span<utf8>> args) {
 	timed_function();
 
 	auto maybe_arguments = parse_arguments(args);
-	if (!maybe_arguments)
+	if (!maybe_arguments) {
+		immediate_reporter.error("Failed to parse arguments.");
 		return 1;
+	}
 	auto arguments = maybe_arguments.value();
 
 	auto source_contents_buffer = read_entire_file(arguments.source_name, {.extra_space_before = 1, .extra_space_after = 1});
 	if (!source_contents_buffer.data) {
-		with(ConsoleColor::red, println("Could not read input file '{}'", arguments.source_name));
+		immediate_reporter.error("Could not read input file '{}'", arguments.source_name);
 		return 1;
 	}
 	defer { free(source_contents_buffer); };
@@ -3646,13 +3598,17 @@ s32 tl_main(Span<Span<utf8>> args) {
 	content_start_to_file_name.get_or_insert(source_contents.data) = arguments.source_name;
 
 	auto tokens = source_to_tokens(source_contents, arguments.source_name);
-	if (!tokens)
+	if (!tokens) {
+		immediate_reporter.error("Failed to tokenize source code.");
 		return 1;
-
+	}
+	
 	auto global_nodes = tokens_to_nodes(main_fiber, tokens.value());
-	if (!global_nodes)
+	if (!global_nodes) {
+		immediate_reporter.error("Failed to build an ast.");
 		return 1;
-
+	}
+	
 	for (auto node : global_nodes.value())
 		global_block.add(node);
 
@@ -3665,142 +3621,95 @@ s32 tl_main(Span<Span<utf8>> args) {
 		thread_count = min(arguments.thread_count, cpu_info.logical_processor_count);
 	}
 
-	bool failed = false;
+	static SpinLock thread_id_to_fiber_lock; // needed only for safe insertion
+	static HashMap<u32, Fiber> thread_id_to_fiber;
+	
+	thread_id_to_fiber.insert(get_current_thread_id(), main_fiber);
+
+	static auto init_worker_fiber = [] {
+		auto worker_fiber = fiber_init(0);
+		auto thread_id = get_current_thread_id();
+
+		scoped(thread_id_to_fiber_lock);
+		thread_id_to_fiber.insert(thread_id, worker_fiber);
+	};
+
+	ThreadPool thread_pool;
+	init_thread_pool(&thread_pool, thread_count - 1, { .worker_initter = init_worker_fiber });
+	defer { deinit_thread_pool(&thread_pool); };
+
+	static bool failed = false;
 
 	typecheck_entries = map(global_nodes.value(), [&](auto node) { return TypecheckEntry{.node = node}; });
 
-	SpinLock next_entry_lock;
-	auto next_entry = typecheck_entries.data;
 
-	auto get_next_entry = [&] {
-		scoped(next_entry_lock);
+	u32 round_index = 0;
+	while (true) {
+		auto initial_progress = get_typechecking_progress();
 
-		auto result = next_entry;
-		++next_entry;
-		if (next_entry == typecheck_entries.end())
-			next_entry = typecheck_entries.data;
-		return result;
-	};
+		static auto perform_typechecking = [] (TypecheckEntry &entry) {
+			entry.status = TypecheckEntryStatus::unfinished;
 
-	List<Thread *> threads;
-	threads.resize(thread_count);
+			if (!entry.typechecker) {
+				entry.typechecker = Typechecker::create(entry.node);
+			}
 
-	{
-		timed_block("typecheck");
-		for (umm thread_index = 0; thread_index < thread_count; ++thread_index) {
-			threads[thread_index] = create_thread([thread_index, &failed, get_next_entry] { 
-#if 0
-				auto log = open_file(format("tmp/logs/log{}.txt\0"s, thread_index).data, {.read = true, .write = true});
-				current_printer = {
-					.func = [] (Span<utf8> string, void *state) {
-						auto log = File{state};
-						write(log, as_bytes(string));
-					},
-					.state = log.handle
-				};
-#endif
+			auto worker_fiber = thread_id_to_fiber.find(get_current_thread_id())->value;
 
-				auto my_fiber = fiber_init(0);
+			auto result = entry.typechecker->continue_typechecking(worker_fiber, &entry);
 
-				while (true) {
-					auto entry = [&]() -> TypecheckEntry * {
-						u32 done_entries_count = 0;
-						while (true) {
-							auto entry = get_next_entry();
+			entry.typechecker->stop();
 
-							scoped(entry->lock);
+			if (result != YieldResult::wait) {
+				entry.typechecker->retire();
 
-							switch (entry->status) {
-								case TypecheckEntryStatus::suspended: {
-									// NOTE: This prevents a single thread running single typechecker all the time and gives opportunity to do this to others.
-									//       I added this because one thread was waiting on an identifier all the time and i guess it was the only one who could
-									//       hold the entry lock.
-									//       I'm not sure if this really solves the 
-									// if (entry->last_thread_index == thread_index) {
-									// 	entry->last_thread_index = -1;
-									// 	done_entries_count = 0;
-									// 	break;
-									// }
-									// entry->last_thread_index = thread_index;
-
-									entry->status = TypecheckEntryStatus::in_progress;
-									if (!entry->typechecker) {
-										entry->typechecker = Typechecker::create(entry->node);
-									}
-
-									// println("{} took {} {}", thread_index, entry->typechecker->uid, entry->node->location);
-									return entry;
-								}
-								case TypecheckEntryStatus::in_progress: {
-									done_entries_count = 0;
-									break;
-								}
-								case TypecheckEntryStatus::succeeded:
-								case TypecheckEntryStatus::failed: {
-									++done_entries_count;
-									if (done_entries_count == typecheck_entries.count)
-										return 0;
-									break;
-								}
-							}
-						}
-					}();
-
-					if (!entry) {
-						// println("{} exit", thread_index);
-						return;
-					}
-
-					auto result = entry->typechecker->continue_typechecking(my_fiber, thread_index, entry);
-
-					if (result == YieldResult::wait) {
-						// println("{} wait {} {}", thread_index, entry->typechecker->uid, entry->node->location);
-					} else {
-						// println("{} done {} {} {}", thread_index, entry->typechecker->uid, entry->node->location, result == YieldResult::fail ? "fail" : "success");
-					}
-
-					{
-						scoped(entry->lock);
-						entry->typechecker->stop();
-
-						if (result == YieldResult::wait) {
-							entry->status = TypecheckEntryStatus::suspended;
-
-							// NOTE: put waiting entry to the back of the list to give priority to others.
-							//auto found = find(typecheck_entries, entry);
-							//assert(found);
-							//while (found < typecheck_entries.end() && found[1]->status != TypecheckEntryStatus::suspended) {
-							//	Swap(found[0], found[1]);
-							//}
-						} else {
-							entry->typechecker->retire();
-
-							if (result == YieldResult::fail) {
-								entry->status = TypecheckEntryStatus::failed;
-								failed = true;
-
-								scoped(entry->dependants_lock);
-								for (auto dependant : entry->dependants) {
-									dependant->dependency_failed = true;
-								}
-							} else {
-								entry->status = TypecheckEntryStatus::succeeded;
-							}
-						}
-					}
+				if (result == YieldResult::fail) {
+					entry.status = TypecheckEntryStatus::failed;
+					failed = true;
+				} else {
+					entry.status = TypecheckEntryStatus::succeeded;
 				}
-			});
+			}
+		};
+
+		for (auto &entry : typecheck_entries) {
+			if (entry.status == TypecheckEntryStatus::unfinished || entry.status == TypecheckEntryStatus::unstarted) {
+				thread_pool += [&entry] {
+					perform_typechecking(entry);
+				};
+			}
 		}
-	
-		for (umm thread_index = 0; thread_index < thread_count; ++thread_index) {
-			join(threads[thread_index]);
+
+		thread_pool.wait_for_completion();
+
+		auto current_progress = get_typechecking_progress();
+
+		if (current_progress <= initial_progress) {
+
+			// Inform all typecheckers that there's no more progress
+			// and that they should report whatever they couldn't wait for.
+
+			no_more_progress = true;
+
+			for (auto &entry : typecheck_entries) {
+				if (entry.status == TypecheckEntryStatus::unfinished) {
+					thread_pool += [&entry] {
+						perform_typechecking(entry);
+						assert(entry.status != TypecheckEntryStatus::unfinished);
+					};
+				}
+			}
+
+			thread_pool.wait_for_completion();
+
+			break;
 		}
 	}
+
 
 	for (auto &entry : typecheck_entries) {
-		assert(entry.status == TypecheckEntryStatus::succeeded || entry.status == TypecheckEntryStatus::failed);
+		assert(entry.status != TypecheckEntryStatus::unfinished);
 	}
-
 
 	auto find_cyclic_dependencies = [&] {
 		enum class VertexState : u8 {
@@ -3916,6 +3825,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 	}
 
 	if (failed) {
+		immediate_reporter.error("Typechecking failed.");
 		return 1;
 	}
 

@@ -50,10 +50,12 @@ struct RanProcess {
 
 SpinLock stdout_lock;
 
+// FIXME: It seems like not all stdout is read sometimes for some reason... Idk what's wrong because it worked before...
+
 RanProcess run_process(String command) {
 	auto process = start_process(to_utf16(command));
 	assert(is_valid(process));
-
+	
 	u8 buf[256];
 
 	StringBuilder output_builder;
@@ -63,7 +65,7 @@ RanProcess run_process(String command) {
 			break;
 		append(output_builder, Span((utf8 *)buf, bytes_read));
 	}
-
+	
 	bool timed_out = !wait(process, 5000);
 
 	if (timed_out) {
@@ -85,7 +87,6 @@ s32 tl_main(Span<String> arguments) {
 
 	auto test_directory = format(u8"{}\\..\\tests", executable_directory);
 
-	// Don't show error box if test crashes
 	SetErrorMode(SEM_NOGPFAULTERRORBOX);
 
 	List<String> test_filenames;
@@ -124,14 +125,12 @@ s32 tl_main(Span<String> arguments) {
 	u32 n_failed = 0;
 	u32 n_succeeded = 0;
 
-	ThreadPool pool;
-	init_thread_pool(pool, get_cpu_info().logical_processor_count - 1);
-	defer { deinit_thread_pool(&pool); };
-
-	auto queue = make_work_queue(pool);
+	ThreadPool thread_pool;
+	init_thread_pool(&thread_pool, get_cpu_info().logical_processor_count - 1);
+	defer { deinit_thread_pool(&thread_pool); };
 
 	for (auto test_filename : test_filenames) {
-		queue += [&test_directory, test_filename, &n_failed, &n_succeeded] {
+		thread_pool += [&test_directory, test_filename, &n_failed, &n_succeeded] {
 			bool fail = false;
 			defer {
 				atomic_add(&n_failed, fail);
@@ -178,7 +177,7 @@ s32 tl_main(Span<String> arguments) {
 			String expected_program_output = find_param(u8"// PROGRAM OUTPUT "s);
 			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
 
-			auto actual_compiler = run_process(format(u8"simplex \"{}\""s, test_path));
+			auto actual_compiler = run_process(format(u8"simplex -t1 \"{}\""s, test_path));
 
 			if (actual_compiler.timed_out) {
 				do_fail([&] {
@@ -192,6 +191,7 @@ s32 tl_main(Span<String> arguments) {
 					if (!find(actual_compiler.output, expected_string)) {
 						do_fail([&] {
 							with(ConsoleColor::red, print("Compiler output mismatch:\n"));
+							print("Expected exit code: {}. Actual exit code: {}\n", compiler_should_error ? "non 0" : "0", actual_compiler.exit_code);
 							with(ConsoleColor::cyan, print("Expected:\n"));
 							print("{}\n", expected_string);
 							with(ConsoleColor::cyan, print("Actual:\n"));
@@ -277,11 +277,14 @@ s32 tl_main(Span<String> arguments) {
 		};
 	}
 
-	queue.wait_for_completion();
+	thread_pool.wait_for_completion();
 
-	if (n_failed) with(ConsoleColor::red,   print("{}/{} tests failed.\n", n_failed, test_filenames.count));
-	else          with(ConsoleColor::green, print("All {} tests succeeded.\n", test_filenames.count));
-
-	return 0;
+	if (n_failed) {
+		with(ConsoleColor::red,   print("{}/{} tests failed.\n", n_failed, test_filenames.count));
+		return 1;
+	} else {
+		with(ConsoleColor::green, print("All {} tests succeeded.\n", test_filenames.count));
+		return 0;
+	}
 }
 

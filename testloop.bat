@@ -13,7 +13,10 @@ set bar=%bar%.
 if "%bar%" equ "................................................................" (
     set bar=
 )
-bin-Debug\simplex "tests\implicit casts\integers\valid.sp"
+bin-Debug\tests
+:: For some reason errorlevel might be set to some seemingly random value here. 
+:: For example it just printed: All 6 tests succeeded. Exiting. errorlevel=-1073741819
+:: Idk why.
 if "%errorlevel%" equ "0" (
     goto loop
 )
