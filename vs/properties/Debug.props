@@ -3,6 +3,7 @@
   <ImportGroup Label="PropertySheets" />
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup />
+  <PropertyGroup Label="Configuration" />
   <ItemDefinitionGroup>
     <ClCompile>
       <PreprocessorDefinitions>BUILD_DEBUG=1;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>

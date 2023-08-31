@@ -21,13 +21,17 @@
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <ControlFlowGuard>false</ControlFlowGuard>
       <FloatingPointExceptions>false</FloatingPointExceptions>
-      <TreatSpecificWarningsAsErrors>4715</TreatSpecificWarningsAsErrors>
+      <TreatSpecificWarningsAsErrors>4715; 4834; 6031</TreatSpecificWarningsAsErrors>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <ExceptionHandling>false</ExceptionHandling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <WarningLevel>EnableAllWarnings</WarningLevel>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+      <EnableModules>false</EnableModules>
+      <BuildStlModules>false</BuildStlModules>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup />

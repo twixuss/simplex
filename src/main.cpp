@@ -1,3 +1,6 @@
+#include <type_traits>
+#include <xtr1common>
+
 namespace tl {
 template <class, class>
 struct Span;
@@ -78,6 +81,9 @@ struct TimedResult {
 };
 
 List<TimedResult> timed_results;
+
+bool fold_constants = true;
+bool constant_name_inlining = true;
 
 #define timed_block(name) \
 	println("{} ...", name); \
@@ -272,6 +278,9 @@ using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, GlobalAllocator>;
 	x(break) \
 	x(continue) \
 	x(match) \
+	x(typeof) \
+	x(inline) \
+	x(noinline) \
 
 // #define x(name, token, precedence)
 #define ENUMERATE_BINARY_OPERATIONS(x) \
@@ -320,6 +329,7 @@ using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, GlobalAllocator>;
 	x(minus, "-") \
 	x(star, "*") \
 	x(addr, "&") \
+	x(typeof, "typeof") \
 	y(pointer) \
 	y(dereference) \
 
@@ -329,7 +339,7 @@ using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, GlobalAllocator>;
 	y(name, 'a') \
 	y(number, '0') \
 	y(directive, '#') \
-	y(unused__, 0x7fff) \
+	y(_unused, 0x7fff) \
 	ENUMERATE_KEYWORDS(x) \
 
 #define ENUMERATE_EXPRESSION_KIND(x) \
@@ -357,20 +367,39 @@ using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, GlobalAllocator>;
 	ENUMERATE_EXPRESSION_KIND(x) \
 	ENUMERATE_STATEMENT_KIND(x) \
 
+enum TokenKind : u16 {
+#define x(name) Token_##name,
+#define y(name, value) Token_##name = value,
+	ENUMERATE_TOKEN_KIND(x, y)
+#undef y
+#undef x
+};
+
 consteval u16 const_string_to_token_kind(Span<char> token) {
-	if (token.count <= 2) {
-		u16 result = 0;
-		for (auto c : token) {
-			result <<= 8;
-			result |= c;
+	constexpr u32 counter_start = __COUNTER__;
+	constexpr u32 long_token_kind_base = 0x9000;
+	switch (token.count) {
+		case 1:
+		case 2: {
+			u16 result = 0;
+			for (auto c : token) {
+				result <<= 8;
+				result |= c;
+			}
+			return result;
 		}
-		return result;
+#define x(string) if (token == string##s) return long_token_kind_base + __COUNTER__ - counter_start - 1;
+		case 3: {
+			ENUMERATE_TRIPLE_CHAR_TOKENS(x)
+			break;
+		}
+		default: {
+			if (token == "typeof"s) return Token_typeof;
+			break;
+		}
+#undef x
 	}
 
-	u16 iota = 0x9000;
-#define x(string) if (token == string##s) return iota; ++iota;
-	ENUMERATE_TRIPLE_CHAR_TOKENS(x)
-#undef x
 
 	*(int *)0 = 0; /*invalid token*/;
 }
@@ -383,18 +412,12 @@ consteval u32 const_string_to_token_kind(char a, char b, char c) {
 	return const_string_to_token_kind(array_as_span(buffer));
 }
 
-enum TokenKind : u16 {
-#define x(name) Token_##name,
-#define y(name, value) Token_##name = value,
-	ENUMERATE_TOKEN_KIND(x, y)
-#undef y
-#undef x
-};
-
 inline umm append(StringBuilder &builder, TokenKind kind) {
 	switch (kind) {
-		case Token_eof: return append(builder, "end of file");
-		case Token_eol: return append(builder, "end of line");
+		case Token_eof:    return append(builder, "end of file");
+		case Token_eol:    return append(builder, "end of line");
+		case Token_name:   return append(builder, "name");
+		case Token_number: return append(builder, "number");
 	}
 
 	if ((u32)kind <= 0xff)
@@ -1157,6 +1180,27 @@ inline BuiltinTypeKind token_kind_to_builtin_type_kind(TokenKind kind) {
 	return {};
 }
 
+#define ENUMERATE_INLINE_STATUS \
+x(unspecified) \
+x(always) \
+x(never) \
+
+enum class Inline : u8 {
+#define x(name) name,
+	ENUMERATE_INLINE_STATUS
+#undef x
+};
+
+inline umm append(StringBuilder &builder, Inline status) {
+	switch (status) {
+#define x(name) case Inline::name: return append(builder, #name ## s);
+		ENUMERATE_INLINE_STATUS
+#undef x
+	}
+	return 0;
+}
+
+
 DEFINE_EXPRESSION(Block) {
 	Block *parent = 0;
 	Expression *container = 0;
@@ -1175,6 +1219,8 @@ DEFINE_EXPRESSION(Block) {
 DEFINE_EXPRESSION(Call) {
 	Expression *callable = 0;
 	GList<Expression *> arguments;
+
+	Inline inline_status = {};
 };
 DEFINE_EXPRESSION(Definition) {
 	String name;
@@ -1203,6 +1249,7 @@ DEFINE_EXPRESSION(Lambda) {
 
 	GList<Return *> returns;
 	
+	Inline inline_status = {};
 	bool is_intrinsic : 1 = false;
 };
 DEFINE_EXPRESSION(Name) {
@@ -1246,6 +1293,13 @@ DEFINE_STATEMENT(While) {
 DEFINE_STATEMENT(Continue) {};
 DEFINE_STATEMENT(Break) {};
 
+template <class T>
+concept CNode = std::_Is_any_of_v<T, Expression, Statement
+#define x(name) , name
+ENUMERATE_NODE_KIND(x)
+#undef x
+>;
+
 void Block::add(Node *child) {
 	children.add(child);
 	if (auto definition = as<Definition>(child)) {
@@ -1254,11 +1308,43 @@ void Block::add(Node *child) {
 	}
 }
 
-BuiltinType *builtin_types[(u32)BuiltinTypeKind::count];
+ForEachDirective visit(Node *node, auto visitor) {
+#define VISIT(node) \
+	if (visit(node, visitor) == ForEach_break) \
+		return ForEach_break
+
+	switch (node->kind) {
+		case NodeKind::Block: {
+			auto block = (Block *)node;
+			visitor(block);
+
+			for (auto child : block->children) {
+				VISIT(child);
+			}
+			break;
+		}
+		case NodeKind::Return: {
+			auto ret = (Return *)node;
+			visitor(ret);
+			VISIT(ret->value);
+			break;
+		}
+		case NodeKind::Name: visitor((Name *)node); break;
+		case NodeKind::IntegerLiteral: visitor((IntegerLiteral *)node); break;
+		case NodeKind::BooleanLiteral: visitor((BooleanLiteral *)node); break;
+		default: {
+			invalid_code_path();
+			return {};
+		}
+	}
+	return ForEach_continue;
+}
+
+BuiltinType builtin_types[(u32)BuiltinTypeKind::count];
 
 // NOTE: Do not use this for types in the source code. These do not have a location.
-BuiltinType *&get_builtin_type(BuiltinTypeKind kind) {
-	return builtin_types[(u32)kind];
+BuiltinType *get_builtin_type(BuiltinTypeKind kind) {
+	return &builtin_types[(u32)kind];
 }
 
 int tabs = 0;
@@ -1286,6 +1372,9 @@ Expression *direct(Expression *node) {
 			}
 		}
 		break;
+	}
+	if (auto bt = as<BuiltinType>(node)) {
+		return get_builtin_type(bt->type_kind);
 	}
 	return node;
 }
@@ -1414,13 +1503,52 @@ bool is_concrete(Expression *type) {
 	return true;
 }
 
+void propagate_concrete_type(Expression *expression, Expression *type) {
+	switch (expression->kind) {
+		case NodeKind::IntegerLiteral: 
+		case NodeKind::Name:
+			expression->type = type;
+			break;
+		case NodeKind::Unary: {
+			auto unary = (Unary *)expression;
+			unary->type = type;
+			propagate_concrete_type(unary->expression, type);
+			break;
+		}
+		case NodeKind::If: {
+			auto If = (::If *)expression;
+			If->type = type;
+
+			if (auto true_expression = as<Expression>(If->true_branch)) {
+				if (auto false_expression = as<Expression>(If->false_branch)) {
+					propagate_concrete_type(true_expression, type);
+					propagate_concrete_type(false_expression, type);
+				}
+			}
+
+			break;
+		}
+		case NodeKind::Block: {
+			auto block = (Block *)expression;
+			if (block->children.count) {
+				if (auto last_expr = as<Expression>(block->children.back())) {
+					block->type = type;
+					propagate_concrete_type(last_expr, type);
+				}
+			}
+			break;
+		}
+		default: invalid_code_path(); break;
+	}
+}
+
 void make_concrete(Expression *expression) {
 	auto type = direct(expression->type);
 
 	if (auto builtin_type = as<BuiltinType>(type)) {
 		switch (builtin_type->type_kind) {
 			case BuiltinTypeKind::UnsizedInteger: {
-				expression->type = get_builtin_type(BuiltinTypeKind::S64);
+				propagate_concrete_type(expression, get_builtin_type(BuiltinTypeKind::S64));
 				return;
 			}
 		}
@@ -1510,7 +1638,9 @@ void print_ast_impl(IntegerLiteral *literal) {
 void print_ast_impl(BooleanLiteral *literal) {
 	print(literal->value);
 }
-void print_ast_impl(LambdaHead *head) {
+void print_ast_impl(LambdaHead *head, bool print_braces = true) {
+	if (print_braces)
+		print("{");
 	print("(");
 
 	List<List<Definition *>> grouped_parameters;
@@ -1538,15 +1668,23 @@ void print_ast_impl(LambdaHead *head) {
 
 	print("): ");
 	print_ast(head->return_type);
+	if (print_braces)
+		print("}");
 }
 void print_ast_impl(Lambda *lambda) {
-	print_ast(&lambda->head);
+	print("{");
+	switch (lambda->inline_status) {
+		case Inline::always: print("inline "); break;
+		case Inline::never: print("noinline "); break;
+	}
+	print_ast_impl(&lambda->head, false);
 	print(" => ");
 	if (lambda->is_intrinsic) 
 		print("#intrinsic");
 	if (lambda->body) {
 		print_ast(lambda->body);
 	}
+	print("}");
 }
 void print_ast_impl(Name *name) { print(name->name); }
 void print_ast_impl(Return *return_) {
@@ -1907,6 +2045,8 @@ struct Parser {
 
 					lambda->head.return_type = parse_expression_0();
 				}
+				
+				lambda->head.location = lambda->location = { lambda->location.begin(), token[-1].string.end() };
 
 				constexpr auto arrow = const_string_to_token_kind("=>"s);
 				if (token->kind == arrow) {
@@ -1933,7 +2073,7 @@ struct Parser {
 				}
 
 				if (token->kind == '{') {
-					reporter.warning(token->string, "Did you mean this to be a lambda? If so you missed an '=>'.");
+					reporter.warning(lambda->head.location, "This was parsed as a lambda head type. But there is '{' immediately after it. Did you mean this to be a lambda? If so you missed an '=>'.");
 				}
 
 				// LEAK: the rest of the lambda is unused.
@@ -2082,7 +2222,23 @@ struct Parser {
 
 				return match;
 			}
+			case Token_inline:
+			case Token_noinline: {
+				auto inline_token = token;
+				auto status = token->kind == Token_inline ? Inline::always : Inline::never;
+				next();
+				auto expr = parse_expression_1();
+				if (auto lambda = as<Lambda>(expr)) {
+					lambda->inline_status = status;
+					return lambda;
+				} else if (auto call = as<Call>(expr)) {
+					call->inline_status = status;
+					return call;
+				}
 
+				reporter.error(inline_token->string, "{} keyword must precede a lambda or a call, not a {}", inline_token->string, expr->kind);
+				return 0;
+			}
 #define x(name) case Token_##name:
 			ENUMERATE_CONCRETE_BUILTIN_TYPES(x)
 #undef x
@@ -2106,11 +2262,13 @@ struct Parser {
 					return unop;
 				}
 
-				reporter.error(token->string, "Unexpected token '{}' when parsing expression.", *token);
+				reporter.error(token->string, "Unexpected token {} when parsing expression.", *token);
 				yield(false);
 				return 0;
 			}
 		}
+
+		invalid_code_path("node was not returned");
 	}
 	Node *parse_statement() {
 		switch (token->kind) {
@@ -2203,6 +2361,10 @@ struct Parser {
 
 			auto child = parse_statement();
 
+			switch (child->kind) {
+				case NodeKind::Block: reporter.error(child->location, "Blocks are not allowed in global scope."); yield(false); return;
+			}
+
 			ensure_allowed_in_statement_context(child);
 
 			result_nodes.add(child);
@@ -2258,7 +2420,7 @@ struct Parser {
 	}
 	void expect(std::underlying_type_t<TokenKind> expected_kind) {
 		if (token->kind != expected_kind) {
-			reporter.error(token->string, "Expected '{}', but got '{}'", (TokenKind)expected_kind, *token);
+			reporter.error(token->string, "Expected {}, but got {}", (TokenKind)expected_kind, *token);
 			yield(false);
 		}
 	}
@@ -2354,10 +2516,20 @@ struct ExecutionContext {
 	List<Scope> scope_stack;
 	Value return_value;
 
+	Fiber parent_fiber;
+
 	static ExecutionContext create() {
 		ExecutionContext result;
-		result.scope_stack.add(); // global scope
+		auto &scope = result.scope_stack.add(); // global scope
+		for (auto definition : global_block.definition_list) {
+			auto value = result.execute(definition->initial_value);
+			scope.variables.get_or_insert(definition) = value;
+		}
 		return result;
+	}
+
+	void yield(bool success) {
+		fiber_yield(parent_fiber);
 	}
 
 	Value *load_address(Expression *expression) {
@@ -2489,12 +2661,19 @@ struct ExecutionContext {
 			auto name = lambda->definition->name;
 
 			if (name == u8"println"s) {
-				println(argument_values[0].s64);
+				assert(arguments.count == 1);
+
+				     if (types_match(arguments[0]->type, BuiltinTypeKind::S64 )) println(argument_values[0].s64);
+				else if (types_match(arguments[0]->type, BuiltinTypeKind::U64 )) println(argument_values[0].u64);
+				else if (types_match(arguments[0]->type, BuiltinTypeKind::Type)) println(argument_values[0].type);
+				else invalid_code_path("Unknown type {} in println", argument_values[0].type);
 				return Value{};
+			} else if (name == u8"exit"s) {
+				yield(true);
 			}
 			
-			immediate_reporter.error(lambda->location, "Attempt to execute invalid intrinsic.");
-			invalid_code_path();
+			immediate_reporter.error(lambda->location, "Attempt to execute invalid intrinsic '{}'.", name);
+			yield(false);
 		}
 
 		List<Value> executed_arguments;
@@ -2632,6 +2811,9 @@ struct ExecutionContext {
 				assert(pointer.kind == ValueKind::pointer);
 				return *pointer.pointer;
 			}
+			case UnaryOperation::typeof: {
+				return {.kind = ValueKind::type, .type = unary->expression->type};
+			}
 			default:
 				invalid_code_path();
 		}
@@ -2746,7 +2928,7 @@ enum class TypecheckEntryStatus : u8 {
 };
 
 struct TypecheckEntry {
-	Node* node = 0;
+	Node** node = 0;
 	Typechecker* typechecker = 0;
 	TypecheckEntryStatus status = TypecheckEntryStatus::unstarted;
 
@@ -2773,11 +2955,88 @@ u64 get_hash(BinaryTypecheckerKey const &key) {
 
 bool no_more_progress = false;
 
+struct Copier {
+	HashMap<Definition *, Definition *> copied_definitions;
+
+	[[nodiscard]] Node *deep_copy(Node *from) {
+		switch (from->kind) {
+#define x(name) case NodeKind::name: return deep_copy_impl((name *)from);
+			ENUMERATE_NODE_KIND(x)
+#undef x
+		}
+		invalid_code_path();
+	}
+	[[nodiscard]] Expression *deep_copy(Expression *from) {
+		switch (from->kind) {
+#define x(name) case NodeKind::name: return deep_copy_impl((name *)from);
+			ENUMERATE_EXPRESSION_KIND(x)
+#undef x
+		}
+		invalid_code_path();
+	}
+	[[nodiscard]] Statement *deep_copy(Statement *from) {
+		switch (from->kind) {
+#define x(name) case NodeKind::name: return deep_copy_impl((name *)from);
+			ENUMERATE_STATEMENT_KIND(x)
+#undef x
+		}
+		invalid_code_path();
+	}
+
+
+	[[nodiscard]] Block *deep_copy_impl(Block *from) { not_implemented(); } 
+	[[nodiscard]] Call *deep_copy_impl(Call *from) { not_implemented(); } 
+	[[nodiscard]] Definition *deep_copy_impl(Definition *from) { not_implemented(); } 
+	[[nodiscard]] IntegerLiteral *deep_copy_impl(IntegerLiteral *from) {
+		auto to = IntegerLiteral::create();
+		to->location = from->location;
+		to->value = from->value;
+		to->type = from->type;
+		return to;
+	} 
+	[[nodiscard]] BooleanLiteral *deep_copy_impl(BooleanLiteral *from) {
+		auto to = BooleanLiteral::create();
+		to->location = from->location;
+		to->value = from->value;
+		to->type = from->type;
+		return to;
+	} 
+	[[nodiscard]] Lambda *deep_copy_impl(Lambda *from) { not_implemented(); } 
+	[[nodiscard]] LambdaHead *deep_copy_impl(LambdaHead *from) { not_implemented(); } 
+	[[nodiscard]] Name *deep_copy_impl(Name *from) {
+		auto to = Name::create();
+		to->location = from->location;
+		to->name = from->name;
+		if (auto found = copied_definitions.find(from->definition)) {
+			to->definition = found->value;
+		} else {
+			to->definition = from->definition;
+		}
+		to->type = to->definition->type;
+		return to;
+	} 
+	[[nodiscard]] If *deep_copy_impl(If *from) { not_implemented(); } 
+	[[nodiscard]] BuiltinType *deep_copy_impl(BuiltinType *from) { not_implemented(); } 
+	[[nodiscard]] Binary *deep_copy_impl(Binary *from) { not_implemented(); } 
+	[[nodiscard]] Match *deep_copy_impl(Match *from) { not_implemented(); } 
+	[[nodiscard]] Unary *deep_copy_impl(Unary *from) { not_implemented(); } 
+	[[nodiscard]] Return *deep_copy_impl(Return *from) {
+		auto to = Return::create();
+		to->location = from->location;
+		to->value = deep_copy(from->value);
+		return to;
+	}
+	[[nodiscard]] While *deep_copy_impl(While *from) { not_implemented(); } 
+	[[nodiscard]] Continue *deep_copy_impl(Continue *from) { not_implemented(); } 
+	[[nodiscard]] Break *deep_copy_impl(Break *from) { not_implemented(); }
+
+};
+
 struct Typechecker {
 	const u32 uid = atomic_add(&typechecker_uid_counter, 1);
 	u32 progress = 0;
 
-	static Typechecker *create(Node *node) {
+	static Typechecker *create(Node **node) {
 		assert(node);
 
 		auto typechecker = [&] {
@@ -2854,7 +3113,7 @@ private:
 	Fiber fiber = {};
 	YieldResult yield_result = {};
 	Reporter reporter;
-	Node *initial_node = 0;
+	Node **initial_node = 0;
 	Block *current_block = 0;
 	List<Node *> node_stack;
 	TypecheckEntry *entry = 0;
@@ -2906,40 +3165,11 @@ private:
 		while (true) {
 			try {
 				assert(initial_node);
-				typecheck(initial_node);
+				*initial_node = typecheck(*initial_node, true);
 				yield(YieldResult::success);
 			} catch (Unwind) {
 
 			}
-		}
-	}
-
-	void propagate_concrete_type(Expression *expression, Expression *type) {
-		switch (expression->kind) {
-			case NodeKind::IntegerLiteral: 
-			case NodeKind::Name:
-				expression->type = type;
-				break;
-			case NodeKind::Unary: {
-				auto unary = (Unary *)expression;
-				unary->type = type;
-				propagate_concrete_type(unary->expression, type);
-				break;
-			}
-			case NodeKind::If: {
-				auto If = (::If *)expression;
-				If->type = type;
-
-				if (auto true_expression = as<Expression>(If->true_branch)) {
-					if (auto false_expression = as<Expression>(If->false_branch)) {
-						propagate_concrete_type(true_expression, type);
-						propagate_concrete_type(false_expression, type);
-					}
-				}
-
-				break;
-			}
-			default: invalid_code_path(); break;
 		}
 	}
 
@@ -3050,7 +3280,59 @@ private:
 		}
 	}
 
-	void typecheck(Node *node) {
+	Expression *inline_body(Call *call, Lambda *lambda) {
+		if (call->arguments.count == 0) {
+
+			if (!yield_while_null(call->location, &lambda->body->type)) {
+				reporter.error(lambda->location, "Could not wait for lambda's body to typecheck for inlining");
+				yield(YieldResult::fail);
+			}
+
+			visit(lambda->body, Combine{
+				[&](Node *) {},
+				[&](Return *) {
+					immediate_reporter.error(call->location, "Inlining calls to lambdas with return statements is not implemented.");
+					invalid_code_path();
+				}
+			});
+
+			auto new_body = Copier{}.deep_copy(lambda->body);
+
+			new_body->location = call->location;
+
+			return new_body;
+		} else {
+			immediate_reporter.error(call->location, "Inlining calls with arguments is not implemented.");
+			invalid_code_path();
+		}
+
+		invalid_code_path();
+		return 0;
+	}
+
+	//
+	// These `typecheck` overloads automatically substitute old node with new one.
+	//
+	void typecheck(Node **node) {
+		*node = typecheck(*node, true);
+	}
+	template <CNode T>
+	void typecheck(T **node) { 
+		auto new_node = typecheck(*node, true);
+		*node = as<T>(new_node);
+		assert(*node);
+	}
+
+	//
+	// This `typecheck` overload doesn't substitute the node
+	//
+	template <CNode T>
+	void typecheck(T &node) {
+		auto new_node = typecheck(&node, false);
+		assert(new_node == &node, "Attempt to substitute a node which can't be substituted.");
+	}
+
+	[[nodiscard]] Node *typecheck(Node *node, bool can_substitute) {
 		++progress;
 		defer { ++progress; };
 
@@ -3060,12 +3342,14 @@ private:
 		defer { node_stack.pop(); };
 
 		switch (node->kind) {
-#define x(name) case NodeKind::name: typecheck_impl((##name *)node); break;
+#define x(name) case NodeKind::name: node = typecheck_impl((##name *)node, can_substitute); break;
 			ENUMERATE_NODE_KIND(x)
 #undef x
 			default:
 				invalid_code_path();
 		}
+
+		assert(node);
 
 		if (auto expression = as<Expression>(node)) {
 			if (!expression->type) {
@@ -3073,30 +3357,47 @@ private:
 				yield(YieldResult::fail);
 			}
 		}
+		return node;
 	}
-	void typecheck_impl(Block *block) {
+	[[nodiscard]] Expression *typecheck_impl(Block *block, bool can_substitute) {
 		scoped_replace(current_block, block);
-		for (auto child : block->children) {
-			typecheck(child);
+		for (auto &old_child : block->children) {
+			auto new_child = typecheck(old_child, true);
+
+			// A child was substituted with a different node. Update `children` with new node.
+			// No need to update `definition_list` and `definition_map` because definition nodes should not be replaced.
+			if (old_child != new_child) {
+				assert(old_child->kind != NodeKind::Definition, "Attempt to replace definition in a block with a different node.");
+				old_child = new_child;
+			}
 		}
 
 		if (block->children.count) {
-			if (auto last_expression = as<Expression>(block->children.back()))
+			if (auto last_expression = as<Expression>(block->children.back())) {
 				block->type = last_expression->type;
+				if (block->children.count == 1) {
+					if (can_substitute) {
+						// LEAK: block
+						return last_expression;
+					}
+				}
+			}
 		}
 
 		if (!block->type)
 			block->type = get_builtin_type(BuiltinTypeKind::None);
+
+		return block;
 	}
-	void typecheck_impl(Definition *definition) {
+	[[nodiscard]] Definition *typecheck_impl(Definition *definition, bool can_substitute) {
 		if (definition->parsed_type) {
-			typecheck(definition->parsed_type);
+			typecheck(&definition->parsed_type);
 		} else {
 			assert(definition->initial_value);
 		}
 
 		if (definition->initial_value) {
-			typecheck(definition->initial_value);
+			typecheck(&definition->initial_value);
 
 			if (definition->parsed_type) {
 				if (!implicitly_cast(&definition->initial_value, definition->parsed_type, true)) {
@@ -3135,24 +3436,38 @@ private:
 				definition->type = definition->initial_value->type;
 			}
 		}
+
+		return definition;
 	}
-	void typecheck_impl(IntegerLiteral *literal) {
+	[[nodiscard]] IntegerLiteral *typecheck_impl(IntegerLiteral *literal, bool can_substitute) {
 		literal->type = get_builtin_type(BuiltinTypeKind::UnsizedInteger);
+		return literal;
 	}
-	void typecheck_impl(BooleanLiteral *literal) {
+	[[nodiscard]] BooleanLiteral *typecheck_impl(BooleanLiteral *literal, bool can_substitute) {
 		literal->type = get_builtin_type(BuiltinTypeKind::Bool);
+		return literal;
 	}
-	void typecheck_impl(LambdaHead *head) {
-		typecheck(&head->parameters_block);
+	[[nodiscard]] LambdaHead *typecheck_impl(LambdaHead *head, bool can_substitute) {
+		typecheck(head->parameters_block);
 
 		if (head->return_type) {
-			typecheck(head->return_type);
+			typecheck(&head->return_type);
 		}
 
 		head->type = get_builtin_type(BuiltinTypeKind::Type);
+		return head;
 	}
-	void typecheck_impl(Lambda *lambda) {
-		typecheck(&lambda->head);
+	[[nodiscard]] Lambda *typecheck_impl(Lambda *lambda, bool can_substitute) {
+		if (lambda->is_intrinsic) {
+			if (lambda->inline_status == Inline::always) {
+				reporter.error(lambda->location, "Lambda can't be intrinsic and inline at the same time.");
+				yield(YieldResult::fail);
+			}
+			if (lambda->inline_status == Inline::never) {
+				reporter.warning(lambda->location, "intrinsic lambda was marked as noinline, which is redundant");
+			}
+		}
+		typecheck(lambda->head);
 
 		lambda->type = &lambda->head;
 
@@ -3165,7 +3480,7 @@ private:
 		if (lambda->body) {
 			scoped_replace(current_block, &lambda->head.parameters_block);
 
-			typecheck(lambda->body);
+			typecheck(&lambda->body);
 		}
 
 		if (lambda->head.return_type) {
@@ -3223,94 +3538,104 @@ private:
 		}
 
 		assert(lambda->head.return_type);
+		return lambda;
 	}
-	void typecheck_impl(Name *name) {
+	[[nodiscard]] Expression *typecheck_impl(Name *name, bool can_substitute) {
 		for (auto block = current_block; block; block = block->parent) {
 			if (auto found_definitions = block->definition_map.find(name->name)) {
 				auto definitions = found_definitions->value;
-				if (definitions.count == 1) {
-					auto definition = definitions[0];
-
-					name->definition = definition;
-
-					auto definition_index = find_index_of(block->children, definition);
-					assert(definition_index < block->children.count);
-
-					if (block->container && as<Lambda>(block->container)) {
-						// Find our parent node in found definition's block
-						for (auto node : reverse_iterate(node_stack)) {
-							auto parent_index = find_index_of(block->children, node);
-							if (parent_index < block->children.count) {
-								if (parent_index < definition_index) {
-									reporter.error(name->location, "Can't access definition because it is declared after.");
-									reporter.info(definition->location, "Here is the definition.");
-									yield(YieldResult::fail);
-								}
-								break;
-							}
-						}
-					}
-
-					TypecheckEntry *dependency_entry = 0;
-
-					if (block == &global_block) {
-						for (auto &typecheck_entry : typecheck_entries) {
-							if (typecheck_entry.node == definition) {
-								dependency_entry = &typecheck_entry;
-								break;
-							}
-						}
-					}
-
-					if (dependency_entry) {
-						scoped(dependency_entry->dependants_lock);
-						dependency_entry->dependants.add(entry);
-					}
-
-					if (!yield_while_null(name->location, &definition->type)) {
-						reporter.error(name->location, "Couldn't wait for definition type.");
-						yield(YieldResult::fail);
-					}
-
-					if (dependency_entry) {
-						scoped(dependency_entry->dependants_lock);
-						find_and_erase_unordered(dependency_entry->dependants,entry);
-					}
-
-					name->type = definition->type;
-					return;
-				}
-
+				
 				if (definitions.count == 0) {
 					continue;
 				}
 
-				reporter.error(name->location, "`{}` is ambiguous.", name->name);
-				for (auto definition : definitions) {
-					reporter.info(definition->location, "Declared here:");
+				if (definitions.count > 1) {
+					reporter.error(name->location, "`{}` is ambiguous.", name->name);
+					for (auto definition : definitions) {
+						reporter.info(definition->location, "Declared here:");
+					}
+					yield(YieldResult::fail);
 				}
-				yield(YieldResult::fail);
+
+				auto definition = definitions[0];
+
+				name->definition = definition;
+
+				auto definition_index = find_index_of(block->children, definition);
+				assert(definition_index < block->children.count);
+
+				if (block->container && as<Lambda>(block->container)) {
+					// Find our parent node in found definition's block
+					for (auto node : reverse_iterate(node_stack)) {
+						auto parent_index = find_index_of(block->children, node);
+						if (parent_index < block->children.count) {
+							if (parent_index < definition_index) {
+								reporter.error(name->location, "Can't access definition because it is declared after.");
+								reporter.info(definition->location, "Here is the definition.");
+								yield(YieldResult::fail);
+							}
+							break;
+						}
+					}
+				}
+
+				TypecheckEntry *dependency_entry = 0;
+
+				if (block == &global_block) {
+					for (auto &typecheck_entry : typecheck_entries) {
+						if (*typecheck_entry.node == definition) {
+							dependency_entry = &typecheck_entry;
+							break;
+						}
+					}
+				}
+
+				if (dependency_entry) {
+					scoped(dependency_entry->dependants_lock);
+					dependency_entry->dependants.add(entry);
+				}
+
+				if (!yield_while_null(name->location, &definition->type)) {
+					reporter.error(name->location, "Couldn't wait for definition type.");
+					yield(YieldResult::fail);
+				}
+
+				if (dependency_entry) {
+					scoped(dependency_entry->dependants_lock);
+					find_and_erase_unordered(dependency_entry->dependants,entry);
+				}
+
+				name->type = definition->type;
+
+				if (constant_name_inlining) {
+					if (definition->mutability == Mutability::constant) {
+						if (definition->initial_value->kind != NodeKind::Lambda) {
+							auto literal = Copier{}.deep_copy(definition->initial_value);
+							assert(literal->kind == NodeKind::IntegerLiteral || literal->kind == NodeKind::BooleanLiteral);
+							return literal;
+						}
+					}
+				}
+
+				return name;
 			}
 		}
 		reporter.error(name->location, "`{}` was not declared.", name->name);
 		yield(YieldResult::fail);
+		return 0;
 	}
-	void typecheck_impl(Return *return_) {
-		if (return_->value)
-			typecheck(return_->value);
-	}
-	void typecheck_impl(Call *call) {
-		typecheck(call->callable);
-		
+	[[nodiscard]] Expression *typecheck_impl(Call *call, bool can_substitute) {
+		typecheck(&call->callable);
+
 		auto &arguments = call->arguments;
-		for (auto argument : arguments) {
-			typecheck(argument);
+		for (auto &argument : arguments) {
+			typecheck(&argument);
 		}
 
 		auto lambda = direct_as<Lambda>(call->callable);
 		assert(lambda, "Only lambdas can be called for now");
 
-		if (!yield_while_null(lambda->location, &lambda->head.return_type)) {
+		if (!yield_while_null(call->location, &lambda->head.return_type)) {
 			reporter.error(lambda->location, "Could not wait for lambda's return type");
 			yield(YieldResult::fail);
 		}
@@ -3331,17 +3656,35 @@ private:
 			}
 		}
 
+		Inline inline_status = {};
+		if (call->inline_status == Inline::unspecified) {
+			inline_status = lambda->inline_status;
+		} else {
+			inline_status = call->inline_status;
+			if ((call->inline_status == Inline::always && lambda->inline_status == Inline::never) ||
+				(call->inline_status == Inline::never && lambda->inline_status == Inline::always))
+			{
+				// What if that was intended? TODO: There should be an option to turn this on/off.
+				reporter.warning(call->location, "Conflicting inlining specifiers: {} at call size, {} at lambda definition. The one at call site ({}) will take place.", call->inline_status, lambda->inline_status, call->inline_status);
+				reporter.info(lambda->location, "Here is the lambda:");
+			}
+		}
+
+		if (inline_status == Inline::always) {
+			return inline_body(call, lambda);
+		}
+
 		call->type = lambda->head.return_type;
+		return call;
 	}
-	void typecheck_impl(If *If) {
-		typecheck(If->condition);
+	[[nodiscard]] If *typecheck_impl(If *If, bool can_substitute) {
+		typecheck(&If->condition);
 
-		typecheck(If->true_branch);
-
-		if (If->false_branch)
-			typecheck(If->false_branch);
+		typecheck(&If->true_branch);
 
 		if (If->false_branch) {
+			typecheck(&If->false_branch);
+
 			if (auto true_branch_expression = as<Expression>(If->true_branch)) {
 				if (auto false_branch_expression = as<Expression>(If->false_branch)) {
 					if (types_match(true_branch_expression->type, false_branch_expression->type)) {
@@ -3349,7 +3692,7 @@ private:
 					} else {
 						defer {
 							If->true_branch = true_branch_expression;
-							If->false_branch = false_branch_expression;
+						If->false_branch = false_branch_expression;
 						};
 
 						Reporter cast_reporter;
@@ -3381,29 +3724,16 @@ private:
 
 		if (!If->type)
 			If->type = get_builtin_type(BuiltinTypeKind::None);
-	}
-	void typecheck_impl(While *While) {
-		typecheck(While->condition);
 
-		if (auto builtin_type = direct_as<BuiltinType>(While->condition->type); !builtin_type || builtin_type->type_kind != BuiltinTypeKind::Bool) {
-			reporter.error(While->condition->location, "Condition type must be Bool.");
-			yield(YieldResult::fail);
-		}
-
-		typecheck(While->body);
+		return If;
 	}
-	void typecheck_impl(Continue *Continue) {}
-	void typecheck_impl(Break *Break) {}
-	void typecheck_impl(BuiltinType *type) { 
+	[[nodiscard]] BuiltinType *typecheck_impl(BuiltinType *type, bool can_substitute) { 
 		type->type = get_builtin_type(BuiltinTypeKind::Type);
+		return type;
 	}
-	void typecheck_impl(Binary *binary) {
-		typecheck(binary->left);
-
-		typecheck(binary->right);
-
-		auto dleft  = direct(binary->left->type);
-		auto dright = direct(binary->right->type);
+	[[nodiscard]] Expression *typecheck_impl(Binary *binary, bool can_substitute) {
+		typecheck(&binary->left);
+		typecheck(&binary->right);
 
 		if (binary->operation == BinaryOperation::ass) {
 			if (!is_mutable(binary->left)) {
@@ -3416,47 +3746,100 @@ private:
 				yield(YieldResult::fail);
 			}
 			binary->type = get_builtin_type(BuiltinTypeKind::None);
-			return;
+			return binary;
+		}
+
+		auto dleft  = direct(binary->left->type);
+		auto dright = direct(binary->right->type);
+
+		if (fold_constants) {
+			if (auto li = as<IntegerLiteral>(binary->left)) {
+				if (auto ri = as<IntegerLiteral>(binary->right)) {
+				
+					if (dleft != dright) {
+						reporter.error(binary->location, "No binary operation {} defined for types {} and {}.", binary->operation, binary->left->type, binary->right->type);
+						yield(YieldResult::fail);
+						return 0;
+					}
+
+					auto builtin_type = as<BuiltinType>(dleft);
+					assert(builtin_type);
+
+					auto make_integer = [&] (u64 value) {
+						auto result = IntegerLiteral::create();
+						result->value = value;
+						result->type = builtin_type;
+						return result;
+					};
+#define OPS(T) \
+					switch (binary->operation) { \
+						case BinaryOperation::add: return make_integer((T)li->value + (T)ri->value); \
+						case BinaryOperation::sub: return make_integer((T)li->value - (T)ri->value); \
+						case BinaryOperation::mul: return make_integer((T)li->value * (T)ri->value); \
+						case BinaryOperation::div: return make_integer((T)li->value / (T)ri->value); \
+						case BinaryOperation::mod: return make_integer((T)li->value % (T)ri->value); \
+						case BinaryOperation::bxo: return make_integer((T)li->value ^ (T)ri->value); \
+						case BinaryOperation::ban: return make_integer((T)li->value & (T)ri->value); \
+						case BinaryOperation::bor: return make_integer((T)li->value | (T)ri->value); \
+						case BinaryOperation::bsl: return make_integer((T)li->value << (T)ri->value); \
+						case BinaryOperation::bsr: return make_integer((T)li->value >> (T)ri->value); \
+					}
+
+					switch (builtin_type->type_kind) {
+						case BuiltinTypeKind::U8:  OPS(u8); 
+						case BuiltinTypeKind::U16: OPS(u16); 
+						case BuiltinTypeKind::U32: OPS(u32); 
+						case BuiltinTypeKind::U64: OPS(u64); 
+						case BuiltinTypeKind::S8:  OPS(s8); 
+						case BuiltinTypeKind::S16: OPS(s16); 
+						case BuiltinTypeKind::S32: OPS(s32); 
+						case BuiltinTypeKind::S64: OPS(s64); 
+					}
+
+					invalid_code_path();
+#undef OPS
+				}
+			}
 		}
 
 		if (auto found = binary_typecheckers.find({ dleft, dright, binary->operation })) {
-			(this->*found->value)(binary);
-			return;
+			return (*found->value)(binary);
 		}
 
-		if (!types_match(binary->left->type, binary->right->type)) {
-			reporter.error(binary->location, "No binary operation {} defined for types {} and {}.", binary->operation, binary->left->type, binary->right->type);
-			yield(YieldResult::fail);
-		}
+		// if (types_match(binary->left->type, binary->right->type)) {
+		// 	switch (binary->operation) {
+		// 		case BinaryOperation::add:
+		// 		case BinaryOperation::sub:
+		// 		case BinaryOperation::mul:
+		// 		case BinaryOperation::div:
+		// 			binary->type = binary->left->type;
+		// 			break;
+		// 		case BinaryOperation::equ:
+		// 		case BinaryOperation::neq:
+		// 		case BinaryOperation::les:
+		// 		case BinaryOperation::leq:
+		// 		case BinaryOperation::grt:
+		// 		case BinaryOperation::grq:
+		// 			binary->type = get_builtin_type(BuiltinTypeKind::Bool);
+		// 			break;
+		// 
+		// 		default:
+		// 			invalid_code_path("Invalid binary operation {}.", binary->operation);
+		// 	}
+		// }
 
-		switch (binary->operation) {
-			case BinaryOperation::add:
-			case BinaryOperation::sub:
-			case BinaryOperation::mul:
-			case BinaryOperation::div:
-				binary->type = binary->left->type;
-				break;
-			case BinaryOperation::equ:
-			case BinaryOperation::neq:
-			case BinaryOperation::les:
-			case BinaryOperation::leq:
-			case BinaryOperation::grt:
-			case BinaryOperation::grq:
-				binary->type = get_builtin_type(BuiltinTypeKind::Bool);
-				break;
-
-			default:
-				invalid_code_path("Invalid binary operation {}.", binary->operation);
-		}
+		reporter.error(binary->location, "No binary operation {} defined for types {} and {}.", binary->operation, binary->left->type, binary->right->type);
+		yield(YieldResult::fail);
+		return 0;
 	}
-	void typecheck_impl(Match *match) {
-		typecheck(match->expression);
+	[[nodiscard]] Match *typecheck_impl(Match *match, bool can_substitute) {
+		typecheck(&match->expression);
 
 		make_concrete(match->expression);
 
 		for (auto &Case : match->cases) {
-			typecheck(Case.from);
-			
+			typecheck(&Case.from);
+
 			if (!is_constant(Case.from)) {
 				reporter.error(Case.from->location, "Match case expression must be constant.");
 				yield(YieldResult::fail);
@@ -3465,7 +3848,7 @@ private:
 			if (!implicitly_cast(&Case.from, match->expression->type, true))
 				yield(YieldResult::fail);
 
-			typecheck(Case.to);
+			typecheck(&Case.to);
 		}
 
 		for (auto &Case : match->cases) {
@@ -3478,15 +3861,17 @@ private:
 			make_concrete(match->cases[0].to);
 			match->type = match->cases[0].to->type;
 		}
-		
+
 		for (auto &Case : match->cases) {
 			if (!implicitly_cast(&Case.to, match->type, true)) {
 				yield(YieldResult::fail);
 			}
 		}
+
+		return match;
 	}
-	void typecheck_impl(Unary *unary) {
-		typecheck(unary->expression);
+	[[nodiscard]] Unary *typecheck_impl(Unary *unary, bool can_substitute) {
+		typecheck(&unary->expression);
 
 		switch (unary->operation) {
 			case UnaryOperation::star: {
@@ -3554,11 +3939,38 @@ private:
 				}
 				break;
 			}
+			case UnaryOperation::typeof: {
+				make_concrete(unary->expression);
+				unary->type = get_builtin_type(BuiltinTypeKind::Type);
+				break;
+			}
 			default:
 				not_implemented();
 				break;
 		}
+
+		return unary;
 	}
+	[[nodiscard]] Return *typecheck_impl(Return *return_, bool can_substitute) {
+		if (return_->value)
+			typecheck(&return_->value);
+
+		return return_;
+	}
+	[[nodiscard]] While *typecheck_impl(While *While, bool can_substitute) {
+		typecheck(&While->condition);
+
+		if (auto builtin_type = direct_as<BuiltinType>(While->condition->type); !builtin_type || builtin_type->type_kind != BuiltinTypeKind::Bool) {
+			reporter.error(While->condition->location, "Condition type must be Bool.");
+			yield(YieldResult::fail);
+		}
+
+		typecheck(&While->body);
+
+		return While;
+	}
+	[[nodiscard]] Continue *typecheck_impl(Continue *Continue, bool can_substitute) { return Continue; }
+	[[nodiscard]] Break *typecheck_impl(Break *Break, bool can_substitute) { return Break; }
 
 
 	u32 debug_thread_id = 0;
@@ -3580,37 +3992,68 @@ public:
 	// Binary Typecheckers //
 	/////////////////////////
 	
-	inline static GHashMap<BinaryTypecheckerKey, void (Typechecker::*)(Binary *)> binary_typecheckers;
-
-	void bt_take_left(Binary *binary) {
-		binary->type = binary->left->type;
-	}
-	void bt_set_bool(Binary *binary) {
-		binary->type = get_builtin_type(BuiltinTypeKind::Bool);
-	}
-	void bt_unsized_int_math(Binary *binary) {
-		auto sized = binary->left;
-		auto unsized = binary->right;
-
-		if (is_concrete(unsized)) {
-			Swap(sized, unsized);
-		}
-
-		binary->type = unsized->type = sized->type;
-	}
-	void bt_unsized_int_comp(Binary *binary) {
-		auto sized = binary->left;
-		auto unsized = binary->right;
-
-		if (is_concrete(unsized->type)) {
-			Swap(sized, unsized);
-		}
-
-		unsized->type = sized->type;
-		binary->type = get_builtin_type(BuiltinTypeKind::Bool);
-	}
+	inline static GHashMap<BinaryTypecheckerKey, Expression *(*)(Binary *)> binary_typecheckers;
 
 	static void init_binary_typecheckers() {
+		static constexpr auto bt_take_left = [](Binary *binary) -> Expression * {
+			binary->type = binary->left->type;
+			return binary;
+		};
+		static constexpr auto bt_set_bool = [](Binary *binary) -> Expression * {
+			binary->type = get_builtin_type(BuiltinTypeKind::Bool);
+			return binary;
+		};
+		static constexpr auto bt_unsized_int_and_sized_int_math = [](Binary *binary) -> Expression * {
+			auto sized = binary->left;
+			auto unsized = binary->right;
+
+			if (is_concrete(unsized->type)) {
+				Swap(sized, unsized);
+			}
+
+			binary->type = unsized->type = sized->type;
+			return binary;
+		};
+		static constexpr auto bt_unsized_int_and_sized_int_comp = [](Binary *binary) -> Expression * {
+			auto sized = binary->left;
+			auto unsized = binary->right;
+
+			if (is_concrete(unsized->type)) {
+				Swap(sized, unsized);
+			}
+
+			unsized->type = sized->type;
+			binary->type = get_builtin_type(BuiltinTypeKind::Bool);
+			return binary;
+		};
+		static constexpr auto bt_both_unsized_ints = [](Binary *binary) -> Expression * {
+			binary->left->type =
+				binary->right->type = get_builtin_type(BuiltinTypeKind::S64);
+
+			auto e = ExecutionContext::create();
+			auto l = e.execute(binary->left);
+			auto r = e.execute(binary->right);
+
+			auto result = IntegerLiteral::create();
+			switch (binary->operation) {
+				case BinaryOperation::add: result->value = l.s64 + r.s64; break;
+				case BinaryOperation::sub: result->value = l.s64 - r.s64; break;
+				case BinaryOperation::mul: result->value = l.s64 * r.s64; break;
+				case BinaryOperation::div: result->value = l.s64 / r.s64; break;
+				case BinaryOperation::mod: result->value = l.s64 % r.s64; break;
+				case BinaryOperation::bxo: result->value = l.s64 ^ r.s64; break;
+				case BinaryOperation::ban: result->value = l.s64 & r.s64; break;
+				case BinaryOperation::bor: result->value = l.s64 | r.s64; break;
+				case BinaryOperation::bsl: result->value = l.s64 << r.s64; break;
+				case BinaryOperation::bsr: result->value = l.s64 >> r.s64; break;
+				default: invalid_code_path("Attempt to evaluate binary {} on unsized integers. This is not supported/implemented", binary->operation);
+			}
+			result->type = get_builtin_type(BuiltinTypeKind::UnsizedInteger);
+			result->location = binary->location;
+			return result;
+		};
+		
+		
 		construct(binary_typecheckers);
 
 #define y(left, right, operation) binary_typecheckers.get_or_insert({ get_builtin_type(left), get_builtin_type(right), operation })
@@ -3620,14 +4063,14 @@ public:
 		// Every type is equatable
 		// 
 		for (u32 i = 0; i < (u32)BuiltinTypeKind::count; ++i) {
-			y((BuiltinTypeKind)i, (BuiltinTypeKind)i, BinaryOperation::equ) = &bt_set_bool;
+			y((BuiltinTypeKind)i, (BuiltinTypeKind)i, BinaryOperation::equ) = bt_set_bool;
 		}
 
 #define ORDERABLE(type) \
-		x(type, type, les) = &bt_set_bool; \
-		x(type, type, leq) = &bt_set_bool; \
-		x(type, type, grt) = &bt_set_bool; \
-		x(type, type, grq) = &bt_set_bool
+		x(type, type, les) = bt_set_bool; \
+		x(type, type, leq) = bt_set_bool; \
+		x(type, type, grt) = bt_set_bool; \
+		x(type, type, grq) = bt_set_bool
 
 		ORDERABLE(Bool);
 		ORDERABLE(U8);
@@ -3640,11 +4083,11 @@ public:
 		ORDERABLE(S64);
 
 #define MATHABLE(type) \
-		x(type, type, add) = &bt_take_left; \
-		x(type, type, sub) = &bt_take_left; \
-		x(type, type, mul) = &bt_take_left; \
-		x(type, type, div) = &bt_take_left; \
-		x(type, type, mod) = &bt_take_left;
+		x(type, type, add) = bt_take_left; \
+		x(type, type, sub) = bt_take_left; \
+		x(type, type, mul) = bt_take_left; \
+		x(type, type, div) = bt_take_left; \
+		x(type, type, mod) = bt_take_left;
 
 		MATHABLE(Bool);
 		MATHABLE(U8);
@@ -3656,29 +4099,43 @@ public:
 		MATHABLE(S32);
 		MATHABLE(S64);
 
-#define UNSIZED_INT(t) \
-		x(t, UnsizedInteger, add) = &bt_unsized_int_math; \
-		x(t, UnsizedInteger, sub) = &bt_unsized_int_math; \
-		x(t, UnsizedInteger, mul) = &bt_unsized_int_math; \
-		x(t, UnsizedInteger, div) = &bt_unsized_int_math; \
-		x(t, UnsizedInteger, mod) = &bt_unsized_int_math; \
-		x(t, UnsizedInteger, les) = &bt_unsized_int_comp; \
-		x(t, UnsizedInteger, leq) = &bt_unsized_int_comp; \
-		x(t, UnsizedInteger, grt) = &bt_unsized_int_comp; \
-		x(t, UnsizedInteger, grq) = &bt_unsized_int_comp
+#define SYMMETRIC(a, b, op) x(a, b, op) = x(b, a, op)
 
-		UNSIZED_INT(U8);
-		UNSIZED_INT(U16);
-		UNSIZED_INT(U32);
-		UNSIZED_INT(U64);
-		UNSIZED_INT(S8);
-		UNSIZED_INT(S16);
-		UNSIZED_INT(S32);
-		UNSIZED_INT(S64);
+#define UNSIZED_INT_AND_SIZED_INT(t) \
+		SYMMETRIC(t, UnsizedInteger, add) = bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, sub) = bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, mul) = bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, div) = bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, mod) = bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, les) = bt_unsized_int_and_sized_int_comp; \
+		SYMMETRIC(t, UnsizedInteger, leq) = bt_unsized_int_and_sized_int_comp; \
+		SYMMETRIC(t, UnsizedInteger, grt) = bt_unsized_int_and_sized_int_comp; \
+		SYMMETRIC(t, UnsizedInteger, grq) = bt_unsized_int_and_sized_int_comp
 
-#undef UNSIZED_INT
+		UNSIZED_INT_AND_SIZED_INT(U8);
+		UNSIZED_INT_AND_SIZED_INT(U16);
+		UNSIZED_INT_AND_SIZED_INT(U32);
+		UNSIZED_INT_AND_SIZED_INT(U64);
+		UNSIZED_INT_AND_SIZED_INT(S8);
+		UNSIZED_INT_AND_SIZED_INT(S16);
+		UNSIZED_INT_AND_SIZED_INT(S32);
+		UNSIZED_INT_AND_SIZED_INT(S64);
+
+		x(UnsizedInteger, UnsizedInteger, add) = bt_both_unsized_ints;
+		x(UnsizedInteger, UnsizedInteger, sub) = bt_both_unsized_ints;
+		x(UnsizedInteger, UnsizedInteger, mul) = bt_both_unsized_ints;
+		x(UnsizedInteger, UnsizedInteger, div) = bt_both_unsized_ints;
+		x(UnsizedInteger, UnsizedInteger, mod) = bt_both_unsized_ints;
+		x(UnsizedInteger, UnsizedInteger, bxo) = bt_both_unsized_ints;
+		x(UnsizedInteger, UnsizedInteger, ban) = bt_both_unsized_ints;
+		x(UnsizedInteger, UnsizedInteger, bor) = bt_both_unsized_ints;
+		x(UnsizedInteger, UnsizedInteger, bsl) = bt_both_unsized_ints;
+		x(UnsizedInteger, UnsizedInteger, bsr) = bt_both_unsized_ints;
+
+#undef UNSIZED_INT_AND_SIZED_INT
 #undef MATHABLE
 #undef ORDERABLE
+#undef SYMMETRIC
 #undef x
 #undef y
 	}
@@ -3728,6 +4185,10 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 			}
 		} else if (args[i] == "-print-ast") {
 			result.print_ast = true;
+		} else if (args[i] == "-no-fold-constants") {
+			fold_constants = false;
+		} else if (args[i] == "-no-constant-name-inlining") {
+			constant_name_inlining = false;
 		} else {
 			if (result.source_name.count) {
 				with(ConsoleColor::red, println("No multiple input files allowed"));
@@ -3748,12 +4209,10 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 
 void init_builtin_types() {
 #define x(name, value) \
-	static BuiltinType _builtin_type_##name; \
 	{ \
-		auto &type = get_builtin_type(BuiltinTypeKind::name); \
-		type = &_builtin_type_##name; \
+		auto type = get_builtin_type(BuiltinTypeKind::name); \
 		type->type_kind = BuiltinTypeKind::name; \
-		type->type = &_builtin_type_Type; \
+		type->type = get_builtin_type(BuiltinTypeKind::Type); \
 	}
 	ENUMERATE_BUILTIN_TYPES(x)
 #undef x
@@ -3841,7 +4300,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 	static bool failed = false;
 
-	typecheck_entries = map(global_nodes.value(), [&](auto node) { return TypecheckEntry{.node = node}; });
+	typecheck_entries = map(global_nodes.value(), [&](auto &node) { return TypecheckEntry{.node = &node}; });
 
 
 	u32 round_index = 0;
@@ -3994,7 +4453,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 			for (umm j = 0; j < cycle.count; ++j) {
 				auto &entry = typecheck_entries[cycle[j]];
 
-				if (auto definition = as<Definition>(entry.node); definition && definition->initial_value) {
+				if (auto definition = as<Definition>(*entry.node); definition && definition->initial_value) {
 					if (auto lambda = as<Lambda>(definition->initial_value)) {
 						if (!lambda->head.return_type) {
 							lambda_with_no_return_type = lambda;
@@ -4016,7 +4475,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 				auto &entry = typecheck_entries[cycle[j]];
 				auto &next_entry = typecheck_entries[cycle[(j + 1) % cycle.count]];
 
-				immediate_reporter.info(entry.node->location, "{} depends on {}.", entry.node->location, next_entry.node->location);
+				immediate_reporter.info((*entry.node)->location, "{} depends on {}.", (*entry.node)->location, (*next_entry.node)->location);
 			}
 		}
 	}
