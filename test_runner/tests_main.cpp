@@ -50,9 +50,14 @@ struct RanProcess {
 
 SpinLock stdout_lock;
 
-// FIXME: It seems like not all stdout is read sometimes for some reason... Idk what's wrong because it worked before...
+bool show_box = false;
 
 RanProcess run_process(String command) {
+	auto last_error_mode = GetErrorMode();
+	if (show_box)
+		SetErrorMode(SEM_NOGPFAULTERRORBOX);
+	defer { SetErrorMode(last_error_mode); };
+
 	auto process = start_process(to_utf16(command));
 	assert(is_valid(process));
 	
@@ -84,15 +89,25 @@ RanProcess run_process(String command) {
 s32 tl_main(Span<String> arguments) {
 	auto executable_path = get_executable_path();
 	auto executable_directory = parse_path(executable_path).directory;
+	auto compiler_path = format(u8"{}\\simplex.exe", executable_directory);
+
+	auto project_directory = normalize_path(format(u8"{}\\..", executable_directory));
 
 	auto test_directory = format(u8"{}\\..\\tests", executable_directory);
 
-	SetErrorMode(SEM_NOGPFAULTERRORBOX);
+	auto current_directory = get_current_directory();
+
+	auto env_path = getenv("PATH");
 
 	List<String> test_filenames;
 	bool all = true;
+	bool do_coverage = false;
 	for (int i = 1; i < arguments.count; ++i) {
-		if (arguments[i] != u8"all"s) {
+		if (arguments[i] == u8"box"s) {
+			show_box = true;
+		} else if (arguments[i] == u8"coverage"s) {
+			do_coverage = true;
+		} else if (arguments[i] != u8"all"s) {
 			all = false;
 			test_filenames.add(arguments[i]);
 		}
@@ -129,8 +144,12 @@ s32 tl_main(Span<String> arguments) {
 	init_thread_pool(&thread_pool, get_cpu_info().logical_processor_count - 1);
 	defer { deinit_thread_pool(&thread_pool); };
 
+	u32 volatile test_counter = 0;
+
 	for (auto test_filename : test_filenames) {
-		thread_pool += [&test_directory, test_filename, &n_failed, &n_succeeded] {
+		thread_pool += [=, &n_failed, &n_succeeded, &test_counter] {
+			auto test_index = atomic_add(&test_counter, 1);
+
 			bool fail = false;
 			defer {
 				atomic_add(&n_failed, fail);
@@ -174,10 +193,22 @@ s32 tl_main(Span<String> arguments) {
 			};
 
 			List<String> expected_compiler_output = find_all_params(u8"// COMPILER OUTPUT "s);
+			List<String> not_expected_compiler_output = find_all_params(u8"// NO COMPILER OUTPUT "s);
 			String expected_program_output = find_param(u8"// PROGRAM OUTPUT "s);
 			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
 
-			auto actual_compiler = run_process(format(u8"simplex -t1 \"{}\""s, test_path));
+			auto compile_command = format(u8"{} -t1 \"{}\""s, compiler_path, test_path);
+
+			if (do_coverage) {
+				auto coverage_command = format(u8"opencppcoverage --sources {}\\src\\ --export_type=binary:codecov\\{}.cov -- {}"s, project_directory, test_index, compile_command);
+				auto result = run_process(coverage_command);
+				withs(stdout_lock) {
+					println(result.output);
+				};
+				return;
+			}
+
+			auto actual_compiler = run_process(compile_command);
 
 			if (actual_compiler.timed_out) {
 				do_fail([&] {
@@ -186,21 +217,43 @@ s32 tl_main(Span<String> arguments) {
 				return;
 			}
 
+			auto output_mismatch = [&] {
+				do_fail([&] {
+					with(ConsoleColor::red, print("Compiler output mismatch:\n"));
+					print("Expected exit code: {}. Actual exit code: {}\n", compiler_should_error ? "non 0" : "0", actual_compiler.exit_code);
+					if (expected_compiler_output.count) {
+						with(ConsoleColor::cyan, print("Expected:\n"));
+						for (auto expected_string : expected_compiler_output) {
+							print("{}\n", expected_string);
+						}
+					}
+					if (not_expected_compiler_output.count) {
+						with(ConsoleColor::cyan, print("Not expected:\n"));
+						for (auto not_expected_string : not_expected_compiler_output) {
+							print("{}\n", not_expected_string);
+						}
+					}
+					with(ConsoleColor::cyan, print("Actual:\n"));
+					print("{}\n", actual_compiler.output);
+				});
+			};
+
 			if (expected_compiler_output.count) {
 				for (auto expected_string : expected_compiler_output) {
 					if (!find(actual_compiler.output, expected_string)) {
-						do_fail([&] {
-							with(ConsoleColor::red, print("Compiler output mismatch:\n"));
-							print("Expected exit code: {}. Actual exit code: {}\n", compiler_should_error ? "non 0" : "0", actual_compiler.exit_code);
-							with(ConsoleColor::cyan, print("Expected:\n"));
-							print("{}\n", expected_string);
-							with(ConsoleColor::cyan, print("Actual:\n"));
-							print("{}\n", actual_compiler.output);
-						});
+						output_mismatch();
+						return;
 					}
 				}
+			}
 
-				return;
+			if (not_expected_compiler_output.count) {
+				for (auto not_expected_string : not_expected_compiler_output) {
+					if (find(actual_compiler.output, not_expected_string)) {
+						output_mismatch();
+						return;
+					}
+				}
 			}
 
 			if (compiler_should_error) {
@@ -278,6 +331,18 @@ s32 tl_main(Span<String> arguments) {
 	}
 
 	thread_pool.wait_for_completion();
+
+	if (do_coverage) {
+		println("Merging coverage results...");
+		StringBuilder builder;
+		append_format(builder, "opencppcoverage --sources {}\\src\\", project_directory);
+		auto test_count = test_counter;
+		for (u32 i = 0; i < test_count; ++i) {
+			append_format(builder, " --input_coverage=codecov\\{}.cov", i);
+		}
+		auto result = run_process(as_utf8(to_string(builder)));
+		println(result.output);
+	}
 
 	if (n_failed) {
 		with(ConsoleColor::red,   print("{}/{} tests failed.\n", n_failed, test_filenames.count));

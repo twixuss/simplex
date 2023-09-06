@@ -4,3 +4,6 @@ tmp/
 *.args.json
 a.sp
 *.vcxproj.user
+CoverageReport-*
+codecov/
+LastCoverageResults.log

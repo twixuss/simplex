@@ -14,7 +14,7 @@
             <Item Name="[value]" Condition="kind==NodeKind::LambdaHead         " Optional="true">*(LambdaHead         *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::Name               " Optional="true">*(Name               *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::If                 " Optional="true">*(If                 *)this</Item>
-            <Item Name="[value]" Condition="kind==NodeKind::BuiltinType        " Optional="true">*(BuiltinType        *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::BuiltinTypeName    " Optional="true">*(BuiltinTypeName    *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::Return             " Optional="true">*(Return             *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::While              " Optional="true">*(While              *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::Continue           " Optional="true">*(Continue           *)this</Item>
