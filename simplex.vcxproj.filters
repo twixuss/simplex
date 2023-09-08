@@ -5,5 +5,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="x.h" />
+    <ClInclude Include="src\print_ast.h" />
+    <ClInclude Include="src\visit.h" />
   </ItemGroup>
 </Project>

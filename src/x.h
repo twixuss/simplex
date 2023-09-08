@@ -55,6 +55,7 @@
 	x(S32) \
 	x(S64) \
 	x(Bool) \
+	x(String) \
 	x(None) \
 
 #define ENUMERATE_ABSTRACT_BUILTIN_TYPES(x) \
@@ -138,6 +139,7 @@
 	y(eof, '\0') \
 	y(eol, '\n') \
 	y(name, 'a') \
+	y(string, '"') \
 	y(number, '0') \
 	y(directive, '#') \
 	y(_unused, 0x7fff) \
@@ -149,6 +151,7 @@
 	x(Definition) \
 	x(IntegerLiteral) \
 	x(BooleanLiteral) \
+	x(StringLiteral) \
 	x(Lambda) \
 	x(LambdaHead) \
 	x(Name) \
@@ -179,6 +182,7 @@
 	x(u64) \
 	x(s64) \
 	x(boolean) \
+	x(string) \
 	x(lambda) \
 	x(type) \
 	x(pointer) \
