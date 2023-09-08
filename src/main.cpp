@@ -32,6 +32,9 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 #include <tl/fiber.h>
 #include <tl/time.h>
 
+#define ENABLE_TIME_LOG 0
+#define ENABLE_STRING_HASH_COUNT 0
+
 using namespace tl;
 
 constexpr u64 read_u64(utf8 *data) {
@@ -54,13 +57,14 @@ inline bool operator==(String a, char const *b) {
 	return a == as_utf8(as_span(b));
 }
 
-#if BUILD_DEBUG
+
+#if ENABLE_STRING_HASH_COUNT
 u32 string_hash_count;
 #endif
 
 template <>
 constexpr u64 get_hash(String const &string) {
-#if BUILD_DEBUG
+#if ENABLE_STRING_HASH_COUNT
 	if (!std::is_constant_evaluated())
 		++string_hash_count;
 #endif
@@ -89,6 +93,7 @@ bool fold_constants = true;
 bool constant_name_inlining = true;
 bool print_uids = false;
 
+#if ENABLE_TIME_LOG
 #define timed_block(name) \
 	println("{} ...", name); \
 	auto timer = create_precise_timer(); \
@@ -105,6 +110,12 @@ bool print_uids = false;
 	}()
 
 #define timed_expression(expression) timed_expression_named(#expression, expression)
+#else
+#define timed_block(name)
+#define timed_function() 
+#define timed_expression_named(name, expression) expression
+#define timed_expression(expression) timed_expression_named(#expression, expression)
+#endif
 
 inline void escape_character(char ch, auto write) {
 	switch (ch) {
@@ -330,51 +341,6 @@ inline umm append(StringBuilder &builder, Token token) {
 
 #define PASTE_CASE(x) case x:
 #define PASTE_CASE_0(x) case x[0]:
-
-// This hash map panics on hash collision. Here it is used for
-// mapping token strings to token kinds. Because all of them
-// are inserted at compile time, panic is not a problem.
-template <umm capacity_, class Key_, class Value_, class Traits = DefaultHashTraits<Key_, true>>
-struct FixedHashMap : Traits {
-	TL_USE_HASH_TRAITS_MEMBERS;
-
-	using Key = Key_;
-	using Value = Value_;
-	using KeyValue = KeyValue<Key, Value>;
-	inline static constexpr umm capacity = capacity_;
-
-	KeyValue kv[capacity] {};
-	bool init[capacity] {};
-
-	inline constexpr umm get_index_from_key(Key const &key) const { return Traits::get_index_from_key(key, capacity); }
-
-	constexpr bool insert(Key const &key, Value value) {
-		auto index = get_index_from_key(key);
-		assert(!init[index]); // NOTE: if theres a compilation error, that means this assertion failed.
-		init[index] = true;
-		kv[index].key = key;
-		kv[index].value = value;
-		return true;
-	}
-	constexpr const KeyValue *find(Key const &key) const {
-		auto index = get_index_from_key(key);
-		if (init[index] && kv[index].key == key) {
-			return &kv[index];
-		}
-		return 0;
-	}
-};
-
-// NOTE: Currently these maps are way bigger than needed. They could use a
-//       custom hash function to reduce their size. Need to figure that out.
-
-constexpr auto keywords = []() consteval {
-	FixedHashMap<128, String, TokenKind> keywords = {};
-#define x(name, value) keywords.insert(u8#name##s, Token_##name);
-	ENUMERATE_KEYWORDS(x)
-#undef x
-		return keywords;
-}();
 
 struct SourceLocation {
 	String file;
@@ -844,8 +810,43 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 					return {};
 				}
 
-				if (auto keyword = keywords.find(token.string))
-					token.kind = keyword->value;
+				static constexpr umm max_keyword_size = []{
+					umm max = 0;
+#define x(name) max = tl::max(max, u8#name##s.count);
+					ENUMERATE_KEYWORDS(x)
+#undef x
+						return max; 
+				}();
+
+				// NOTE:
+				// This relies on compiler being able to optimize out branches.
+				// Based on string size, check only keywords with that size.
+				switch (token.string.count) {
+#define x(name) \
+	else if (u8#name##s.count == COUNT && token.string == #name) { \
+		token.kind = Token_##name; \
+	}
+
+#define CASE(N) \
+	case N: { \
+		umm const COUNT = N; \
+		if (false) {} \
+		ENUMERATE_KEYWORDS(x); \
+		break; \
+	}
+					CASE(1)
+					CASE(2)
+					CASE(3)
+					CASE(4)
+					CASE(5)
+					CASE(6)
+					CASE(7)
+					CASE(8)
+					CASE(9)
+					static_assert(max_keyword_size <= 9, "");
+#undef CASE
+#undef x
+				}
 
 				tokens.add(token);
 				break;
@@ -1734,7 +1735,7 @@ void print_ast_impl(Definition *definition) {
 	print(" = ");
 	if (definition->constant_value) {
 		print_ast(definition->constant_value.value());
-	} else {
+	} else if (definition->initial_value) {
 		print_ast(definition->initial_value);
 	}
 }
@@ -3321,6 +3322,20 @@ u64 get_hash(BinaryTypecheckerKey const &key) {
 
 bool no_more_progress = false;
 
+std::pair<Lambda *, LambdaHead *> get_lambda_and_head(Expression *expression) {
+	auto directed = direct(expression);
+	auto lambda = as<Lambda>(directed);
+	LambdaHead *head = 0;
+	if (lambda) {
+		head = &lambda->head;
+	} else {
+		if (auto definition = as<Definition>(directed)) {
+			head = direct_as<LambdaHead>(definition->type);
+		}
+	}
+	return {lambda, head};
+}
+
 struct Copier {
 	HashMap<Node *, Node *> copied_nodes;
 
@@ -3399,11 +3414,11 @@ struct Copier {
 			DEEP_COPY(arguments[i]);
 		}
 		COPY(inline_status);
-		auto lambda = direct_as<Lambda>(to->callable);
-		if (!lambda) {
-			not_implemented();
-		}
-		to->type = lambda->head.return_type;
+
+		auto [lambda, head] = get_lambda_and_head(to->callable);
+
+		assert(head);
+		to->type = head->return_type;
 	} 
 	[[nodiscard]] void deep_copy_impl(Definition *from, Definition *to) {
 		COPY(name);
@@ -3432,8 +3447,8 @@ struct Copier {
 	[[nodiscard]] void deep_copy_impl(Lambda *from, Lambda *to) {
 		COPY(inline_status);
 		COPY(is_intrinsic);
-		DEEP_COPY(body);
 		DEEP_COPY_INPLACE(head);
+		DEEP_COPY(body);
 		LOOKUP_COPY(definition);
 
 		// returns will be updated by deep_copy_impl(Return)
@@ -3858,46 +3873,50 @@ private:
 	}
 
 	Expression *inline_body(Call *call, Lambda *lambda) {
-		if (call->arguments.count == 0) {
+		if (!yield_while_null(call->location, &lambda->body->type)) {
+			reporter.error(lambda->location, "Could not wait for lambda's body to typecheck for inlining");
+			yield(YieldResult::fail);
+		}
+		
+		// LEAK: copied_lambda
+		auto copied_lambda = as<Lambda>(Copier{}.deep_copy(lambda));
+		assert(copied_lambda);
 
-			if (!yield_while_null(call->location, &lambda->body->type)) {
-				reporter.error(lambda->location, "Could not wait for lambda's body to typecheck for inlining");
-				yield(YieldResult::fail);
-			}
+		auto result_block = Block::create();
+		result_block->location = call->location;
 
-
-			auto new_body = Copier{}.deep_copy(lambda->body);
-			
-			if (auto block = as<Block>(new_body)) {
-#if BUILD_DEBUG
-				block->tag = format(u8"_{}", block->uid);
-#endif
-				visit(block, Combine{
-					[&](Node *) {},
-					[&](Return *ret) -> Statement * {
-						if (ret->lambda == lambda) {
-							auto Break = Break::create();
-							Break->value = ret->value;
-							Break->tag_block = block;
-							block->breaks.add(Break);
-							// LEAK: ret
-							return Break;
-						}
-						return ret;
-					}
-				});
-			}
-
-			new_body->location = call->location;
-			new_body->type = lambda->head.return_type;
-			return new_body;
-		} else {
-			immediate_reporter.error(call->location, "Inlining calls with arguments is not implemented.");
-			invalid_code_path();
+		assert(lambda->head.parameters_block.definition_list.count == call->arguments.count);
+		for (umm i = 0; i < call->arguments.count; ++i) {
+			auto argument = call->arguments[i];
+			auto parameter = copied_lambda->head.parameters_block.definition_list[i];
+			parameter->initial_value = argument;
+			result_block->add(parameter);
 		}
 
-		invalid_code_path();
-		return 0;
+		if (auto body_block = as<Block>(copied_lambda->body)) {
+			body_block->tag = format(u8"_{}", body_block->uid);
+			visit(body_block, Combine{
+				[&](Node *) {},
+				[&](Return *ret) -> Statement * {
+					if (ret->lambda == lambda) {
+						auto Break = Break::create();
+						Break->value = ret->value;
+						assert(body_block);
+						Break->tag_block = body_block;
+						body_block->breaks.add(Break);
+						// LEAK: ret
+						return Break;
+					}
+					return ret;
+				},
+			});
+		}
+		
+		result_block->add(copied_lambda->body);
+
+		result_block->type = lambda->head.return_type;
+
+		return result_block;
 	}
 
 	Name *get_bottom_name(Node *node) {
@@ -4416,16 +4435,7 @@ private:
 			typecheck(&argument);
 		}
 
-		auto direct_callable = direct(call->callable);
-		auto lambda = as<Lambda>(direct_callable);
-		LambdaHead *head = 0;
-		if (lambda) {
-			head = &lambda->head;
-		} else {
-			if (auto definition = as<Definition>(direct_callable)) {
-				head = direct_as<LambdaHead>(definition->type);
-			}
-		}
+		auto [lambda, head] = get_lambda_and_head(call->callable);
 
 		if (!head) {
 			reporter.error(call->callable->location, "Only lambdas can be called for now");
@@ -5064,7 +5074,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 			println("{} took {} ms", time.name, time.seconds * 1000);
 		}
 
-#if BUILD_DEBUG
+#if ENABLE_STRING_HASH_COUNT
 		println("Total string hashes: {}", string_hash_count);
 #endif
 	};
