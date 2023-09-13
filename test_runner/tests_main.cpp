@@ -97,8 +97,6 @@ s32 tl_main(Span<String> arguments) {
 
 	auto current_directory = get_current_directory();
 
-	auto env_path = getenv("PATH");
-
 	List<String> test_filenames;
 	bool all = true;
 	bool do_coverage = false;

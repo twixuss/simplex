@@ -60,6 +60,7 @@
 
 #define ENUMERATE_ABSTRACT_BUILTIN_TYPES(x) \
 	x(UnsizedInteger) \
+	x(Overload) \
 
 #define ENUMERATE_BUILTIN_TYPES(x) \
 	ENUMERATE_CONCRETE_BUILTIN_TYPES(x) \

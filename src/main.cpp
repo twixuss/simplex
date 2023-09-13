@@ -34,6 +34,7 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 
 #define ENABLE_TIME_LOG 0
 #define ENABLE_STRING_HASH_COUNT 0
+#define ENABLE_NOTE_LEAK 0
 
 using namespace tl;
 
@@ -89,7 +90,6 @@ struct TimedResult {
 
 List<TimedResult> timed_results;
 
-bool fold_constants = true;
 bool constant_name_inlining = true;
 bool print_uids = false;
 
@@ -665,10 +665,9 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 		Token token;
 		token.string.data = cursor;
 
-		// a &
-		// b =
-		// &
-		// &=
+		// ("&", "=")
+		// "&"
+		// "&="
 #define CASE_SINGLE_OR_DOUBLE(a, b)                                   \
 	case a: {                                                         \
 		next();                                                       \
@@ -684,11 +683,10 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 		break;                                                        \
 	}
 
-		// a &
-		// b =
-		// &
-		// &&
-		// &=
+		// ("&", "=")
+		// "&"
+		// "&&"
+		// "&="
 #define CASE_SINGLE_OR_TWO_DOUBLES(a, b)                                  \
 	case a: {                                                             \
 		next();                                                           \
@@ -712,12 +710,11 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 		tokens.add(token);                                                \
 		break;                                                            \
 	}
-		// a <
-		// b =
-		// <
-		// <=
-		// <<
-		// <<=
+		// ("<", "=")
+		// "<"
+		// "<="
+		// "<<"
+		// "<<="
 #define CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE(a, b)                               \
 	case a: {																	 \
 		next(); 																 \
@@ -753,7 +750,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 			case '[': case ']':
 			case '{': case '}':
 			case '`': case '~':
-			case '!': case '@':
+			case '@':
 			case '$': case ';':
 			case ':': case ',':
 			case '?':
@@ -772,6 +769,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 			CASE_SINGLE_OR_DOUBLE('*', '=');
 			CASE_SINGLE_OR_DOUBLE('%', '=');
 			CASE_SINGLE_OR_DOUBLE('^', '=');
+			CASE_SINGLE_OR_DOUBLE('!', '=');
 			CASE_SINGLE_OR_TWO_DOUBLES('=', '>');
 			CASE_SINGLE_OR_TWO_DOUBLES('&', '=');
 			CASE_SINGLE_OR_TWO_DOUBLES('|', '=');
@@ -1308,7 +1306,13 @@ DEFINE_EXPRESSION(Lambda) {
 };
 DEFINE_EXPRESSION(Name) {
 	String name;
-	Definition *definition = 0;
+	List<Definition *> possible_definitions;
+
+	Definition *definition() {
+		if (possible_definitions.count == 1)
+			return possible_definitions[0];
+		return 0;
+	}
 };
 DEFINE_EXPRESSION(If) {
 	Expression *condition = 0;
@@ -1542,11 +1546,13 @@ BuiltinTypeName *get_builtin_type(BuiltinType kind) {
 Expression *direct(Expression *node) {
 	while (true) {
 		if (auto name = as<Name>(node)) {
-			if (name->definition->mutability == Mutability::constant) {
-				node = name->definition->initial_value;
+			auto definition = name->definition();
+			assert(definition);
+			if (definition->mutability == Mutability::constant) {
+				node = definition->initial_value;
 				continue;
 			} else {
-				return name->definition;
+				return definition;
 			}
 		}
 		break;
@@ -1944,7 +1950,8 @@ void print_ast_impl(Name *name) {
 	print(name->name);
 	if (print_uids) {
 		print('_');
-		print(name->definition->uid);
+		assert(name->definition());
+		print(name->definition()->uid);
 	}
 }
 void print_ast_impl(Return *return_) {
@@ -2075,6 +2082,25 @@ inline umm append(StringBuilder &builder, Node *node) {
 	}
 	return append(builder, "(unknown)");
 }
+
+#if ENABLE_NOTE_LEAK
+
+List<String> leaks;
+
+void note_leak(String expression, Node *node, String message = {}, std::source_location location = std::source_location::current()) {
+	if (message)
+		leaks.add(format(u8"{} ({}) at {}:{} - {}. {}", expression, node->kind, location.file_name(), location.line(), location.function_name(), message));
+	else 
+		leaks.add(format(u8"{} ({}) at {}:{} - {}", expression, node->kind, location.file_name(), location.line(), location.function_name()));
+}
+
+#define NOTE_LEAK(node, ...) note_leak(u8#node##s, node, __VA_ARGS__)
+
+#else
+
+#define NOTE_LEAK(node, ...)
+
+#endif
 
 Block global_block;
 
@@ -2315,18 +2341,34 @@ struct Parser {
 				next();
 				skip_lines();
 
+				bool body_required = true;
+
 				if (token->kind == ':') {
 					next();
 					skip_lines();
 
 					lambda->head.return_type = parse_expression_0();
+					body_required = false;
 				}
 				
 				lambda->head.location = lambda->location = { lambda->location.begin(), token[-1].string.end() };
 
 				constexpr auto arrow = const_string_to_token_kind("=>"s);
-				if (token->kind == arrow) {
+				if (lambda->head.return_type) {
+					if (token->kind == arrow) {
+						next();
+						body_required = true;
+					}
+				} else {
+					if (token->kind != arrow) {
+						reporter.error(token->string, "Expected : or => after )");
+						yield(false);
+					}
 					next();
+					body_required = true;
+				}
+
+				if (body_required) {
 					skip_lines();
 
 					while (token->kind == Token_directive) {
@@ -2348,11 +2390,7 @@ struct Parser {
 					return lambda;
 				}
 
-				if (token->kind == '{') {
-					reporter.warning(lambda->head.location, "This was parsed as a lambda head type. But there is '{' immediately after it. Did you mean this to be a lambda? If so you missed an '=>'.");
-				}
-
-				// LEAK: the rest of the lambda is unused.
+				NOTE_LEAK(lambda, u8"the rest of the lambda is unused.can't just free lambda because head is in it"s);
 				return &lambda->head;
 			}
 			case '{': {
@@ -2951,8 +2989,9 @@ private:
 	Value load_address_impl(Lambda *) { invalid_code_path(); }
 	Value load_address_impl(LambdaHead *) { invalid_code_path(); }
 	Value load_address_impl(Name *name) {
-		assert(name->definition);
-		return load_address(name->definition);
+		auto definition = name->definition();
+		assert(definition);
+		return load_address(definition);
 	}
 	Value load_address_impl(Call *) { invalid_code_path(); }
 	Value load_address_impl(If *) { invalid_code_path(); }
@@ -3036,9 +3075,10 @@ private:
 		return Type(head);
 	}
 	Value execute_impl(Name *name) {
-		assert(name->definition);
+		auto definition = name->definition();
+		assert(definition);
 		for (auto &scope : reverse_iterate(scope_stack)) {
-			if (auto found = scope.variables.find(name->definition)) {
+			if (auto found = scope.variables.find(definition)) {
 				return found->value;
 			}
 		}
@@ -3228,8 +3268,26 @@ private:
 
 #undef OPS
 
+		if (left.kind == ValueKind::boolean && right.kind == ValueKind::boolean) {  
+			switch (binary->operation) {                                
+				case BinaryOperation::bor: return (bool)(left.boolean | right.boolean);
+				case BinaryOperation::ban: return (bool)(left.boolean & right.boolean);
+				case BinaryOperation::bxo: return (bool)(left.boolean ^ right.boolean);
+				case BinaryOperation::lor: return left.boolean || right.boolean;
+				case BinaryOperation::lan: return left.boolean && right.boolean;
+				case BinaryOperation::equ: return left.boolean == right.boolean;     
+				case BinaryOperation::neq: return left.boolean != right.boolean;     
+				case BinaryOperation::les: return left.boolean <  right.boolean;     
+				case BinaryOperation::leq: return left.boolean <= right.boolean;     
+				case BinaryOperation::grt: return left.boolean >  right.boolean;     
+				case BinaryOperation::grq: return left.boolean >= right.boolean;     
+				default: invalid_code_path();                            
+			}                                                            
+		}
+
 		immediate_reporter.error(binary->location, "Invalid binary operation");
-		invalid_code_path();
+		yield(false);
+		return {};
 	}
 	Value execute_impl(Match *match) {
 		EXECUTE_DEFN(value, match->expression);
@@ -3281,7 +3339,7 @@ private:
 #undef LOAD_ADDRESS_INTO
 #undef LOAD_ADDRESS_DEFN
 
-Expression *make_pointer(Expression *type, Mutability mutability) {
+Type make_pointer(Type type, Mutability mutability) {
 	auto pointer = Unary::create();
 	pointer->expression = type;
 	pointer->operation = UnaryOperation::pointer;
@@ -3289,7 +3347,7 @@ Expression *make_pointer(Expression *type, Mutability mutability) {
 	pointer->type = get_builtin_type(BuiltinType::Type);
 	return pointer;
 }
-Unary *as_pointer(Expression *type) {
+Unary *as_pointer(Type type) {
 	if (auto unary = as<Unary>(type); unary && unary->operation == UnaryOperation::pointer) {
 		return unary;
 	}
@@ -3330,7 +3388,11 @@ CheckResult is_constant_impl(BooleanLiteral *literal) { return true; }
 CheckResult is_constant_impl(StringLiteral *literal) { return true; }
 CheckResult is_constant_impl(Lambda *lambda) { return true; }
 CheckResult is_constant_impl(LambdaHead *head) { return true; }
-CheckResult is_constant_impl(Name *name) { return is_constant_impl(name->definition); }
+CheckResult is_constant_impl(Name *name) { 
+	auto definition = name->definition();
+	assert(definition);
+	return is_constant_impl(definition);
+}
 CheckResult is_constant_impl(Call *call) { 
 	MUST_BE_CONSTANT(call->callable);
 
@@ -3403,7 +3465,11 @@ CheckResult is_mutable_impl(BooleanLiteral *literal) { return {false, literal}; 
 CheckResult is_mutable_impl(StringLiteral *literal) { return {false, literal}; }
 CheckResult is_mutable_impl(Lambda *lambda) { return {false, lambda}; }
 CheckResult is_mutable_impl(LambdaHead *head) { return {false, head}; }
-CheckResult is_mutable_impl(Name *name) { return is_mutable_impl(name->definition); }
+CheckResult is_mutable_impl(Name *name) { 
+	auto definition = name->definition();
+	assert(definition);
+	return is_mutable_impl(definition);
+}
 CheckResult is_mutable_impl(Call *call) { return {false, call}; }
 CheckResult is_mutable_impl(If *If) { return {false, If}; }
 CheckResult is_mutable_impl(BuiltinTypeName *type) { return {false, type}; }
@@ -3432,6 +3498,38 @@ CheckResult is_mutable(Expression *expression) {
 
 #undef MUST_BE_MUTABLE
 
+Optional<Value> get_constant_value(Node *node) {
+	while (1) {
+		scoped_replace(debug_current_location, node->location);
+		switch (node->kind) {
+			case NodeKind::IntegerLiteral: return Value(((IntegerLiteral *)node)->value);
+			case NodeKind::BooleanLiteral: return Value(((BooleanLiteral *)node)->value);
+			case NodeKind::StringLiteral:  return Value(((StringLiteral *)node)->value);
+			case NodeKind::Name: {
+				auto name = (Name *)node;
+				auto definition = name->definition();
+				if (!definition) {
+					return {};
+				}
+
+				node = definition;
+				continue;
+			}
+			case NodeKind::Definition: {
+				auto definition = (Definition *)node;
+				if (definition->mutability != Mutability::constant) {
+					return {};
+				}
+
+				assert(definition->constant_value);
+				return definition->constant_value.value();
+			}
+			default: 
+				return {};
+		}
+	}
+}
+
 SpinLock retired_typecheckers_lock;
 List<struct Typechecker *> retired_typecheckers;
 
@@ -3456,8 +3554,7 @@ struct TypecheckEntry {
 	Typechecker* typechecker = 0;
 	TypecheckEntryStatus status = TypecheckEntryStatus::unstarted;
 
-	SpinLock dependants_lock;
-	List<TypecheckEntry *> dependants;
+	TypecheckEntry *dependency = 0;
 };
 
 List<TypecheckEntry> typecheck_entries;
@@ -3505,6 +3602,11 @@ struct Copier {
 		to->x = autocast found->value;               \
 	} else {                                         \
 		to->x = from->x;                             \
+	}
+#define COPY_LIST(x, COPY_MODE)               \
+	to->x.resize(from->x.count);              \
+	for (umm i = 0; i < from->x.count; ++i) { \
+		COPY_MODE(x[i]);                      \
 	}
 
 	template <class T>
@@ -3566,10 +3668,7 @@ struct Copier {
 	} 
 	[[nodiscard]] void deep_copy_impl(Call *from, Call *to) {
 		DEEP_COPY(callable);
-		to->arguments.resize(from->arguments.count);
-		for (umm i = 0; i < from->arguments.count; ++i) {
-			DEEP_COPY(arguments[i]);
-		}
+		COPY_LIST(arguments, DEEP_COPY);
 		COPY(inline_status);
 
 		auto [lambda, head] = get_lambda_and_head(to->callable);
@@ -3623,8 +3722,9 @@ struct Copier {
 	} 
 	[[nodiscard]] void deep_copy_impl(Name *from, Name *to) {
 		COPY(name);
-		LOOKUP_COPY(definition);
-		to->type = to->definition->type;
+		COPY_LIST(possible_definitions, LOOKUP_COPY);
+		assert(to->definition());
+		to->type = to->definition()->type;
 	} 
 	[[nodiscard]] void deep_copy_impl(If *from, If *to) {
 		DEEP_COPY(condition);
@@ -3786,11 +3886,25 @@ inline bool do_all_paths_return(Node *node) {
 	return false;
 }
 
-IntegerLiteral *make_integer(u64 value, Expression *type = get_builtin_type(BuiltinType::UnsizedInteger)) {
+IntegerLiteral *make_integer(u64 value, String location, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
 	auto result = IntegerLiteral::create();
 	result->value = value;
 	result->type = type;
+	result->location = location;
 	return result;
+}
+IntegerLiteral *make_integer(u64 value, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
+	return make_integer(value, {}, type);
+}
+BooleanLiteral *make_boolean(bool value, String location, Type type = get_builtin_type(BuiltinType::Bool)) {
+	auto result = BooleanLiteral::create();
+	result->value = value;
+	result->type = type;
+	result->location = location;
+	return result;
+}
+BooleanLiteral *make_boolean(bool value, Type type = get_builtin_type(BuiltinType::Bool)) {
+	return make_boolean(value, {}, type);
 }
 
 struct Typechecker {
@@ -3876,6 +3990,7 @@ private:
 	Reporter reporter;
 	Node **initial_node = 0;
 	Block *current_block = 0;
+	Expression *current_container = 0;
 	List<Node *> node_stack;
 	TypecheckEntry *entry = 0;
 
@@ -4025,19 +4140,25 @@ private:
 		if (auto unary = as<Unary>(expr)) {
 			if (unary->operation == UnaryOperation::dereference) {
 				if (auto name = as<Name>(unary->expression)) {
-					reporter.info(name->definition->location, "Because {} is a pointer to {}.", name->name, meaning(name->definition->mutability));
-					if (name->definition->initial_value) {
-						why_is_this_immutable(name->definition->initial_value);
+					auto definition = name->definition();
+					assert(definition);
+					reporter.info(definition->location, "Because {} is a pointer to {}.", name->name, meaning(definition->mutability));
+					if (definition->initial_value) {
+						why_is_this_immutable(definition->initial_value);
 					}
 				}
 			} else if (unary->operation == UnaryOperation::addr) {
 				if (auto name = as<Name>(unary->expression)) {
-					reporter.info(name->definition->location, "Because {} is marked as {}. Mark it with `var` instead to make it mutable.", name->name, name->definition->mutability);
+					auto definition = name->definition();
+					assert(definition);
+					reporter.info(definition->location, "Because {} is marked as {}. Mark it with `var` instead to make it mutable.", name->name, definition->mutability);
 				}
 			}
 		} else if (auto name = as<Name>(expr)) {
-			reporter.info(name->definition->location, "Because {} is {}.", name->name, meaning(name->definition->mutability));
-			why_is_this_immutable(name->definition->initial_value);
+			auto definition = name->definition();
+			assert(definition);
+			reporter.info(definition->location, "Because {} is {}.", name->name, meaning(definition->mutability));
+			why_is_this_immutable(definition->initial_value);
 		}
 	}
 
@@ -4047,8 +4168,8 @@ private:
 			yield(YieldResult::fail);
 		}
 		
-		// LEAK: copied_lambda
 		auto copied_lambda = as<Lambda>(Copier{}.deep_copy(lambda));
+		NOTE_LEAK(copied_lambda);
 		assert(copied_lambda);
 
 		auto result_block = Block::create();
@@ -4073,7 +4194,7 @@ private:
 						assert(body_block);
 						Break->tag_block = body_block;
 						body_block->breaks.add(Break);
-						// LEAK: ret
+						NOTE_LEAK(ret);
 						return Break;
 					}
 					return ret;
@@ -4174,7 +4295,7 @@ private:
 				block->type = last_expression->type;
 				if (block->children.count == 1) {
 					if (can_substitute) {
-						// LEAK: block
+						NOTE_LEAK(block);
 						return last_expression;
 					}
 				}
@@ -4353,6 +4474,7 @@ private:
 		bool all_paths_return = false;
 
 		if (lambda->body) {
+			scoped_replace(current_container, lambda);
 			scoped_replace(current_block, &lambda->head.parameters_block);
 
 			typecheck(&lambda->body);
@@ -4525,72 +4647,60 @@ private:
 					continue;
 				}
 
-				if (definitions.count > 1) {
-					reporter.error(name->location, "`{}` is ambiguous.", name->name);
-					for (auto definition : definitions) {
-						reporter.info(definition->location, "Declared here:");
-					}
-					yield(YieldResult::fail);
-				}
+				for (auto definition : definitions) {
+					auto definition_index = find_index_of(block->children, definition);
+					assert(definition_index < block->children.count);
 
-				auto definition = definitions[0];
-
-				name->definition = definition;
-
-				auto definition_index = find_index_of(block->children, definition);
-				assert(definition_index < block->children.count);
-
-				if (block->container && as<Lambda>(block->container)) {
-					// Find our parent node in found definition's block
-					for (auto node : reverse_iterate(node_stack)) {
-						auto parent_index = find_index_of(block->children, node);
-						if (parent_index < block->children.count) {
-							if (parent_index < definition_index) {
-								reporter.error(name->location, "Can't access definition because it is declared after.");
-								reporter.info(definition->location, "Here is the definition.");
-								yield(YieldResult::fail);
+					if (block->container && as<Lambda>(block->container)) {
+						// Find our parent node in found definition's block
+						for (auto node : reverse_iterate(node_stack)) {
+							auto parent_index = find_index_of(block->children, node);
+							if (parent_index < block->children.count) {
+								if (parent_index < definition_index) {
+									// Can't access definition because it is declared after. Skip it.
+									goto next_definition;
+								}
+								break;
 							}
-							break;
 						}
 					}
-				}
+					
+					name->possible_definitions.add(definition);
 
-				TypecheckEntry *dependency_entry = 0;
 
-				if (block == &global_block) {
-					for (auto &typecheck_entry : typecheck_entries) {
-						if (*typecheck_entry.node == definition) {
-							dependency_entry = &typecheck_entry;
-							break;
+					if (block == &global_block) {
+						for (auto &typecheck_entry : typecheck_entries) {
+							if (*typecheck_entry.node == definition) {
+								entry->dependency = &typecheck_entry;
+								break;
+							}
 						}
 					}
+
+					if (!yield_while_null(name->location, &definition->type)) {
+						reporter.error(name->location, "Couldn't wait for definition type.");
+						yield(YieldResult::fail);
+					}
+
+					entry->dependency = 0;
+
+				next_definition:;
 				}
 
-				if (dependency_entry) {
-					scoped(dependency_entry->dependants_lock);
-					dependency_entry->dependants.add(entry);
-				}
+				if (auto definition = name->definition()) {
+					name->type = definition->type;
 
-				if (!yield_while_null(name->location, &definition->type)) {
-					reporter.error(name->location, "Couldn't wait for definition type.");
-					yield(YieldResult::fail);
-				}
-
-				if (dependency_entry) {
-					scoped(dependency_entry->dependants_lock);
-					find_and_erase_unordered(dependency_entry->dependants,entry);
-				}
-
-				name->type = definition->type;
-
-				if (constant_name_inlining) {
-					if (definition->mutability == Mutability::constant) {
-						if (definition->initial_value->kind != NodeKind::Lambda) {
-							auto literal = Copier{}.deep_copy(definition->initial_value);
-							assert(literal->kind == NodeKind::IntegerLiteral || literal->kind == NodeKind::BooleanLiteral);
-							return literal;
+					if (constant_name_inlining) {
+						if (definition->mutability == Mutability::constant) {
+							if (definition->initial_value->kind != NodeKind::Lambda) {
+								auto literal = Copier{}.deep_copy(definition->initial_value);
+								assert(literal->kind == NodeKind::IntegerLiteral || literal->kind == NodeKind::BooleanLiteral);
+								return literal;
+							}
 						}
 					}
+				} else {
+					name->type = get_builtin_type(BuiltinType::Overload);
 				}
 
 				return name;
@@ -4659,7 +4769,7 @@ private:
 		call->type = head->return_type;
 		return call;
 	}
-	[[nodiscard]] If *typecheck_impl(If *If, bool can_substitute) {
+	[[nodiscard]] Node *typecheck_impl(If *If, bool can_substitute) {
 		typecheck(&If->condition);
 
 		typecheck(&If->true_branch);
@@ -4704,6 +4814,30 @@ private:
 			}
 		}
 
+
+		if (auto value_ = get_constant_value(If->condition)) {
+
+			NOTE_LEAK(If);
+
+			auto value = value_.value();
+			assert(value.kind == ValueKind::boolean);
+			if (value.boolean) {
+				return If->true_branch;
+			} else {
+				if (If->false_branch) {
+					return If->false_branch;
+				} else {
+					auto empty_block = Block::create();
+					empty_block->location = If->location;
+					empty_block->parent = current_block;
+					empty_block->container = current_container;
+					empty_block->type = get_builtin_type(BuiltinType::None);
+					return empty_block;
+				}
+			}
+		}
+
+
 		if (!If->type)
 			If->type = get_builtin_type(BuiltinType::None);
 
@@ -4736,48 +4870,6 @@ private:
 
 		auto dleft  = direct(binary->left->type);
 		auto dright = direct(binary->right->type);
-
-		if (fold_constants) {
-			if (auto li = as<IntegerLiteral>(binary->left)) {
-				if (auto ri = as<IntegerLiteral>(binary->right)) {
-				
-					if (dleft != dright) {
-						goto no_binop;
-					}
-
-					auto builtin_type = as<BuiltinTypeName>(dleft);
-					assert(builtin_type);
-
-#define OPS(T) \
-					switch (binary->operation) { \
-						case BinaryOperation::add: return make_integer((T)((T)li->value + (T)ri->value), builtin_type); \
-						case BinaryOperation::sub: return make_integer((T)((T)li->value - (T)ri->value), builtin_type); \
-						case BinaryOperation::mul: return make_integer((T)((T)li->value * (T)ri->value), builtin_type); \
-						case BinaryOperation::div: return make_integer((T)((T)li->value / (T)ri->value), builtin_type); \
-						case BinaryOperation::mod: return make_integer((T)((T)li->value % (T)ri->value), builtin_type); \
-						case BinaryOperation::bxo: return make_integer((T)((T)li->value ^ (T)ri->value), builtin_type); \
-						case BinaryOperation::ban: return make_integer((T)((T)li->value & (T)ri->value), builtin_type); \
-						case BinaryOperation::bor: return make_integer((T)((T)li->value | (T)ri->value), builtin_type); \
-						case BinaryOperation::bsl: return make_integer((T)((T)li->value << (T)ri->value), builtin_type); \
-						case BinaryOperation::bsr: return make_integer((T)((T)li->value >> (T)ri->value), builtin_type); \
-					}
-
-					switch (builtin_type->type_kind) {
-						case BuiltinType::U8:  OPS(u8); 
-						case BuiltinType::U16: OPS(u16); 
-						case BuiltinType::U32: OPS(u32); 
-						case BuiltinType::U64: OPS(u64); 
-						case BuiltinType::S8:  OPS(s8); 
-						case BuiltinType::S16: OPS(s16); 
-						case BuiltinType::S32: OPS(s32); 
-						case BuiltinType::S64: OPS(s64); 
-					}
-
-					invalid_code_path();
-#undef OPS
-				}
-			}
-		}
 
 		if (auto found = binary_typecheckers.find({ dleft, dright, binary->operation })) {
 			return (this->*(found->value))(binary);
@@ -4828,7 +4920,7 @@ private:
 	}
 	[[nodiscard]] Expression *typecheck_impl(Unary *unary, bool can_substitute) {
 		typecheck(&unary->expression);
-
+		auto constant = get_constant_value(unary->expression);
 		switch (unary->operation) {
 			case UnaryOperation::star: {
 				if (types_match(unary->expression->type, BuiltinType::Type)) {
@@ -4846,7 +4938,9 @@ private:
 			}
 			case UnaryOperation::addr: {
 				if (auto name = get_bottom_name(unary->expression)) {
-					unary->type = make_pointer(unary->expression->type, name->definition->mutability);
+					auto definition = name->definition();
+					assert(definition);
+					unary->type = make_pointer(unary->expression->type, definition->mutability);
 				} else {
 					reporter.error(unary->location, "You can only take address of names or blocks that end with a name.");
 					yield(YieldResult::fail);
@@ -4854,9 +4948,6 @@ private:
 				break;
 			}
 			case UnaryOperation::plus: {
-				if (auto literal = as<IntegerLiteral>(unary->expression)) {
-					return literal;
-				}
 				if (auto builtin = as<BuiltinTypeName>(unary->expression->type)) {
 					switch (builtin->type_kind) {
 						case BuiltinType::U8:
@@ -4876,7 +4967,9 @@ private:
 					reporter.error(unary->location, "Unary plus can't be applied to expression of type {}", unary->expression->type);
 					yield(YieldResult::fail);
 				}
-				break;
+
+				NOTE_LEAK(unary);
+				return unary->expression;
 			}
 			case UnaryOperation::minus: {
 				if (auto literal = as<IntegerLiteral>(unary->expression)) {
@@ -4908,7 +5001,7 @@ private:
 					// NOTE: must copy to set location
 					auto copied = Copier{}.deep_copy(builtin_type);
 					copied->location = unary->location;
-					// LEAK: unary
+					NOTE_LEAK(unary);
 					return copied;
 				}
 				break;
@@ -5001,40 +5094,38 @@ public:
 		binary->type = get_builtin_type(BuiltinType::Bool);
 		return binary;
 	};
-	Expression *bt_both_unsized_ints(Binary *binary) {
+	Expression *bt_unsized_int(Binary *binary) {
 		binary->left->type =
-			binary->right->type = get_builtin_type(BuiltinType::S64);
+		binary->right->type = get_builtin_type(BuiltinType::S64);
 
-		auto e = ExecutionContext::create(fiber);
-		auto l = e->run(binary->left).value_or([&] {
-			reporter.error(binary->left->location, "Failed to evaluate value.");
-			yield(YieldResult::fail);
-			return Value{};
-		});
-		auto r = e->run(binary->right).value_or([&] {
-			reporter.error(binary->right->location, "Failed to evaluate value.");
-			yield(YieldResult::fail);
-			return Value{};
-		});
+		auto l = get_constant_value(binary->left).value();
+		auto r = get_constant_value(binary->right).value();
 
-		auto result = IntegerLiteral::create();
 		switch (binary->operation) {
-			case BinaryOperation::add: result->value = l.s64 + r.s64; break;
-			case BinaryOperation::sub: result->value = l.s64 - r.s64; break;
-			case BinaryOperation::mul: result->value = l.s64 * r.s64; break;
-			case BinaryOperation::div: result->value = l.s64 / r.s64; break;
-			case BinaryOperation::mod: result->value = l.s64 % r.s64; break;
-			case BinaryOperation::bxo: result->value = l.s64 ^ r.s64; break;
-			case BinaryOperation::ban: result->value = l.s64 & r.s64; break;
-			case BinaryOperation::bor: result->value = l.s64 | r.s64; break;
-			case BinaryOperation::bsl: result->value = l.s64 << r.s64; break;
-			case BinaryOperation::bsr: result->value = l.s64 >> r.s64; break;
-			default: invalid_code_path("Attempt to evaluate binary {} on unsized integers. This is not supported/implemented", binary->operation);
+			case BinaryOperation::add: return make_integer(l.s64 + r.s64, binary->location);
+			case BinaryOperation::sub: return make_integer(l.s64 - r.s64, binary->location);
+			case BinaryOperation::mul: return make_integer(l.s64 * r.s64, binary->location);
+			case BinaryOperation::div: return make_integer(l.s64 / r.s64, binary->location);
+			case BinaryOperation::mod: return make_integer(l.s64 % r.s64, binary->location);
+			case BinaryOperation::bxo: return make_integer(l.s64 ^ r.s64, binary->location);
+			case BinaryOperation::ban: return make_integer(l.s64 & r.s64, binary->location);
+			case BinaryOperation::bor: return make_integer(l.s64 | r.s64, binary->location);
+			case BinaryOperation::bsl: return make_integer(l.s64 << r.s64, binary->location);
+			case BinaryOperation::bsr: return make_integer(l.s64 >> r.s64, binary->location);
+			case BinaryOperation::equ: return make_boolean(l.s64 == r.s64, binary->location);
+			case BinaryOperation::neq: return make_boolean(l.s64 != r.s64, binary->location);
+			case BinaryOperation::les: return make_boolean(l.s64 < r.s64, binary->location);
+			case BinaryOperation::grt: return make_boolean(l.s64 > r.s64, binary->location);
+			case BinaryOperation::leq: return make_boolean(l.s64 <= r.s64, binary->location);
+			case BinaryOperation::grq: return make_boolean(l.s64 >= r.s64, binary->location);
 		}
-		result->type = get_builtin_type(BuiltinType::UnsizedInteger);
-		result->location = binary->location;
-		return result;
+		invalid_code_path("Attempt to evaluate binary {} on unsized integers. This is not supported/implemented", binary->operation);
 	};
+
+	template <bool invert>
+	Expression *bt_comp_Type(Binary *binary) {
+		return make_boolean(invert ^ types_match(binary->left, binary->right));
+	}
 
 	static void init_binary_typecheckers() {
 		construct(binary_typecheckers);
@@ -5047,7 +5138,11 @@ public:
 		// 
 		for (u32 i = 0; i < (u32)BuiltinType::count; ++i) {
 			y((BuiltinType)i, (BuiltinType)i, BinaryOperation::equ) = &bt_set_bool;
+			y((BuiltinType)i, (BuiltinType)i, BinaryOperation::neq) = &bt_set_bool;
 		}
+
+		x(Type, Type, equ) = &bt_comp_Type<false>;
+		x(Type, Type, neq) = &bt_comp_Type<true>;
 
 #define ORDERABLE(type) \
 	x(type, type, les) = &bt_set_bool; \
@@ -5111,16 +5206,25 @@ public:
 		UNSIZED_INT_AND_SIZED_INT(S32);
 		UNSIZED_INT_AND_SIZED_INT(S64);
 
-		x(UnsizedInteger, UnsizedInteger, add) = &bt_both_unsized_ints;
-		x(UnsizedInteger, UnsizedInteger, sub) = &bt_both_unsized_ints;
-		x(UnsizedInteger, UnsizedInteger, mul) = &bt_both_unsized_ints;
-		x(UnsizedInteger, UnsizedInteger, div) = &bt_both_unsized_ints;
-		x(UnsizedInteger, UnsizedInteger, mod) = &bt_both_unsized_ints;
-		x(UnsizedInteger, UnsizedInteger, bxo) = &bt_both_unsized_ints;
-		x(UnsizedInteger, UnsizedInteger, ban) = &bt_both_unsized_ints;
-		x(UnsizedInteger, UnsizedInteger, bor) = &bt_both_unsized_ints;
-		x(UnsizedInteger, UnsizedInteger, bsl) = &bt_both_unsized_ints;
-		x(UnsizedInteger, UnsizedInteger, bsr) = &bt_both_unsized_ints;
+		x(UnsizedInteger, UnsizedInteger, add) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, sub) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, mul) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, div) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, mod) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, bxo) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, ban) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, bor) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, bsl) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, bsr) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, equ) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, neq) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, les) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, leq) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, grt) = &bt_unsized_int;
+		x(UnsizedInteger, UnsizedInteger, grq) = &bt_unsized_int;
+
+		x(Bool, Bool, lan) = &bt_set_bool;
+		x(Bool, Bool, lor) = &bt_set_bool;
 
 #undef UNSIZED_INT_AND_SIZED_INT
 #undef SYMMETRIC
@@ -5149,6 +5253,9 @@ void init_globals() {
 	construct(global_block);
 	construct(typecheck_entries);
 	construct(deferred_reports);
+#if ENABLE_NOTE_LEAK
+	construct(leaks);
+#endif
 
 	//GlobalAllocator::init();
 }
@@ -5176,10 +5283,10 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 			result.print_ast = true;
 		} else if (args[i] == "-print-uids") {
 			print_uids = true;
-		} else if (args[i] == "-no-fold-constants") {
-			fold_constants = false;
 		} else if (args[i] == "-no-constant-name-inlining") {
 			constant_name_inlining = false;
+		} else if (args[i][0] == '-') {
+			immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
 		} else {
 			if (result.source_name.count) {
 				with(ConsoleColor::red, println("No multiple input files allowed"));
@@ -5221,6 +5328,13 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 #if ENABLE_STRING_HASH_COUNT
 		println("Total string hashes: {}", string_hash_count);
+#endif
+
+#if ENABLE_NOTE_LEAK
+		println("\nLEAKS:");
+		for (auto leak : leaks) {
+			println(leak);
+		}
 #endif
 	};
 
@@ -5387,7 +5501,12 @@ s32 tl_main(Span<Span<utf8>> args) {
 				auto dependency_index = index_of(typecheck_entries, &dependency);
 				assert(dependency_index < typecheck_entries.count);
 
-				for (auto &dependant : dependency.dependants) {
+				List<TypecheckEntry *> dependants;
+				for (auto &entry : typecheck_entries) {
+					if (entry.dependency == &dependency)
+						dependants.add(&entry);
+				}
+				for (auto &dependant : dependants) {
 					auto dependant_index = index_of(typecheck_entries, dependant);
 					assert(dependant_index < typecheck_entries.count);
 

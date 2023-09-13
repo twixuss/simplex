@@ -6,6 +6,7 @@
 #include <tl/cpu.h>
 #include <tl/random.h>
 #include <tl/time.h>
+#include <tl/tracking_allocator.h>
 #include <conio.h>
 #include <algorithm>
 
@@ -55,9 +56,8 @@ struct RanProcess {
 SpinLock stdout_lock;
 
 RanProcess run_process(String command) {
-	auto prev = GetErrorMode();
-	SetErrorMode(SEM_NOGPFAULTERRORBOX);
-	defer { SetErrorMode(prev); };
+	auto allocator = current_allocator;
+	scoped(temporary_allocator_and_checkpoint);
 
 	auto process = start_process(to_utf16(command));
 	defer { free(process); };
@@ -66,7 +66,6 @@ RanProcess run_process(String command) {
 	u8 buf[256];
 
 	StringBuilder output_builder;
-	defer { free(output_builder); };
 
 	while (1) {
 		auto bytes_read = process.standard_out->read(array_as_span(buf));
@@ -83,14 +82,28 @@ RanProcess run_process(String command) {
 
 	RanProcess result {
 		.exit_code = get_exit_code(process),
-		.output = autocast to_string(output_builder),
+		.output = autocast to_string(output_builder, allocator),
 		.timed_out = timed_out,
 	};
 
 	return result;
 }
 
+TrackingAllocator tracking_allocator;
+
+BOOL at_exit(DWORD) {
+	init_allocator();
+	init_printer();
+	println();
+	for (auto allocation : tracking_allocator.get_tracked_allocations()) {
+		println(allocation);
+	}
+	return FALSE;
+}
+
 s32 tl_main(Span<String> arguments) {
+	SetConsoleCtrlHandler(at_exit, true);
+
 	auto executable_path = get_executable_path();
 	auto executable_directory = parse_path(executable_path).directory;
 
@@ -100,9 +113,13 @@ s32 tl_main(Span<String> arguments) {
 
 	xorshift32 r{get_performance_counter()};
 
+	init_tracking_allocator(&tracking_allocator, current_allocator);
+	current_allocator = tracking_allocator;
+
 	while (1) {
+		defer { temporary_allocator.clear(); };
+		scoped(temporary_allocator_and_checkpoint);
 		StringBuilder builder;
-		defer { free(builder); };
 
 		auto random_tokens = [&] {
 			char const *tokens[] = {
@@ -171,12 +188,10 @@ s32 tl_main(Span<String> arguments) {
 #endif
 
 		auto source = to_string(builder);
-		defer { free(source); };
 
 		write_entire_file(fuzz_path, source);
 
 		auto result = run_process(run_command);
-		defer { free(result.output); };
 
 		switch (result.exit_code) {
 			case 0:
@@ -192,8 +207,6 @@ s32 tl_main(Span<String> arguments) {
 				return 0;
 			}
 		}
-
-		temporary_allocator.clear();
 	}
 
 
