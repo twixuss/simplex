@@ -84,9 +84,12 @@
 	x(typeof) \
 	x(inline) \
 	x(noinline) \
+	x(struct) \
 
 // #define x(name, token, precedence)
 #define ENUMERATE_BINARY_OPERATIONS(x) \
+	x(dot, "." , 8) \
+    \
 	x(mul, "*" , 7) \
 	x(div, "/" , 7) \
 	x(mod, "%" , 7) \
@@ -161,6 +164,10 @@
 	x(Binary) \
 	x(Match) \
 	x(Unary) \
+	x(Struct) \
+	x(ArrayType) \
+	x(Subscript) \
+	x(ArrayConstructor) \
 
 #define ENUMERATE_STATEMENT_KIND(x) \
 	x(Return) \
@@ -180,13 +187,21 @@
 //#define x(name)
 #define ENUMERATE_EXECUTION_VALUE_KIND \
 	x(none) \
-	x(u64) \
-	x(s64) \
-	x(boolean) \
-	x(string) \
+	x(U8) \
+	x(U16) \
+	x(U32) \
+	x(U64) \
+	x(S8) \
+	x(S16) \
+	x(S32) \
+	x(S64) \
+	x(Bool) \
+	x(String) \
 	x(lambda) \
-	x(type) \
+	x(Type) \
 	x(pointer) \
 	x(break_) \
 	x(continue_) \
 	x(return_) \
+	x(struct_) \
+	x(array) \

@@ -97,6 +97,7 @@ s32 tl_main(Span<String> arguments) {
 
 	auto current_directory = get_current_directory();
 
+	StringBuilder extra_options_builder;
 	List<String> test_filenames;
 	bool all = true;
 	bool do_coverage = false;
@@ -105,11 +106,14 @@ s32 tl_main(Span<String> arguments) {
 			show_box = true;
 		} else if (arguments[i] == u8"coverage"s) {
 			do_coverage = true;
+		} else if (arguments[i][0] == '-') {
+			append_format(extra_options_builder, "{} ", arguments[i]);
 		} else if (arguments[i] != u8"all"s) {
 			all = false;
 			test_filenames.add(arguments[i]);
 		}
 	}
+	auto extra_options = to_string(extra_options_builder);
 
 	if (all) {
 		auto add_tests_from_directory = [&] (this auto &&self, String directory, String dirname = {}) -> void {
@@ -177,7 +181,7 @@ s32 tl_main(Span<String> arguments) {
 			auto find_param = [&](String param_prefix) -> String {
 				if (auto found = find(test_source, param_prefix)) {
 					auto param_start = found + param_prefix.count;
-					return unescape_string({param_start, find_any(String{param_start, test_source.end()}, {u8'\r', u8'\n'})});
+					return unescape_string({param_start, find_any(String{param_start, test_source.end()}, as_span({u8'\r', u8'\n'}))});
 				}
 				return {};
 			};
@@ -185,7 +189,7 @@ s32 tl_main(Span<String> arguments) {
 			auto find_all_params = [&](String param_prefix) -> List<String> {
 				List<String> result;
 				find_all(test_source, param_prefix, [&] (String prefix) {
-					result.add(unescape_string({prefix.end(), find_any(String{prefix.end(), test_source.end()}, {u8'\r', u8'\n'})}));
+					result.add(unescape_string({prefix.end(), find_any(String{prefix.end(), test_source.end()}, as_span({u8'\r', u8'\n'}))}));
 				});
 				return result;
 			};
@@ -195,7 +199,7 @@ s32 tl_main(Span<String> arguments) {
 			String expected_program_output = find_param(u8"// PROGRAM OUTPUT "s);
 			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
 
-			auto compile_command = format(u8"{} -t1 \"{}\""s, compiler_path, test_path);
+			auto compile_command = format(u8"{} -t1 \"{}\" {}"s, compiler_path, test_path, extra_options);
 
 			if (do_coverage) {
 				auto coverage_command = format(u8"opencppcoverage --sources {}\\src\\ --export_type=binary:codecov\\{}.cov -- {}"s, project_directory, test_index, compile_command);

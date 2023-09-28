@@ -1,9 +1,11 @@
 #include <type_traits>
 #include <xtr1common>
+#include <concepts>
 
 namespace tl {
-template <class, class>
+template <class, class Size>
 struct Span;
+bool debugger_attached();
 }
 using String = tl::Span<char8_t, unsigned long long>;
 
@@ -15,7 +17,9 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 template <class ...Args>
 void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, char const *format, Args ...args);
 
-#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCSIG__, __VA_ARGS__), debug_break())
+void print_crash_info();
+
+#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCSIG__, __VA_ARGS__), print_crash_info(), debugger_attached() ? (debug_break(), 0) : 0, exit(-1))
 
 #if !BUILD_DEBUG
 #define assert(...)
@@ -31,8 +35,8 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 #include <tl/hash_map.h>
 #include <tl/fiber.h>
 #include <tl/time.h>
+#include <tl/debug.h>
 
-#define ENABLE_TIME_LOG 0
 #define ENABLE_STRING_HASH_COUNT 0
 #define ENABLE_NOTE_LEAK 0
 
@@ -92,12 +96,13 @@ List<TimedResult> timed_results;
 
 bool constant_name_inlining = true;
 bool print_uids = false;
+bool report_yields = false;
+bool enable_time_log = false;
 
-#if ENABLE_TIME_LOG
 #define timed_block(name) \
-	println("{} ...", name); \
+	if (enable_time_log) println("{} ...", name); \
 	auto timer = create_precise_timer(); \
-	defer { timed_results.add({name, get_time(timer)}); }
+	defer { if (enable_time_log) timed_results.add({name, get_time(timer)}); }
 
 #define timed_function() \
 	static constexpr auto funcname = __FUNCTION__; \
@@ -110,12 +115,6 @@ bool print_uids = false;
 	}()
 
 #define timed_expression(expression) timed_expression_named(#expression, expression)
-#else
-#define timed_block(name)
-#define timed_function() 
-#define timed_expression_named(name, expression) expression
-#define timed_expression(expression) timed_expression_named(#expression, expression)
-#endif
 
 inline StaticList<char, 4> escape_character(char ch) {
 	StaticList<char, 4> result;
@@ -621,6 +620,11 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 	assertion_failure_impl(cause_string, expression, file, line, function, {}, tformat(format, args...));
 }
 
+void print_crash_info() {
+	println("Call stack:");
+	println(resolve_names(get_call_stack(1)));
+}
+
 using Tokens = GList<Token>;
 
 Optional<Tokens> source_to_tokens(String source, String path) {
@@ -972,6 +976,10 @@ umm append(StringBuilder &builder, BinaryOperation operation) {
 
 umm append(StringBuilder &builder, UnaryOperation operation) {
 	switch (operation) {
+		case UnaryOperation::pointer: return append(builder, '*');
+		case UnaryOperation::dereference: return append(builder, '*');
+	}
+	switch (operation) {
 #define x(name, token) case UnaryOperation::name: return append(builder, token);
 #define y(name) case UnaryOperation::name: return append(builder, #name);
 		ENUMERATE_UNARY_OPERATIONS(x, y)
@@ -1152,7 +1160,7 @@ umm append(StringBuilder &builder, BuiltinType type_kind) {
 	return append_format(builder, "(unknown BuiltinType {})", (u32)type_kind);
 }
 
-inline BuiltinType token_kind_to_builtin_type_kind(TokenKind kind) {
+inline BuiltinType to_builtin_type_kind(TokenKind kind) {
 	switch (kind) {
 #define x(name) case Token_##name: return BuiltinType::name;
 		ENUMERATE_CONCRETE_BUILTIN_TYPES(x);
@@ -1196,13 +1204,22 @@ inline umm append(StringBuilder &builder, ValueKind kind) {
 
 bool is_type(Expression *expression);
 
-#if BUILD_DEBUG
+
+#define CHECK_THAT_TYPES_ARE_TYPES 0//BUILD_DEBUG
+
+#if CHECK_THAT_TYPES_ARE_TYPES
 struct Type {
 	Expression *expression;
 	Type(Expression *expression) : expression(expression) {
-		assert(is_type(expression));
+		if (expression) {
+			assert(is_type(expression));
+		}
 	}
 	operator Expression *() { return expression; }
+	Expression *operator->() { return expression; }
+	Expression &operator*() { return *expression; }
+	template <class Expr>
+	operator Expr*();
 };
 #else
 using Type = Expression *;
@@ -1214,20 +1231,48 @@ inline umm append(StringBuilder &builder, Type type) {
 	return append(builder, (Node *)type);
 }
 
+struct StructTag {} struct_tag;
+struct ArrayTag {} array_tag;
+
 struct Value {
 	ValueKind kind = {};
 	union {
-		u64 u64;
-		s64 s64;
-		bool boolean;
-		String string;
+		u8 U8;
+		u16 U16;
+		u32 U32;
+		u64 U64;
+		s8 S8;
+		s16 S16;
+		s32 S32;
+		s64 S64;
+		bool Bool;
+		String String;
 		Lambda *lambda;
-		Type type;
+		Type Type;
 		Value *pointer;
+		List<Value> elements;
 	};
 	Block *break_tag = 0;
 	Value() : kind(ValueKind::none) {}
-	Value(ValueKind kind) : kind(kind) {
+	Value(const Value &that) {
+		memcpy(this, &that, sizeof Value);
+		if (kind == ValueKind::struct_ || kind == ValueKind::array) {
+			elements = copy(elements);
+		}
+	}
+	Value(Value &&that) { 
+		memcpy(this, &that, sizeof Value);
+		memset(&that, 0, sizeof Value);
+	}
+	~Value() {
+		if (kind == ValueKind::struct_ || kind == ValueKind::array) {
+			free(elements);
+		}
+		memset(this, 0, sizeof Value);
+	}
+	Value &operator=(const Value &that) { return this->~Value(), *new(this) Value(that); }
+	Value &operator=(Value &&that) { return this->~Value(), *new(this) Value(std::move(that)); }
+	explicit Value(ValueKind kind) : kind(kind) {
 		switch (kind) {
 			case ValueKind::return_:
 			case ValueKind::break_:
@@ -1237,13 +1282,21 @@ struct Value {
 				invalid_code_path();
 		}
 	}
-	Value(tl::u64 value) : kind(ValueKind::u64    ), u64    (value) {}
-	Value(tl::s64 value) : kind(ValueKind::s64    ), s64    (value) {}
-	Value(bool    value) : kind(ValueKind::boolean), boolean(value) {}
-	Value(String  value) : kind(ValueKind::string ), string (value) {}
-	Value(Lambda *value) : kind(ValueKind::lambda ), lambda (value) {}
-	Value(Type    value) : kind(ValueKind::type   ), type   (value) {}
-	Value(Value  *value) : kind(ValueKind::pointer), pointer(value) {}
+	explicit Value(u8          value) : kind(ValueKind::U8     ), U8     (value) {}
+	explicit Value(u16         value) : kind(ValueKind::U16    ), U16    (value) {}
+	explicit Value(u32         value) : kind(ValueKind::U32    ), U32    (value) {}
+	explicit Value(u64         value) : kind(ValueKind::U64    ), U64    (value) {}
+	explicit Value(s8          value) : kind(ValueKind::S8     ), S8     (value) {}
+	explicit Value(s16         value) : kind(ValueKind::S16    ), S16    (value) {}
+	explicit Value(s32         value) : kind(ValueKind::S32    ), S32    (value) {}
+	explicit Value(s64         value) : kind(ValueKind::S64    ), S64    (value) {}
+	explicit Value(bool        value) : kind(ValueKind::Bool   ), Bool   (value) {}
+	explicit Value(::String    value) : kind(ValueKind::String ), String (value) {}
+	explicit Value(Lambda     *value) : kind(ValueKind::lambda ), lambda (value) {}
+	explicit Value(::Type      value) : kind(ValueKind::Type   ), Type   (value) {}
+	explicit Value(Value      *value) : kind(ValueKind::pointer), pointer(value) {}
+	explicit Value(StructTag, List<Value> value) : kind(ValueKind::struct_), elements(value) {}
+	explicit Value(ArrayTag,  List<Value> value) : kind(ValueKind::array),   elements(value) {}
 };
 
 DEFINE_EXPRESSION(Block) {
@@ -1271,6 +1324,7 @@ DEFINE_EXPRESSION(Call) {
 	Inline inline_status = {};
 };
 DEFINE_EXPRESSION(Definition) {
+	Expression *container = 0;
 	String name;
 	Expression *parsed_type = 0;
 	Expression *initial_value = 0;
@@ -1302,7 +1356,11 @@ DEFINE_EXPRESSION(Lambda) {
 	GList<Return *> returns;
 	
 	Inline inline_status = {};
+
+	String extern_library = {};
+
 	bool is_intrinsic : 1 = false;
+	bool is_extern    : 1 = false;
 };
 DEFINE_EXPRESSION(Name) {
 	String name;
@@ -1341,6 +1399,21 @@ DEFINE_EXPRESSION(Unary) {
 	UnaryOperation operation = {};
 	Mutability mutability = {};
 };
+DEFINE_EXPRESSION(Struct) {
+	List<Definition *> members;
+};
+DEFINE_EXPRESSION(ArrayType) {
+	Expression *element_type = 0;
+	Expression *count_expression = 0;
+	Optional<u64> count;
+};
+DEFINE_EXPRESSION(Subscript) {
+	Expression *subscriptable = 0;
+	Expression *index = 0;
+};
+DEFINE_EXPRESSION(ArrayConstructor) {
+	List<Expression *> elements;
+};
 DEFINE_STATEMENT(Return) {
 	Expression *value = 0;
 	Lambda *lambda = 0;
@@ -1358,9 +1431,31 @@ DEFINE_STATEMENT(Break) {
 template <class T>
 concept CNode = std::_Is_any_of_v<T, Expression, Statement
 #define x(name) , name
-ENUMERATE_NODE_KIND(x)
+	ENUMERATE_NODE_KIND(x)
 #undef x
 >;
+
+template <class T>
+concept CExpression = std::_Is_any_of_v<T, Expression
+#define x(name) , name
+	ENUMERATE_EXPRESSION_KIND(x)
+#undef x
+>;
+
+template <class T>
+concept CStatement = std::_Is_any_of_v<T, Statement
+#define x(name) , name
+	ENUMERATE_STATEMENT_KIND(x)
+#undef x
+>;
+
+#if CHECK_THAT_TYPES_ARE_TYPES
+template <class Expr>
+Type::operator Expr*() {
+	static_assert(std::is_same_v<Expr, Node> || CExpression<Expr>);
+	return (Expr *)expression;
+}
+#endif
 
 void Block::add(Node *child) {
 	children.add(child);
@@ -1375,11 +1470,28 @@ inline umm append(StringBuilder &builder, Node *node);
 inline umm append(StringBuilder &builder, Value value) {
 	switch (value.kind) {
 		case ValueKind::none: return 0;
-		case ValueKind::u64: return append(builder, value.u64);
-		case ValueKind::s64: return append(builder, value.s64);
-		case ValueKind::boolean: return append(builder, value.boolean);
-		case ValueKind::type:    return append(builder, value.type);
+		case ValueKind::U8: return append(builder, value.U8);
+		case ValueKind::U16: return append(builder, value.U16);
+		case ValueKind::U32: return append(builder, value.U32);
+		case ValueKind::U64: return append(builder, value.U64);
+		case ValueKind::S8: return append(builder, value.S8);
+		case ValueKind::S16: return append(builder, value.S16);
+		case ValueKind::S32: return append(builder, value.S32);
+		case ValueKind::S64: return append(builder, value.S64);
+		case ValueKind::Bool: return append(builder, value.Bool);
+		case ValueKind::Type:    return append(builder, value.Type);
 		case ValueKind::lambda:  return append(builder, value.lambda);
+		case ValueKind::array: {
+			umm result = 0;
+			result += append(builder, ".[");
+			result += append(builder, value.elements[0]);
+			for (auto element : value.elements.skip(1)) {
+				result += append(builder, ", ");
+				result += append(builder, element);
+			}
+			result += append(builder, "]");
+			return result;
+		}
 	}
 	return append_format(builder, "(unknown Value {})", value.kind);
 }
@@ -1488,6 +1600,10 @@ ForEachDirective visit_impl(StringLiteral  **, auto &&) { return ForEach_continu
 ForEachDirective visit_impl(BuiltinTypeName **, auto &&) { return ForEach_continue; }
 ForEachDirective visit_impl(Continue **, auto &&) { return ForEach_continue; }
 ForEachDirective visit_impl(Break **, auto &&) { return ForEach_continue; }
+ForEachDirective visit_impl(Struct **, auto &&) { not_implemented(); return ForEach_continue; }
+ForEachDirective visit_impl(ArrayType **, auto &&) { not_implemented(); return ForEach_continue; }
+ForEachDirective visit_impl(Subscript **, auto &&) { not_implemented(); return ForEach_continue; }
+ForEachDirective visit_impl(ArrayConstructor **, auto &&) { not_implemented(); return ForEach_continue; }
 
 ForEachDirective visit(Node **node, auto &&visitor) {
 
@@ -1588,9 +1704,13 @@ struct CheckResult2 {
 	if (auto _ = types_match(a, b); !_) \
 		return _
 
-CheckResult2 types_match(Expression *a, Expression *b) {
+CheckResult2 types_match(Type a, Type b) {
+	assert(a);
+	assert(b);
 	a = direct(a);
 	b = direct(b);
+	assert(a);
+	assert(b);
 
 	if (a->kind == b->kind) {
 		switch (a->kind) {
@@ -1626,8 +1746,33 @@ CheckResult2 types_match(Expression *a, Expression *b) {
 
 					TYPES_MUST_MATCH(a->expression, b->expression);
 
+					if (a->mutability == b->mutability) {
+						return true;
+					}
+				}
+				break;
+			}
+			case NodeKind::Struct: {
+				REDECLARE_VAL(a, (Struct *)a);
+				REDECLARE_VAL(b, (Struct *)b);
+
+				if (a == b) {
 					return true;
 				}
+				break;
+			}
+			case NodeKind::ArrayType: {
+				REDECLARE_VAL(a, (ArrayType *)a);
+				REDECLARE_VAL(b, (ArrayType *)b);
+
+				TYPES_MUST_MATCH(a->element_type, b->element_type);
+				assert(a->count);
+				assert(b->count);
+
+				if (a->count.value() && b->count.value()) {
+					return true;
+				}
+
 				break;
 			}
 			default:
@@ -1638,7 +1783,9 @@ CheckResult2 types_match(Expression *a, Expression *b) {
 }
 
 CheckResult2 types_match(Expression *a, BuiltinType b) {
+	assert(a);
 	a = direct(a);
+	assert(a);
 
 	if (auto ab = as<BuiltinTypeName>(a)) {
 		if (ab->type_kind == b) {
@@ -1656,7 +1803,7 @@ bool is_type(Expression *expression) {
 	return types_match(expression->type, BuiltinType::Type);
 }
 
-bool is_integer(Type type) {
+bool is_concrete_integer(Type type) {
 	type = direct(type);
 	if (auto builtin_type = as<BuiltinTypeName>(type)) {
 		switch (builtin_type->type_kind) {
@@ -1939,6 +2086,8 @@ void print_ast_impl(Lambda *lambda) {
 		print(" => ");
 		if (lambda->is_intrinsic) 
 			print("#intrinsic");
+		if (lambda->is_extern) 
+			print("#extern \"{}\"", EscapedString(lambda->extern_library));
 		if (lambda->body) {
 			print_ast(lambda->body);
 		}
@@ -2028,6 +2177,39 @@ void print_ast_impl(Unary *unary) {
 	};
 	print('}');
 }
+void print_ast_impl(Struct *Struct) {
+	print("struct {\n");
+	tabbed {
+		for (auto member : Struct->members) {
+			print_ast(member);
+		}
+	};
+	print("}");
+}
+void print_ast_impl(ArrayType *Array) {
+	print("{[");
+	print(Array->count.value());
+	print("]");
+	print_ast(Array->element_type);
+	print("}");
+}
+void print_ast_impl(Subscript *Subscript) {
+	print("{");
+	print_ast(Subscript->subscriptable);
+	print("[");
+	print_ast(Subscript->index);
+	print("]}");
+}
+void print_ast_impl(ArrayConstructor *arr) {
+	print(".[");
+	if (arr->elements.count)
+		print_ast(arr->elements[0]);
+	for (auto element : arr->elements.skip(1)) {
+		print(", ");
+		print_ast(element);
+	}
+	print("]");
+}
 void print_ast(Node *node) {
 	switch (node->kind) {
 #define x(name) case NodeKind::name: return print_ast_impl((##name *)node);
@@ -2075,8 +2257,12 @@ inline umm append(StringBuilder &builder, Node *node) {
 		case NodeKind::Unary: {
 			auto unary = (Unary *)node;
 			if (unary->operation == UnaryOperation::pointer) {
-				return append(builder, '*') + append(builder, unary->expression);
+				return append_format(builder, "*{} {}", unary->mutability, unary->expression);
 			}
+			break;
+		}
+		case NodeKind::Struct: {
+			return append(builder, "struct");
 			break;
 		}
 	}
@@ -2104,6 +2290,15 @@ void note_leak(String expression, Node *node, String message = {}, std::source_l
 
 Block global_block;
 
+Optional<Mutability> to_mutability(TokenKind token_kind) {
+	switch (token_kind) {
+		case Token_const: return Mutability::constant;
+		case Token_let:   return Mutability::readonly;
+		case Token_var:   return Mutability::variable;
+	}
+	return {};
+}
+
 struct Parser {
 	Token *token = 0;
 	Block *current_block = &global_block;
@@ -2113,23 +2308,28 @@ struct Parser {
 	Fiber parent_fiber = {};
 	List<Node *> result_nodes;
 	bool success = false;
+	List<utf8> extern_library = {};
 
-	// Parses parse_expression_1 with binary operators and definitions.
+	List<utf8> unescape_string(String string) {
+		if (auto result = ::unescape_string(string.skip(1).skip(-1))) {
+			return result.string;
+		} else {
+			reporter.error(result.failed_at, "Failed to unespace this string: {}", result.fail_reason);
+			yield(false);
+			return {};
+		}
+	}
+
+	// Parses parse_expression_2 with binary operators and definitions.
 	Expression *parse_expression(bool whitespace_is_skippable_before_binary_operator = false, int right_precedence = 0) {
 		switch (token->kind) {
 			case Token_var:
 			case Token_let:
 			case Token_const: {
 				auto definition = Definition::create();
-				definition->mutability = [&] {
-					switch (token->kind) {
-						case Token_const: return Mutability::constant;
-						case Token_let:   return Mutability::readonly;
-						case Token_var:   return Mutability::variable;
-						default: invalid_code_path();
-					}
-				}();
-
+				definition->container = current_container;
+				definition->mutability = to_mutability(token->kind).value();
+				
 				next();
 				skip_lines();
 
@@ -2147,7 +2347,7 @@ struct Parser {
 					next();
 					skip_lines();
 
-					definition->parsed_type = parse_expression_1(); // NOTE: don't parse '='
+					definition->parsed_type = parse_expression_2(); // NOTE: don't parse '='
 				}
 
 				if (token->kind == '=') {
@@ -2162,11 +2362,11 @@ struct Parser {
 						}
 					}
 				} else {
-					if (definition->mutability != Mutability::variable) {
-						reporter.error(definition->location, "Definitions can't be marked as {} and have no initial expression.", definition->mutability);
-						reporter.help(definition->location, "You can either change {} to {}, or provide an initial expression.", definition->mutability, Mutability::variable);
-						yield(false);
-					}
+					//if (definition->mutability != Mutability::variable) {
+					//	reporter.error(definition->location, "Definitions can't be marked as {} and have no initial expression.", definition->mutability);
+					//	reporter.help(definition->location, "You can either change {} to {}, or provide an initial expression.", definition->mutability, Mutability::variable);
+					//	yield(false);
+					//}
 
 					expect({Token_eol, Token_eof});
 				}
@@ -2176,7 +2376,7 @@ struct Parser {
 
 
 		//null denotation
-		auto left = parse_expression_1();
+		auto left = parse_expression_2();
 
 		// left binding power
 		Optional<BinaryOperation> operation;
@@ -2233,43 +2433,87 @@ struct Parser {
 		}
 		return left;
 	}
-	// Parses parse_expression_0 plus parentheses or brackets after, e.g. calls, subscripts.
-	Expression *parse_expression_1() {
-		auto node = parse_expression_0();
+	// Parses parse_expression_1 plus parentheses or brackets after, e.g. calls, subscripts.
+	Expression *parse_expression_2() {
+		auto node = parse_expression_1();
 
-		while (token->kind == '(') {
-			auto call = Call::create();
-			call->callable = node;
-			call->location = node->location;
+		while (token->kind == '(' || token->kind == '[') {
+			switch (token->kind) {
+				case '(': {
+					auto call = Call::create();
+					call->callable = node;
+					call->location = node->location;
 
-			next();
-			skip_lines();
-			if (token->kind != ')') {
-				while (true) {
-					auto argument = parse_expression();
+					next();
+					skip_lines();
+					if (token->kind != ')') {
+						while (true) {
+							auto argument = parse_expression();
 
-					call->arguments.add(argument);
+							call->arguments.add(argument);
+
+							skip_lines();
+							if (token->kind == ',') {
+								next();
+								continue;
+							}
+							if (token->kind == ')') {
+								break;
+							}
+
+							reporter.error(token->string, "Unexpected token {} when parsing call argument list. Expected ',' or ')'.", token->string);
+							yield(false);
+						}
+					}
+
+					call->location = {call->location.begin(), token->string.end()};
+
+					next();
+					node = call;
+					break;
+				}
+				case '[': {
+					auto subscript = Subscript::create();
+					subscript->subscriptable = node;
+					subscript->location = node->location;
+
+					next();
+					skip_lines();
+
+					subscript->index = parse_expression();
 
 					skip_lines();
-					if (token->kind == ',') {
-						next();
-						continue;
-					}
-					if (token->kind == ')') {
-						break;
-					}
+					expect(']');
 
-					reporter.error(token->string, "Unexpected token {} when parsing call argument list. Expected ',' or ')'.", token->string);
-					yield(false);
+					subscript->location = {subscript->location.begin(), token->string.end()};
+
+					next();
+					node = subscript;
+					break;
 				}
+				default: invalid_code_path("unreachable");
 			}
-
-			call->location = {call->location.begin(), token->string.end()};
-
-			next();
-			node = call;
 		}
 		return node;
+	}
+	// Parses parse_expression_0 plus member access.
+	Expression *parse_expression_1() {
+		auto expression = parse_expression_0();
+		while (token->kind == '.') {
+			auto binary = Binary::create();
+			binary->location = token->string;
+			binary->operation = BinaryOperation::dot;
+			binary->left = expression;
+			next();
+			binary->right = parse_expression_0();
+			if (!as<Name>(binary->right)) {
+				reporter.error(binary->right->location, "Only names can follow a dot.");
+				yield(false);
+			}
+			binary->location = {binary->left->location.begin(), binary->right->location.end()};
+			expression = binary;
+		}
+		return expression;
 	}
 	// Parses single-part expressions
 	Expression *parse_expression_0() {
@@ -2288,15 +2532,31 @@ struct Parser {
 				skip_lines();
 				if (token->kind != ')') {
 					while (true) {
-						expect(Token_name);
+						expect({Token_name, Token_var, Token_let, Token_const});
+
+						auto mutability = Mutability::readonly;
+
+						switch (token->kind) {
+							case Token_var:
+							case Token_let:
+							case Token_const:
+								mutability = to_mutability(token->kind).value();
+								next();
+								skip_lines();
+								expect(Token_name);
+								break;
+						}
 
 						List<Definition *> parameter_group;
 
-						{
+						auto create_and_add_parameter = [&] {
 							auto parameter = Definition::create();
 							parameter->name = token->string;
+							parameter->location = token->string;
 							parameter_group.add(parameter);
-						}
+						};
+
+						create_and_add_parameter();
 
 						next();
 						skip_lines();
@@ -2305,10 +2565,7 @@ struct Parser {
 							next();
 							skip_lines();
 							expect(Token_name);
-
-							auto parameter = Definition::create();
-							parameter->name = token->string;
-							parameter_group.add(parameter);
+							create_and_add_parameter();
 							next();
 						}
 
@@ -2320,9 +2577,10 @@ struct Parser {
 						auto parsed_type = parse_expression();
 
 						for (auto parameter : parameter_group) {
+							parameter->container = lambda;
 							parameter->parsed_type = parsed_type;
 							parameter->is_parameter = true;
-							parameter->mutability = Mutability::readonly;
+							parameter->mutability = mutability;
 							lambda->head.parameters_block.add(parameter);
 						}
 
@@ -2374,6 +2632,9 @@ struct Parser {
 					while (token->kind == Token_directive) {
 						if (token->string == u8"#intrinsic"s) {
 							lambda->is_intrinsic = true;
+						} else if (token->string == u8"#extern"s) {
+							lambda->is_extern = true;
+							lambda->extern_library = extern_library;
 						} else {
 							reporter.error(token->string, "Unknown lambda directive '{}'.", token->string);
 							yield(false);
@@ -2381,7 +2642,7 @@ struct Parser {
 						next();
 					}
 
-					if (lambda->is_intrinsic) {
+					if (lambda->is_intrinsic || lambda->is_extern) {
 						return lambda;
 					}
 
@@ -2443,11 +2704,50 @@ struct Parser {
 
 				return block;
 			}
+			case '[': {
+				auto Array = ArrayType::create();
+				Array->location = token->string;
+				next();
+				Array->count_expression = parse_expression();
+				expect(']');
+				next();
+				Array->element_type = parse_expression_0();
+				Array->location = {Array->location.begin(), Array->element_type->location.end()};
+				return Array;
+			}
+			case '.': {
+				auto constructor = ArrayConstructor::create();
+				constructor->location = token->string;
+				next();
+				expect('[');
+				next();
+				while (true) {
+					skip_lines();
+					constructor->elements.add(parse_expression());
+					skip_lines();
+
+					expect({',', ']'});
+
+					if (token->kind == ']') {
+						break;
+					}
+					next();
+				}
+				constructor->location = {constructor->location.begin(), token->string.end()};
+				next();
+				return constructor;
+			}
 			case Token_name: {
 				auto name = Name::create();
 				name->location = token->string;
 				name->name = token->string;
+
 				next();
+				if (token->kind == Token_name) {
+					reporter.error({token[-1].string.begin(), token->string.end()}, "Two consecutive names is invalid syntax.");
+					yield(false);
+				}
+
 				return name;
 			}
 			case Token_number: {
@@ -2477,12 +2777,7 @@ struct Parser {
 			case Token_string: {
 				auto literal = StringLiteral::create();
 				literal->location = token->string;
-				if (auto result = unescape_string(token->string.skip(1).skip(-1))) {
-					literal->value = result.string;
-				} else {
-					reporter.error(result.failed_at, "Failed to unespace this string: {}", result.fail_reason);
-					yield(false);
-				}
+				literal->value = unescape_string(token->string);
 				next();
 				return literal;
 			}
@@ -2565,7 +2860,7 @@ struct Parser {
 				auto inline_token = token;
 				auto status = token->kind == Token_inline ? Inline::always : Inline::never;
 				next();
-				auto expr = parse_expression_1();
+				auto expr = parse_expression_2();
 				if (auto lambda = as<Lambda>(expr)) {
 					lambda->inline_status = status;
 					return lambda;
@@ -2576,6 +2871,41 @@ struct Parser {
 
 				reporter.error(inline_token->string, "{} keyword must precede a lambda or a call, not a {}", inline_token->string, expr->kind);
 				yield(false);
+				return 0;
+			}
+			case Token_struct: {
+				auto Struct = Struct::create();
+				scoped_replace(current_container, Struct);
+
+				Struct->location = token->string;
+				next();
+				expect('{');
+				next();
+				skip_lines();
+
+				while (token->kind != '}') {
+					expect(Token_name);
+					auto name = token->string;
+					next();
+
+					expect(':');
+					next();
+					auto type = parse_expression();
+
+					expect('\n');
+					skip_lines();
+
+					auto definition = Definition::create();
+					definition->location = name;
+					definition->name = name;
+					definition->container = Struct;
+					definition->mutability = Mutability::variable;
+					definition->parsed_type = type;
+					Struct->members.add(definition);
+				}
+				next();
+
+				return Struct;
 			}
 #define x(name) case Token_##name:
 			ENUMERATE_CONCRETE_BUILTIN_TYPES(x)
@@ -2583,7 +2913,7 @@ struct Parser {
 			{
 				auto type = BuiltinTypeName::create();
 				type->location = token->string;
-				type->type_kind = token_kind_to_builtin_type_kind(token->kind);
+				type->type_kind = to_builtin_type_kind(token->kind);
 				next();
 				return type;
 			}
@@ -2595,7 +2925,21 @@ struct Parser {
 					unop->location = token->string;
 					next();
 					skip_lines();
-					unop->expression = parse_expression_1();
+
+					if (operation.value() == UnaryOperation::star) {
+						switch (token->kind) {
+							case Token_var: 
+							case Token_let: 
+							case Token_const: {
+								unop->mutability = to_mutability(token->kind).value();
+								next();
+								skip_lines();
+								break;
+							}
+						}
+					}
+
+					unop->expression = parse_expression_2();
 					unop->location = {unop->location.begin(), unop->expression->location.end()};
 					return unop;
 				}
@@ -2721,6 +3065,26 @@ struct Parser {
 
 				return Break;
 			}
+			case Token_directive: {
+				if (token->string == "#extern") {
+					auto extern_location = token->string;
+					next();
+					expect(Token_string);
+					// Don't free extern_library. Lambdas point to it.
+					extern_library = unescape_string(token->string);
+					next();
+					skip_lines();
+					if (token->kind == Token_eof) {
+						reporter.error(extern_location, "At least one definition must follow `extern` directive.");
+						yield(false);
+					}
+					return parse_statement();
+				}
+
+				reporter.error(token->string, "Unknown directive.");
+				yield(false);
+				break;
+			}
 		}
 
 		auto expression = parse_expression();
@@ -2813,6 +3177,12 @@ struct Parser {
 			yield(false);
 		}
 	}
+	void expect_not(std::underlying_type_t<TokenKind> unexpected_kind) {
+		if (token->kind == unexpected_kind) {
+			reporter.error(token->string, "Unexpected {}", (TokenKind)unexpected_kind);
+			yield(false);
+		}
+	}
 	void expect(std::initializer_list<std::underlying_type_t<TokenKind>> expected_kinds) {
 		for (auto expected_kind : expected_kinds) {
 			if (token->kind == expected_kind) {
@@ -2821,13 +3191,18 @@ struct Parser {
 		}
 
 		StringBuilder builder;
-		append(builder, "Expected one of ");
+		append(builder, "Expected ");
 		for (auto expected_kind : expected_kinds) {
-			append_format(builder, "'{}', ", (TokenKind)expected_kind);
+			append_format(builder, "{} or ", (TokenKind)expected_kind);
 		}
-		append_format(builder, "but got '{}'.\0"s, *token);
+		append_format(builder, "but got {}.\0"s, *token);
 		reporter.error(token->string, (char *)to_string(builder).data);
 		yield(false);
+	}
+	void expect_not(std::initializer_list<std::underlying_type_t<TokenKind>> unexpected_kinds) {
+		for (auto unexpected_kind : unexpected_kinds) {
+			expect_not(unexpected_kind);
+		}
 	}
 	void skip_lines() {
 		while (token->kind == '\n')
@@ -2853,37 +3228,156 @@ Optional<List<Node *>> tokens_to_nodes(Fiber parent_fiber, Span<Token> tokens) {
 	return {};
 }
 
+enum class YieldResult : u8 {
+	fail,
+	success,
+	wait,
+};
+bool no_more_progress = false;
+
+ValueKind to_value_kind(Type type) {
+	type = direct(type);
+	switch (type->kind) {
+		case NodeKind::BuiltinTypeName: {
+			REDECLARE_VAL(type, (BuiltinTypeName *)type);
+			switch (type->type_kind) {
+				case BuiltinType::Type:   return ValueKind::Type;
+				case BuiltinType::U8:     return ValueKind::U8;
+				case BuiltinType::U16:    return ValueKind::U16;
+				case BuiltinType::U32:    return ValueKind::U32;
+				case BuiltinType::U64:    return ValueKind::U64;
+				case BuiltinType::S8:     return ValueKind::S8;
+				case BuiltinType::S16:    return ValueKind::S16;
+				case BuiltinType::S32:    return ValueKind::S32;
+				case BuiltinType::S64:    return ValueKind::S64;
+				case BuiltinType::Bool:   return ValueKind::Bool;
+				case BuiltinType::String: return ValueKind::String;
+			}
+			break;
+		}
+		case NodeKind::ArrayType: { return ValueKind::array; }
+	}
+	invalid_code_path("to_value_kind: can't convert from {}", type->kind);
+}
+
+void default_initialize(Value *value, Type type) {
+	value->kind = to_value_kind(type);
+	switch (value->kind) {
+		case ValueKind::none: { return; }
+		case ValueKind::U8: { value->U8 = 0; return; }
+		case ValueKind::U16: { value->U16 = 0; return; }
+		case ValueKind::U32: { value->U32 = 0; return; }
+		case ValueKind::U64: { value->U64 = 0; return; }
+		case ValueKind::S8: { value->S8 = 0; return; }
+		case ValueKind::S16: { value->S16 = 0; return; }
+		case ValueKind::S32: { value->S32 = 0; return; }
+		case ValueKind::S64: { value->S64 = 0; return; }
+		case ValueKind::Bool: { value->Bool = false; return; }
+		case ValueKind::String: { value->String = {}; return; }
+		case ValueKind::lambda: { value->lambda = {}; return; }
+		case ValueKind::Type: { value->Type = {}; return; }
+		case ValueKind::pointer: { value->pointer = {}; return; }
+		case ValueKind::struct_: { 
+			auto struct_ = direct_as<Struct>(type);
+			assert(struct_);
+			value->elements = {};
+			value->elements.resize(struct_->members.count);
+			for (umm i = 0; i < struct_->members.count; ++i) {
+				default_initialize(&value->elements[i], struct_->members[i]->type);
+			}
+			return; 
+		}
+		case ValueKind::array: {
+			auto array = direct_as<ArrayType>(type);
+			assert(array);
+			value->elements = {};
+			value->elements.resize(array->count.value());
+			for (umm i = 0; i < array->count.value(); ++i) {
+				default_initialize(&value->elements[i], array->element_type);
+			}
+			return;
+		}
+	}
+	invalid_code_path("default_initialize: invalid value kind {}", value->kind);
+}
+
+decltype(auto) element_at(auto &&collection, Value index) {
+	switch (index.kind) {
+		case ValueKind::U8: return collection[index.U8];
+		case ValueKind::U16: return collection[index.U16];
+		case ValueKind::U32: return collection[index.U32];
+		case ValueKind::U64: return collection[index.U64];
+		case ValueKind::S8: return collection[index.S8];
+		case ValueKind::S16: return collection[index.S16];
+		case ValueKind::S32: return collection[index.S32];
+		case ValueKind::S64: return collection[index.S64];
+		default: invalid_code_path("invalid index kind: {}", index.kind);
+	}
+}
+
+Unary *as_pointer(Type type) {
+	if (auto unary = as<Unary>(type); unary && unary->operation == UnaryOperation::pointer) {
+		return unary;
+	}
+	return 0;
+}
+
 struct ExecutionContext {
 	struct Scope {
 		// This needs to be pointer-stable
 		BucketHashMap<Definition *, Value> variables;
 	};
 
-	static ExecutionContext *create(Fiber parent_fiber) {
-		auto result = DefaultAllocator{}.allocate<ExecutionContext>();
-		auto &scope = result->scope_stack.add(); // global scope
-		for (auto definition : global_block.definition_list) {
-			auto value = result->execute(definition->initial_value);
-			scope.variables.get_or_insert(definition) = value;
-		}
-		result->parent_fiber = parent_fiber;
-
-		result->fiber = fiber_create(fiber_main, result);
-
-		return result;
+	static ExecutionContext *create(Fiber parent_fiber, Node *node) {
+		auto context = DefaultAllocator{}.allocate<ExecutionContext>();
+		context->parent_fiber = parent_fiber;
+		context->fiber = fiber_create([](void *param) { ((ExecutionContext *)param)->fiber_main(); }, context);
+		context->node_to_execute = node;
+		return context;
 	}
 
-	Optional<Value> run(Node *node) {
-		node_to_execute = node;
-		success = false;
+	Result<Value, YieldResult> run() {
 		fiber_yield(fiber);
-		if (success) {
+		if (yield_result == YieldResult::success) {
 			return result_value;
 		}
-		return {};
+		return yield_result;
 	}
 
 private:
+
+	[[nodiscard]]
+	bool yield_while(String location, auto predicate) {
+		while (true) {
+			if (predicate()) {
+				if (report_yields)
+					immediate_reporter.info(location, "Yield");
+
+				yield_smt();
+				switch_thread();
+
+				yield(YieldResult::wait);
+
+				if (no_more_progress)
+					return false;
+			} else {
+				return true;
+			}
+		}
+	}
+
+	[[nodiscard]] 
+	bool yield_while(auto predicate) {
+		return yield_while({}, predicate);
+	}
+
+	template <class T>
+	[[nodiscard]] 
+	bool yield_while_null(String location, T **pointer) {
+		return yield_while(location, [&] {
+			return !*pointer;
+		});
+	}
 
 	static constexpr umm recursion_limit = 256;
 	umm recursion_level = 0;
@@ -2900,18 +3394,21 @@ private:
 
 	Node *node_to_execute;
 	Value result_value;
-	bool success;
+	YieldResult yield_result;
 
-	static void fiber_main(void *param) {
-		((ExecutionContext *)param)->main();
-	}
-	void main() {
+	HashMap<String, HMODULE> loaded_extern_libraries;
+
+	void fiber_main() {
+		yield_result = YieldResult::fail;
+
+		auto &scope = scope_stack.add(); // global scope
+
 		result_value = execute(node_to_execute);
-		yield(true);
+		yield(YieldResult::success);
 	}
 
-	void yield(bool success) {
-		this->success = success;
+	void yield(YieldResult result) {
+		this->yield_result = result;
 		fiber_yield(parent_fiber);
 	}
 
@@ -2969,9 +3466,9 @@ private:
 	Value load_address_impl(BooleanLiteral *) { invalid_code_path(); }
 	Value load_address_impl(StringLiteral *) { invalid_code_path(); }
 	Value load_address_impl(Definition *definition) {
-		for (auto &scope : reverse_iterate(scope_stack)) {
+		for (auto &scope : reversed(scope_stack)) {
 			if (auto found = scope.variables.find(definition)) {
-				return &found->value;
+				return Value(&found->value);
 			}
 		}
 		invalid_code_path();
@@ -2996,7 +3493,26 @@ private:
 	Value load_address_impl(Call *) { invalid_code_path(); }
 	Value load_address_impl(If *) { invalid_code_path(); }
 	Value load_address_impl(BuiltinTypeName *) { invalid_code_path(); }
-	Value load_address_impl(Binary *) { invalid_code_path(); }
+	Value load_address_impl(Binary *binary) {
+		assert(binary->operation == BinaryOperation::dot);
+		auto name = as<Name>(binary->right);
+		assert(name);
+
+		Struct *Struct = 0;
+		Value struct_address = {};
+
+		if (Struct = direct_as<::Struct>(binary->left->type)) {
+			LOAD_ADDRESS_INTO(struct_address, binary->left);
+		} else if (auto pointer = as_pointer(direct(binary->left->type))) {
+			Struct = direct_as<::Struct>(pointer->expression);
+			assert(Struct);
+			EXECUTE_INTO(struct_address, binary->left);
+		} else {
+			invalid_code_path();
+		}
+
+		return Value(&struct_address.pointer->elements[find_index_of(Struct->members, name->definition())]);
+	}
 	Value load_address_impl(Match *) { invalid_code_path(); }
 	Value load_address_impl(Unary *unary) {
 		if (unary->operation == UnaryOperation::dereference) {
@@ -3006,6 +3522,14 @@ private:
 		}
 		invalid_code_path();
 	}
+	Value load_address_impl(Struct *) { invalid_code_path(); }
+	Value load_address_impl(ArrayType *) { invalid_code_path(); }
+	Value load_address_impl(Subscript *subscript) {
+		LOAD_ADDRESS_DEFN(arr, subscript->subscriptable);
+		EXECUTE_DEFN(index, subscript->index);
+		return Value(&element_at(arr.pointer->elements, index));
+	}
+	Value load_address_impl(ArrayConstructor *) { invalid_code_path(); }
 
 	Value execute(Node *node) {
 		scoped_replace(debug_current_location, node->location);
@@ -3020,18 +3544,18 @@ private:
 	}
 	Value execute_impl(IntegerLiteral *literal) {
 		if (::is_unsigned_integer(literal->type))
-			return (u64)literal->value;
+			return Value((u64)literal->value);
 		if (::is_signed_integer(literal->type))
-			return (s64)literal->value;
+			return Value((s64)literal->value);
 
 		invalid_code_path();
 		return {};
 	}
 	Value execute_impl(BooleanLiteral *literal) {
-		return literal->value;
+		return Value(literal->value);
 	}
 	Value execute_impl(StringLiteral *literal) {
-		return literal->value;
+		return Value(literal->value);
 	}
 	Value execute_impl(Definition *definition) {
 		if (definition->mutability == Mutability::constant) {
@@ -3039,8 +3563,12 @@ private:
 			return definition->constant_value.value();
 		}
 
-		assert(definition->initial_value, "Default-initialized variables are not implemented in ExecutionContext");
-		EXECUTE_DEFN(value, definition->initial_value);
+		Value value = {};
+		if (definition->initial_value) {
+			EXECUTE_INTO(value, definition->initial_value);
+		} else {
+			default_initialize(&value, definition->type);
+		}
 		scope_stack.back().variables.get_or_insert(definition) = value;
 		return value;
 	}
@@ -3048,7 +3576,7 @@ private:
 		if (return_->value) {
 			EXECUTE_INTO(return_value, return_->value);
 		}
-		return ValueKind::return_;
+		return Value(ValueKind::return_);
 	}
 	Value execute_impl(Block *block) {
 		Value result = {};
@@ -3069,15 +3597,33 @@ private:
 		return {};
 	}
 	Value execute_impl(Lambda *lambda) {
-		return lambda; 
+		return Value(lambda);
 	}
 	Value execute_impl(LambdaHead *head) {
-		return Type(head);
+		return Value(Type(head));
 	}
 	Value execute_impl(Name *name) {
 		auto definition = name->definition();
 		assert(definition);
-		for (auto &scope : reverse_iterate(scope_stack)) {
+
+		if (!definition->container) {
+			// Globals may need to be waited for.
+			auto &scope = scope_stack[0];
+			if (auto found = scope.variables.find(definition)) {
+				return found->value;
+			} else {
+				if (!yield_while_null(definition->location, &definition->type)) {
+					yield(YieldResult::fail);
+				}
+
+				auto value = execute(definition->initial_value);
+				scope.variables.get_or_insert(definition) = value;
+				return value;
+			}
+		}
+
+
+		for (auto &scope : reversed(scope_stack)) {
 			if (auto found = scope.variables.find(definition)) {
 				return found->value;
 			}
@@ -3088,103 +3634,190 @@ private:
 		auto &arguments = call->arguments;
 
 		auto callable = execute(call->callable);
+		auto struct_ = callable.kind == ValueKind::Type ? direct_as<Struct>(callable.Type) : 0;
 
-		if (callable.kind != ValueKind::lambda || !callable.lambda) {
-			immediate_reporter.error(call->location, "You can only call constant lambdas right now.");
-			yield(false);
+		if ((callable.kind != ValueKind::lambda || !callable.lambda) && (!struct_)) {
+			immediate_reporter.error(call->location, "You can only call constant lambdas or structs right now.");
+			yield(YieldResult::fail);
 		}
 
-		auto lambda = callable.lambda;
-		auto &parameters = lambda->head.parameters_block.definition_list;
-
-		if (lambda->is_intrinsic) {
-			assert(lambda->definition);
+		if (callable.kind == ValueKind::lambda) {
+			auto lambda = callable.lambda;
+			auto &parameters = lambda->head.parameters_block.definition_list;
 
 			List<Value> argument_values;
 			argument_values.allocator = temporary_allocator;
 			argument_values.reserve(arguments.count);
-
 			for (auto argument : arguments) {
 				EXECUTE_DEFN(argument_value, argument);
 				argument_values.add(argument_value);
 			}
 
-			auto name = lambda->definition->name;
+			if (lambda->is_intrinsic) {
+				assert(lambda->definition);
 
-			if (name == u8"println"s) {
-				assert(arguments.count == 1);
+				auto name = lambda->definition->name;
 
-				scoped(temporary_allocator_and_checkpoint);
+				if (name == u8"println"s) {
+					assert(arguments.count == 1);
 
-				List<utf8> result;
+					scoped(temporary_allocator_and_checkpoint);
 
-				switch (argument_values[0].kind) {
-					case ValueKind::s64: result = to_string(argument_values[0].s64); break;
-					case ValueKind::u64: result = to_string(argument_values[0].u64); break;
-					case ValueKind::type: result = to_string(argument_values[0].type); break;
-					case ValueKind::boolean: result = to_string(argument_values[0].boolean); break;
-					case ValueKind::string: result = to_list(argument_values[0].string); break;
-					case ValueKind::lambda: result = format(u8"(lambda {})", argument_values[0].lambda->uid); break;
-					case ValueKind::pointer: result = format(u8"0x{}", FormatInt{.value = (umm)argument_values[0].pointer, .radix = 16}); break;
-					case ValueKind::none: result = to_list(u8"none"s); break;
-					default: {
-						immediate_reporter.error(arguments[0]->location, "Unknown type {} in println", argument_values[0].kind);
-						yield(false);
+					List<utf8> result;
+
+					switch (argument_values[0].kind) {
+						case ValueKind::U8: result = to_string(argument_values[0].U8); break;
+						case ValueKind::U16: result = to_string(argument_values[0].U16); break;
+						case ValueKind::U32: result = to_string(argument_values[0].U32); break;
+						case ValueKind::U64: result = to_string(argument_values[0].U64); break;
+						case ValueKind::S8: result = to_string(argument_values[0].S8); break;
+						case ValueKind::S16: result = to_string(argument_values[0].S16); break;
+						case ValueKind::S32: result = to_string(argument_values[0].S32); break;
+						case ValueKind::S64: result = to_string(argument_values[0].S64); break;
+						case ValueKind::Type: result = to_string(argument_values[0].Type); break;
+						case ValueKind::Bool: result = to_string(argument_values[0].Bool); break;
+						case ValueKind::String: result = to_list(argument_values[0].String); break;
+						case ValueKind::lambda: result = format(u8"(lambda {})", argument_values[0].lambda->uid); break;
+						case ValueKind::pointer: result = format(u8"0x{}", FormatInt{.value = (umm)argument_values[0].pointer, .radix = 16}); break;
+						case ValueKind::none: result = to_list(u8"none"s); break;
+						default: {
+							immediate_reporter.error(arguments[0]->location, "Unknown type {} in println", argument_values[0].kind);
+							yield(YieldResult::fail);
+						}
 					}
+
+					println(result);
+
+					return Value((s64)result.count);
+				} else if (name == u8"exit"s) {
+					yield(YieldResult::success);
 				}
 
-				println(result);
+				immediate_reporter.error(lambda->location, "Attempt to execute invalid intrinsic '{}'.", name);
+				yield(YieldResult::fail);
 
-				return (s64)result.count;
-			} else if (name == u8"exit"s) {
-				yield(true);
+			} else if (lambda->is_extern) {
+
+				HMODULE module = 0;
+				if (auto found = loaded_extern_libraries.find(lambda->extern_library)) {
+					module = found->value;
+				} else {
+					module = LoadLibraryA((char *)null_terminate(lambda->extern_library).data);
+					if (!module) {
+						immediate_reporter.error(call->location, "Failed to load extern library {}", lambda->extern_library);
+						immediate_reporter.info(lambda->location, "Here is the definition:");
+						yield(YieldResult::fail);
+					}
+
+					loaded_extern_libraries.insert(lambda->extern_library, module);
+				}
+
+				assert(lambda->definition);
+
+				auto func = (u64(*)(u64,u64,u64,u64,u64,u64,u64,u64))GetProcAddress(module, (char *)null_terminate(lambda->definition->name).data);
+				if (!func) {
+					immediate_reporter.error(call->location, "Failed to load function {} from extern library {}", lambda->definition->name, lambda->extern_library);
+					immediate_reporter.info(lambda->location, "Here is the definition:");
+					yield(YieldResult::fail);
+				}
+
+				if (arguments.count > 8) {
+					immediate_reporter.error(call->location, "Can't pass more than 8 arguments to extern function.");
+					immediate_reporter.info(lambda->location, "Here is the definition:");
+					yield(YieldResult::fail);
+				}
+
+				u64 args[8]{};
+				for (umm i = 0; i < arguments.count; ++i) {
+					auto argument = arguments[i];
+					auto value = argument_values[i];
+					switch (value.kind) {
+						case ValueKind::Bool: args[i] = value.Bool; break;
+						case ValueKind::U8:	  args[i] = value.U8;   break;
+						case ValueKind::U16:  args[i] = value.U16;  break;
+						case ValueKind::U32:  args[i] = value.U32;  break;
+						case ValueKind::U64:  args[i] = value.U64;  break;
+						case ValueKind::S8:	  args[i] = value.S8;   break;
+						case ValueKind::S16:  args[i] = value.S16;  break;
+						case ValueKind::S32:  args[i] = value.S32;  break;
+						case ValueKind::S64:  args[i] = value.S64;  break;
+						default:
+							immediate_reporter.error(argument->location, "Can't pass value of type {} to extern function.", argument->type);
+							immediate_reporter.info(lambda->location, "Here is the definition:");
+							yield(YieldResult::fail);
+					}
+					
+				}
+
+				auto result = func(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]);
+
+				if (types_match(call->type, BuiltinType::None)) {
+					return {};
+				} else if (is_unsigned_integer(call->type)) {
+					return Value((u64)result);
+				} else if (is_signed_integer(call->type)) {
+					return Value((s64)result);
+				} else if (types_match(call->type, BuiltinType::Bool)) {
+					return Value((bool)result);
+				} else {
+					immediate_reporter.error(call->location, "Can't return value of type {} from extern function.", call->type);
+					immediate_reporter.info(lambda->location, "Here is the definition:");
+					yield(YieldResult::fail);
+					return {};
+				}
 			}
-			
-			immediate_reporter.error(lambda->location, "Attempt to execute invalid intrinsic '{}'.", name);
-			yield(false);
-		}
 
-		List<Value> executed_arguments;
-		executed_arguments.allocator = temporary_allocator;
-		executed_arguments.reserve(arguments.count);
-		for (auto argument : arguments) {
-			EXECUTE_DEFN(argument_value, argument);
-			executed_arguments.add(argument_value);
-		}
+			++recursion_level;
+			defer { --recursion_level; };
 
-		++recursion_level;
-		defer { --recursion_level; };
+			if (recursion_level >= recursion_limit) {
+				immediate_reporter.error(call->location, "Recursion limit of {} was exceeded.", recursion_limit);
+				exit(1);
+			}
 
-		if (recursion_level >= recursion_limit) {
-			immediate_reporter.error(call->location, "Recursion limit of {} was exceeded.", recursion_limit);
-			exit(1);
-		}
-
-		auto prev_scope_stack = scope_stack;
-		scope_stack = {};
-		scope_stack.add(prev_scope_stack[0]);
-		defer {
-			prev_scope_stack[0] = scope_stack[0];
+			auto prev_scope_stack = scope_stack;
+			scope_stack = {};
+			scope_stack.add(prev_scope_stack[0]);
+			defer {
+				prev_scope_stack[0] = scope_stack[0];
 			free(scope_stack);
 			scope_stack = prev_scope_stack;
-		};
+			};
 
-		auto &param_scope = scope_stack.add();
+			auto &param_scope = scope_stack.add();
 
-		for (umm i = 0; i < arguments.count; ++i) {
-			param_scope.variables.get_or_insert(parameters[i]) = executed_arguments[i];
-		}
+			for (umm i = 0; i < arguments.count; ++i) {
+				param_scope.variables.get_or_insert(parameters[i]) = argument_values[i];
+			}
 
-		auto result = execute(lambda->body);
-		if (result.kind == ValueKind::return_) {
-			return return_value;
+			auto result = execute(lambda->body);
+			if (result.kind == ValueKind::return_) {
+				return return_value;
+			} else {
+				return result;
+			}
 		} else {
-			return result;
+			assert(struct_);
+
+			auto &members = struct_->members;
+
+			assert(members.count == arguments.count);
+
+			List<Value> argument_values;
+			argument_values.allocator = temporary_allocator;
+			argument_values.reserve(arguments.count);
+			for (auto argument : arguments) {
+				EXECUTE_DEFN(argument_value, argument);
+				argument_values.add(argument_value);
+			}
+
+			return Value(struct_tag, argument_values);
 		}
 	}
 	Value execute_impl(If *If) {
 		EXECUTE_DEFN(condition, If->condition);
-		if (condition.boolean) {
+		assert(condition.kind == ValueKind::Bool);
+		if (condition.Bool) {
 			EXECUTE_DEFN(value, If->true_branch);
 			return value;
 		} else {
@@ -3198,7 +3831,8 @@ private:
 	Value execute_impl(While *While) {
 		while (true) {
 			EXECUTE_DEFN(condition, While->condition);
-			if (!condition.boolean) {
+			assert(condition.kind == ValueKind::Bool);
+			if (!condition.Bool) {
 				break;
 			}
 
@@ -3212,11 +3846,11 @@ private:
 		return {};
 	}
 	Value execute_impl(Continue *Continue) {
-		return ValueKind::continue_;
+		return Value(ValueKind::continue_);
 	}
 	Value execute_impl(Break *Break) {
 		if (!Break->value) {
-			return ValueKind::break_;
+			return Value(ValueKind::break_);
 		}
 
 		assert(Break->tag_block);
@@ -3227,76 +3861,102 @@ private:
 		return value;
 	}
 	Value execute_impl(BuiltinTypeName *type) { 
-		return Type(type);
+		return Value(Type(type));
 	}
 	Value execute_impl(Binary *binary) {
-		if (binary->operation == BinaryOperation::ass) {
-			LOAD_ADDRESS_DEFN(address, binary->left);
-			EXECUTE_DEFN(value, binary->right);
-			*address.pointer = value;
-			return {};
+		switch (binary->operation) {
+			case BinaryOperation::ass: {
+				LOAD_ADDRESS_DEFN(address, binary->left);
+				EXECUTE_DEFN(value, binary->right);
+				*address.pointer = value;
+				return {};
+			}
+			case BinaryOperation::dot: {
+				EXECUTE_DEFN(struct_value, binary->left);
+				assert(struct_value.kind == ValueKind::struct_);
+
+				auto struct_ = direct_as<Struct>(binary->left->type);
+				assert(struct_);
+				auto name = as<Name>(binary->right);
+				assert(name);
+
+				return struct_value.elements[find_index_of(struct_->members, name->definition())];
+			}
 		}
 
 		EXECUTE_DEFN(left, binary->left);
 		EXECUTE_DEFN(right, binary->right);
 
-#define OPS(t)                                                            \
-		if (left.kind == ValueKind::t && right.kind == ValueKind::t) {    \
-			switch (binary->operation) {                                  \
-				case BinaryOperation::add: return (t)(left.t + right.t);  \
-				case BinaryOperation::sub: return (t)(left.t - right.t);  \
-				case BinaryOperation::mul: return (t)(left.t * right.t);  \
-				case BinaryOperation::div: return (t)(left.t / right.t);  \
-				case BinaryOperation::mod: return (t)(left.t % right.t); /* TODO: ensure this is right operation */ \
-				case BinaryOperation::bor: return (t)(left.t | right.t);  \
-				case BinaryOperation::ban: return (t)(left.t & right.t);  \
-				case BinaryOperation::bxo: return (t)(left.t ^ right.t);  \
-				case BinaryOperation::bsl: return (t)(left.t << right.t); \
-				case BinaryOperation::bsr: return (t)(left.t >> right.t); \
-				case BinaryOperation::equ: return left.t == right.t;      \
-				case BinaryOperation::neq: return left.t != right.t;      \
-				case BinaryOperation::les: return left.t <  right.t;      \
-				case BinaryOperation::leq: return left.t <= right.t;      \
-				case BinaryOperation::grt: return left.t >  right.t;      \
-				case BinaryOperation::grq: return left.t >= right.t;      \
-				default: invalid_code_path();                             \
-			}                                                             \
-		}
+#define OPS(t, v)                                                                                                          \
+	case ValueKind::v: {                                                                                                   \
+		if (right.kind == left.kind) {                                                                                     \
+			switch (binary->operation) {                                                                                   \
+				case BinaryOperation::add: return Value((t)(left.v + right.v));                                            \
+				case BinaryOperation::sub: return Value((t)(left.v - right.v));                                            \
+				case BinaryOperation::mul: return Value((t)(left.v * right.v));                                            \
+				case BinaryOperation::div: return Value((t)(left.v / right.v));                                            \
+				case BinaryOperation::mod: return Value((t)(left.v % right.v)); /* TODO: ensure this is right operation */ \
+				case BinaryOperation::bor: return Value((t)(left.v | right.v));                                            \
+				case BinaryOperation::ban: return Value((t)(left.v & right.v));                                            \
+				case BinaryOperation::bxo: return Value((t)(left.v ^ right.v));                                            \
+				case BinaryOperation::bsl: return Value((t)(left.v << right.v));                                           \
+				case BinaryOperation::bsr: return Value((t)(left.v >> right.v));                                           \
+				case BinaryOperation::equ: return Value(left.v == right.v);                                                \
+				case BinaryOperation::neq: return Value(left.v != right.v);                                                \
+				case BinaryOperation::les: return Value(left.v <  right.v);                                                \
+				case BinaryOperation::leq: return Value(left.v <= right.v);                                                \
+				case BinaryOperation::grt: return Value(left.v >  right.v);                                                \
+				case BinaryOperation::grq: return Value(left.v >= right.v);                                                \
+				default: invalid_code_path();                                                                              \
+			}                                                                                                              \
+		}                                                                                                                  \
+		break;                                                                                                             \
+	}
 
-		OPS(u64);
-		OPS(s64);
+		switch (left.kind) {
+			OPS(u8, U8);
+			OPS(u16, U16);
+			OPS(u32, U32);
+			OPS(u64, U64);
+			OPS(s8, S8);
+			OPS(s16, S16);
+			OPS(s32, S32);
+			OPS(s64, S64);
+			case ValueKind::Bool: {
+				if (right.kind == left.kind) {
+					switch (binary->operation) {                                
+						case BinaryOperation::bor: return Value((bool)(left.Bool | right.Bool));
+						case BinaryOperation::ban: return Value((bool)(left.Bool & right.Bool));
+						case BinaryOperation::bxo: return Value((bool)(left.Bool ^ right.Bool));
+						case BinaryOperation::lor: return Value(left.Bool || right.Bool);
+						case BinaryOperation::lan: return Value(left.Bool && right.Bool);
+						case BinaryOperation::equ: return Value(left.Bool == right.Bool); 
+						case BinaryOperation::neq: return Value(left.Bool != right.Bool); 
+						case BinaryOperation::les: return Value(left.Bool <  right.Bool); 
+						case BinaryOperation::leq: return Value(left.Bool <= right.Bool); 
+						case BinaryOperation::grt: return Value(left.Bool >  right.Bool); 
+						case BinaryOperation::grq: return Value(left.Bool >= right.Bool); 
+						default: invalid_code_path();                            
+					}   
+				}
+				break;
+			}
+		}
 
 #undef OPS
 
-		if (left.kind == ValueKind::boolean && right.kind == ValueKind::boolean) {  
-			switch (binary->operation) {                                
-				case BinaryOperation::bor: return (bool)(left.boolean | right.boolean);
-				case BinaryOperation::ban: return (bool)(left.boolean & right.boolean);
-				case BinaryOperation::bxo: return (bool)(left.boolean ^ right.boolean);
-				case BinaryOperation::lor: return left.boolean || right.boolean;
-				case BinaryOperation::lan: return left.boolean && right.boolean;
-				case BinaryOperation::equ: return left.boolean == right.boolean;     
-				case BinaryOperation::neq: return left.boolean != right.boolean;     
-				case BinaryOperation::les: return left.boolean <  right.boolean;     
-				case BinaryOperation::leq: return left.boolean <= right.boolean;     
-				case BinaryOperation::grt: return left.boolean >  right.boolean;     
-				case BinaryOperation::grq: return left.boolean >= right.boolean;     
-				default: invalid_code_path();                            
-			}                                                            
-		}
-
 		immediate_reporter.error(binary->location, "Invalid binary operation");
-		yield(false);
+		yield(YieldResult::fail);
 		return {};
 	}
 	Value execute_impl(Match *match) {
 		EXECUTE_DEFN(value, match->expression);
-		assert(value.kind == ValueKind::s64, "Only this is implemented");
+		assert(value.kind == ValueKind::S64, "Only this is implemented");
 
 		for (auto Case : match->cases) {
 			EXECUTE_DEFN(from, Case.from);
-			assert(from.kind == ValueKind::s64, "Only this is implemented");
-			if (value.s64 == from.s64) {
+			assert(from.kind == ValueKind::S64, "Only this is implemented");
+			if (value.S64 == from.S64) {
 				return execute(Case.to);
 			}
 		}
@@ -3311,7 +3971,7 @@ private:
 			case UnaryOperation::minus: {
 				EXECUTE_DEFN(value, unary->expression);
 				switch (value.kind) {
-					case ValueKind::s64: value.s64 = -value.s64; break;
+					case ValueKind::S64: value.S64 = -value.S64; break;
 					default: invalid_code_path();
 				}
 				return value;
@@ -3325,11 +3985,32 @@ private:
 				return *pointer.pointer;
 			}
 			case UnaryOperation::typeof: {
-				return Type(unary->expression->type);
+				return Value(Type(unary->expression->type));
 			}
 			default:
 				invalid_code_path();
 		}
+	}
+	Value execute_impl(Struct *Struct) { 
+		return Value(Type(Struct));
+	}
+	Value execute_impl(ArrayType *array) {
+		return Value((Type)array);
+	}
+	Value execute_impl(Subscript *node) {
+		EXECUTE_DEFN(array, node->subscriptable);
+		EXECUTE_DEFN(index, node->index);
+		return element_at(array.elements, index);
+	}
+	Value execute_impl(ArrayConstructor *node) {
+		Value result;
+		result.kind = ValueKind::array;
+		result.elements = {};
+		result.elements.resize(node->elements.count);
+		for (umm i = 0; i < node->elements.count; ++i) {
+			EXECUTE_INTO(result.elements[i], node->elements[i]);
+		}
+		return result;
 	}
 };
 
@@ -3346,12 +4027,6 @@ Type make_pointer(Type type, Mutability mutability) {
 	pointer->mutability = mutability;
 	pointer->type = get_builtin_type(BuiltinType::Type);
 	return pointer;
-}
-Unary *as_pointer(Type type) {
-	if (auto unary = as<Unary>(type); unary && unary->operation == UnaryOperation::pointer) {
-		return unary;
-	}
-	return 0;
 }
 
 struct CheckResult {
@@ -3416,7 +4091,11 @@ CheckResult is_constant_impl(If *If) {
 	return {false, If};
 }
 CheckResult is_constant_impl(BuiltinTypeName *type) { return true; }
-CheckResult is_constant_impl(Binary *binary) { return is_constant(binary->left) && is_constant(binary->right); }
+CheckResult is_constant_impl(Binary *binary) {
+	MUST_BE_CONSTANT(binary->left);
+	MUST_BE_CONSTANT(binary->right);
+	return true;
+}
 CheckResult is_constant_impl(Match *match) {
 	MUST_BE_CONSTANT(match->expression);
 	for (auto &Case : match->cases) {
@@ -3426,7 +4105,19 @@ CheckResult is_constant_impl(Match *match) {
 	return true;
 }
 CheckResult is_constant_impl(Unary *unary) { 
-	MUST_BE_CONSTANT(unary->expression);
+	return is_constant(unary->expression);
+}
+CheckResult is_constant_impl(Struct *) { return true; }
+CheckResult is_constant_impl(ArrayType *) { return true; }
+CheckResult is_constant_impl(Subscript *node) {
+	MUST_BE_CONSTANT(node->subscriptable);
+	MUST_BE_CONSTANT(node->index);
+	return true;
+}
+CheckResult is_constant_impl(ArrayConstructor *node) {
+	for (auto element : node->elements) {
+		MUST_BE_CONSTANT(element);
+	}
 	return true;
 }
 CheckResult is_constant(Expression *expression) {
@@ -3473,7 +4164,18 @@ CheckResult is_mutable_impl(Name *name) {
 CheckResult is_mutable_impl(Call *call) { return {false, call}; }
 CheckResult is_mutable_impl(If *If) { return {false, If}; }
 CheckResult is_mutable_impl(BuiltinTypeName *type) { return {false, type}; }
-CheckResult is_mutable_impl(Binary *binary) { return {false, binary}; }
+CheckResult is_mutable_impl(Binary *binary) {
+	if (binary->operation == BinaryOperation::dot) {
+		if (auto pointer = direct_as<Unary>(binary->left->type); pointer && pointer->operation == UnaryOperation::pointer) {
+			if (pointer->mutability == Mutability::variable) {
+				return true;
+			}
+		} else {
+			return is_mutable(binary->left);
+		}
+	}
+	return {false, binary};
+}
 CheckResult is_mutable_impl(Match *match) { return {false, match}; }
 CheckResult is_mutable_impl(Unary *unary) {
 	if (unary->operation == UnaryOperation::dereference) {
@@ -3486,6 +4188,10 @@ CheckResult is_mutable_impl(Unary *unary) {
 
 	return {false, unary};
 }
+CheckResult is_mutable_impl(Struct *Struct) { return {false, Struct}; }
+CheckResult is_mutable_impl(ArrayType *Array) { return {false, Array}; }
+CheckResult is_mutable_impl(Subscript *Subscript) { return is_mutable(Subscript->subscriptable); }
+CheckResult is_mutable_impl(ArrayConstructor *Array) { return {false, Array}; }
 CheckResult is_mutable(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
@@ -3498,46 +4204,69 @@ CheckResult is_mutable(Expression *expression) {
 
 #undef MUST_BE_MUTABLE
 
-Optional<Value> get_constant_value(Node *node) {
-	while (1) {
-		scoped_replace(debug_current_location, node->location);
-		switch (node->kind) {
-			case NodeKind::IntegerLiteral: return Value(((IntegerLiteral *)node)->value);
-			case NodeKind::BooleanLiteral: return Value(((BooleanLiteral *)node)->value);
-			case NodeKind::StringLiteral:  return Value(((StringLiteral *)node)->value);
-			case NodeKind::Name: {
-				auto name = (Name *)node;
-				auto definition = name->definition();
-				if (!definition) {
-					return {};
-				}
+#define x(name) Result<Value, Node *> get_constant_value(name *node);
+ENUMERATE_NODE_KIND(x)
+#undef x
 
-				node = definition;
-				continue;
-			}
-			case NodeKind::Definition: {
-				auto definition = (Definition *)node;
-				if (definition->mutability != Mutability::constant) {
-					return {};
-				}
-
-				assert(definition->constant_value);
-				return definition->constant_value.value();
-			}
-			default: 
-				return {};
+Result<Value, Node *> get_constant_value(Node *node);
+Result<Value, Node *> get_constant_value_impl(Block *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Call *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Definition *node) {
+	if (node->mutability != Mutability::constant) {
+		return node;
+	}
+	return node->constant_value.value();
+}
+Result<Value, Node *> get_constant_value_impl(IntegerLiteral *node) { return Value(((IntegerLiteral *)node)->value); }
+Result<Value, Node *> get_constant_value_impl(BooleanLiteral *node) { return Value(((BooleanLiteral *)node)->value); }
+Result<Value, Node *> get_constant_value_impl(StringLiteral *node) { return Value(((StringLiteral *)node)->value); }
+Result<Value, Node *> get_constant_value_impl(Lambda *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(LambdaHead *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Name *node) { 
+	auto definition = node->definition();
+	if (!definition) {
+		return node;
+	}
+	return get_constant_value_impl(definition);
+}
+Result<Value, Node *> get_constant_value_impl(If *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(BuiltinTypeName *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Binary *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Match *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Unary *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Struct *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(ArrayType *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Subscript *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Return *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(While *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Continue *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Break *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(ArrayConstructor *node) {
+	Value result;
+	result.kind = ValueKind::array;
+	result.elements = {};
+	result.elements.reserve(node->elements.count);
+	for (auto element : node->elements) {
+		if (auto element_value = get_constant_value(element)) {
+			result.elements.add(element_value.value());
+		} else {
+			return element_value;
 		}
 	}
+	return result;
+}
+Result<Value, Node *> get_constant_value(Node *node) {
+	scoped_replace(debug_current_location, node->location);
+	switch (node->kind) {
+#define x(name) case NodeKind::name: return get_constant_value_impl((name *)node);
+		ENUMERATE_NODE_KIND(x)
+#undef x
+	}
+	invalid_code_path("get_constant_value: Invalid node kind {}", node->kind);
 }
 
 SpinLock retired_typecheckers_lock;
 List<struct Typechecker *> retired_typecheckers;
-
-enum class YieldResult : u8 {
-	fail,
-	success,
-	wait,
-};
 
 volatile u32 typechecker_uid_counter;
 
@@ -3574,8 +4303,6 @@ u64 get_hash(BinaryTypecheckerKey const &key) {
 	return (u64)key.left_type ^ rotate_left((u64)key.left_type, 21) ^ rotate_left((u64)key.operation, 42);
 }
 
-bool no_more_progress = false;
-
 std::pair<Lambda *, LambdaHead *> get_lambda_and_head(Expression *expression) {
 	auto directed = direct(expression);
 	auto lambda = as<Lambda>(directed);
@@ -3588,6 +4315,20 @@ std::pair<Lambda *, LambdaHead *> get_lambda_and_head(Expression *expression) {
 		}
 	}
 	return {lambda, head};
+}
+std::tuple<Lambda *, LambdaHead *, Struct *> get_lambda_and_head_or_struct(Expression *expression) {
+	auto directed = direct(expression);
+	auto lambda = as<Lambda>(directed);
+	auto struct_ = as<Struct>(directed);
+	LambdaHead *head = 0;
+	if (lambda) {
+		head = &lambda->head;
+	} else {
+		if (auto definition = as<Definition>(directed)) {
+			head = direct_as<LambdaHead>(definition->type);
+		}
+	}
+	return {lambda, head, struct_};
 }
 
 struct Copier {
@@ -3773,6 +4514,13 @@ struct Copier {
 	[[nodiscard]] void deep_copy_impl(Break *from, Break *to) {
 		LOOKUP_COPY(tag_block);
 	}
+	[[nodiscard]] void deep_copy_impl(Struct *from, Struct *to) { not_implemented(); }
+	[[nodiscard]] void deep_copy_impl(ArrayType *from, ArrayType *to) { not_implemented(); }
+	[[nodiscard]] void deep_copy_impl(Subscript *from, Subscript *to) { not_implemented(); }
+	[[nodiscard]] void deep_copy_impl(ArrayConstructor *from, ArrayConstructor *to) {
+		COPY_LIST(elements, DEEP_COPY);
+		COPY(type);
+	}
 
 #undef LOOKUP_COPY
 #undef DEEP_COPY
@@ -3871,6 +4619,35 @@ inline bool do_all_paths_return(Node *node) {
 		case NodeKind::While: {
 			return false;
 		}
+		case NodeKind::ArrayType:{
+			auto arr = (ArrayType *)node;
+			if (do_all_paths_return(arr->count_expression)) {
+				return true;
+			}
+			if (do_all_paths_return(arr->element_type)) {
+				return true;
+			}
+			return false;
+		}
+		case NodeKind::Subscript:{
+			auto sub = (Subscript *)node;
+			if (do_all_paths_return(sub->subscriptable)) {
+				return true;
+			}
+			if (do_all_paths_return(sub->index)) {
+				return true;
+			}
+			return false;
+		}
+		case NodeKind::ArrayConstructor:{
+			auto arr = (ArrayConstructor *)node;
+			for (auto element : arr->elements) {
+				if (do_all_paths_return(element)) {
+					return true;
+				}
+			}
+			return false;
+		}
 		case NodeKind::BuiltinTypeName:
 		case NodeKind::Break:
 		case NodeKind::Continue:
@@ -3905,6 +4682,13 @@ BooleanLiteral *make_boolean(bool value, String location, Type type = get_builti
 }
 BooleanLiteral *make_boolean(bool value, Type type = get_builtin_type(BuiltinType::Bool)) {
 	return make_boolean(value, {}, type);
+}
+
+ArrayType *make_array_type(Type element_type, u64 count) {
+	auto result = ArrayType::create();
+	result->element_type = element_type;
+	result->count = count;
+	return result;
 }
 
 struct Typechecker {
@@ -3998,7 +4782,8 @@ private:
 	bool yield_while(String location, auto predicate) {
 		while (true) {
 			if (predicate()) {
-				// immediate_reporter.info(location, "Yield");
+				if (report_yields)
+					immediate_reporter.info(location, "Yield");
 
 				yield_smt();
 				switch_thread();
@@ -4059,12 +4844,14 @@ private:
 		auto direct_source_type = direct(source_type);
 		auto direct_target_type = direct(target_type);
 
+		// Equal types do not need implicit cast
 		if (types_match(direct_source_type, direct_target_type)) {
 			return true;
 		}
 
+		// Unsized integer to concrete
 		if (types_match(direct_source_type, BuiltinType::UnsizedInteger)) {
-			if (::is_integer(direct_target_type)) {
+			if (::is_concrete_integer(direct_target_type)) {
 				if (apply) {
 					propagate_concrete_type(expression, target_type);
 				}
@@ -4072,6 +4859,7 @@ private:
 			}
 		}
 
+		// Integer to Integer
 		if (auto src_builtin_type = as<BuiltinTypeName>(direct_source_type)) {
 			switch (src_builtin_type->type_kind) {
 				case BuiltinType::U8:
@@ -4125,6 +4913,21 @@ private:
 					}
 					break;
 				}
+			}
+		}
+
+		// Auto dereference
+		if (auto pointer = as_pointer(direct_source_type)) {
+			if (types_match(pointer->expression, direct_target_type)) {
+				if (apply) {
+					auto dereference = Unary::create();
+					dereference->operation = UnaryOperation::dereference;
+					dereference->expression = expression;
+					dereference->location = expression->location;
+					dereference->type = target_type;
+					expression = dereference;
+				}
+				return true;
 			}
 		}
 
@@ -4228,6 +5031,126 @@ private:
 		}
 	}
 
+	Value execute(Node *node) {
+		auto context = ExecutionContext::create(fiber, node);
+		while (true) {
+			auto result = context->run();
+			if (result.is_value()) {
+				return result.value();
+			}
+
+			switch (result.error()) {
+				case YieldResult::fail: {
+					reporter.error(node->location, "Failed to evaluate value.");
+					yield(YieldResult::fail);
+					break;
+				}
+				case YieldResult::wait: {
+					yield(YieldResult::wait);
+					break;
+				}
+			}
+		}
+	}
+
+	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head) {
+		auto &arguments = call->arguments;
+
+		if (!yield_while_null(call->location, &head->return_type)) {
+			reporter.error(head->location, "Could not wait for lambda's return type");
+			yield(YieldResult::fail);
+		}
+
+		auto &parameters = head->parameters_block.definition_list;
+
+		if (arguments.count != parameters.count) {
+			reporter.error(call->location, "Too {} arguments. Expected {}, but got {}.", arguments.count > parameters.count ? "many"s : "few"s, parameters.count, arguments.count);
+			reporter.info(head->location, "Lambda is here:");
+			yield(YieldResult::fail);
+		}
+
+		for (umm i = 0; i < arguments.count; ++i) {
+			auto &argument = arguments[i];
+			auto &parameter = head->parameters_block.definition_list[i];
+			if (!implicitly_cast(&argument, parameter->type, true)) {
+				reporter.info(parameter->location, "Parameter declared here:");
+				yield(YieldResult::fail);
+			}
+		}
+
+		if (lambda) {
+			Inline inline_status = {};
+			if (call->inline_status == Inline::unspecified) {
+				inline_status = lambda->inline_status;
+			} else {
+				inline_status = call->inline_status;
+				if ((call->inline_status == Inline::always && lambda->inline_status == Inline::never) ||
+					(call->inline_status == Inline::never && lambda->inline_status == Inline::always))
+				{
+					// What if that was intended? TODO: There should be an option to turn this on/off.
+					reporter.warning(call->location, "Conflicting inlining specifiers: {} at call size, {} at lambda definition. The one at call site ({}) will take place.", call->inline_status, lambda->inline_status, call->inline_status);
+					reporter.info(lambda->location, "Here is the lambda:");
+				}
+			}
+
+			if (inline_status == Inline::always) {
+				return inline_body(call, lambda);
+			}
+		}
+
+		call->type = head->return_type;
+		return call;
+	};
+	Expression *typecheck_constructor(Call *call, Struct *Struct) {
+		auto &arguments = call->arguments;
+		auto &members = Struct->members;
+
+		if (arguments.count != members.count) {
+			reporter.error(call->location, "Too {} arguments. Expected {}, but got {}.", arguments.count > members.count ? "many"s : "few"s, members.count, arguments.count);
+			yield(YieldResult::fail);
+		}
+
+		for (umm i = 0; i < arguments.count; ++i) {
+			auto &argument = arguments[i];
+			auto &member = members[i];
+			if (!implicitly_cast(&argument, member->type, true)) {
+				yield(YieldResult::fail);
+			}
+		}
+
+		call->type = call->callable;
+		return call;
+	};
+
+	bool try_typecheck_binary_dot(Binary *binary, Reporter &reporter) {
+		typecheck(&binary->left);
+		auto struct_ = direct_as<Struct>(binary->left->type);
+		if (!struct_) {
+			if (auto pointer = direct_as<Unary>(binary->left->type); pointer && pointer->operation == UnaryOperation::pointer) {
+				struct_ = direct_as<Struct>(pointer->expression);
+			}
+		}
+
+		if (!struct_) {
+			reporter.error(binary->left->location, "Left of the dot must have struct or pointer to struct type.");
+			return false;
+		}
+
+		auto member_name = as<Name>(binary->right);
+		assert(member_name);
+
+		if (auto found = find_if(struct_->members, [&](auto member) { return member->name == member_name->name; })) {
+			auto definition = *found;
+			member_name->possible_definitions.set(definition);
+			binary->type = definition->type;
+		} else {
+			reporter.error(binary->right->location, "Struct {} does not contain member named {}.", struct_, member_name->name);
+			return false;
+		}
+
+		return true;
+	}
+
 	//
 	// These `typecheck` overloads automatically substitute old node with new one.
 	//
@@ -4246,36 +5169,47 @@ private:
 	//
 	template <CNode T>
 	void typecheck(T &node) {
-		auto new_node = typecheck(&node, false);
-		assert(new_node == &node, "Attempt to substitute a node which can't be substituted.");
+		(void)typecheck(&node, false);
 	}
 
 	[[nodiscard]] Node *typecheck(Node *node, bool can_substitute) {
 		++progress;
 		defer { ++progress; };
 
+		if (auto expression = as<Expression>(node)) {
+			if (expression->type) {
+				return expression;
+			}
+		}
+
 		scoped_replace(debug_current_location, node->location);
 
 		node_stack.add(node);
 		defer { node_stack.pop(); };
 
+		Node *new_node = 0;
+
 		switch (node->kind) {
-#define x(name) case NodeKind::name: node = typecheck_impl((##name *)node, can_substitute); break;
+#define x(name) case NodeKind::name: new_node = typecheck_impl((##name *)node, can_substitute); break;
 			ENUMERATE_NODE_KIND(x)
 #undef x
 			default:
 				invalid_code_path();
 		}
 
-		assert(node);
+		assert(new_node);
 
-		if (auto expression = as<Expression>(node)) {
+		if (!can_substitute) {
+			assert(new_node == node, "Attempt to substitute a node which can't be substituted.");
+		}
+
+		if (auto expression = as<Expression>(new_node)) {
 			if (!expression->type) {
 				reporter.error(expression->location, "Could not compute the type of this expression.");
 				yield(YieldResult::fail);
 			}
 		}
-		return node;
+		return new_node;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Block *block, bool can_substitute) {
 		scoped_replace(current_block, block);
@@ -4405,15 +5339,14 @@ private:
 					yield(YieldResult::fail);
 				}
 
-				auto context = ExecutionContext::create(fiber);
-				definition->constant_value = context->run(definition->initial_value).value_or([&] {
-					reporter.error(definition->initial_value->location, "Failed to evaluate value.");
-					yield(YieldResult::fail);
-					return Value{};
-				});
+				definition->constant_value = execute(definition->initial_value);
 			}
 		} else {
-			if (!definition->is_parameter) {
+			if (definition->is_parameter) {
+				// Parameters can be immutable and have no initial expression
+			} else if (definition->container && definition->container->kind == NodeKind::Struct) {
+				// Struct members can be immutable and have no initial expression
+			} else {
 				assert(definition->mutability == Mutability::variable);
 			}
 		}
@@ -4653,7 +5586,7 @@ private:
 
 					if (block->container && as<Lambda>(block->container)) {
 						// Find our parent node in found definition's block
-						for (auto node : reverse_iterate(node_stack)) {
+						for (auto node : reversed(node_stack)) {
 							auto parent_index = find_index_of(block->children, node);
 							if (parent_index < block->children.count) {
 								if (parent_index < definition_index) {
@@ -4692,10 +5625,12 @@ private:
 
 					if (constant_name_inlining) {
 						if (definition->mutability == Mutability::constant) {
-							if (definition->initial_value->kind != NodeKind::Lambda) {
-								auto literal = Copier{}.deep_copy(definition->initial_value);
-								assert(literal->kind == NodeKind::IntegerLiteral || literal->kind == NodeKind::BooleanLiteral);
-								return literal;
+							switch (definition->initial_value->kind) {
+								case NodeKind::Lambda:
+								case NodeKind::Struct:
+									break;
+								default:
+									return Copier{}.deep_copy(definition->initial_value);
 							}
 						}
 					}
@@ -4711,63 +5646,66 @@ private:
 		return 0;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Call *call, bool can_substitute) {
+		if (auto binary = as<Binary>(call->callable)) {
+			if (binary->operation == BinaryOperation::dot) {
+				if (auto lambda_name = as<Name>(binary->right)) {
+					Reporter reporter2;
+					if (try_typecheck_binary_dot(binary, reporter2)) {
+						goto typecheck_dot_succeeded;
+					} else {
+						Definition *lambda_definition = 0;
+						for (auto block = current_block; block; block = block->parent) {
+							if (auto found_definitions = block->definition_map.find(lambda_name->name)) {
+								auto [name, definitions] = *found_definitions;
+								assert(definitions.count != 0);
+								if (definitions.count > 1) {
+									reporter.error(binary->right->location, "Function overloading not implemented yet.");
+									yield(YieldResult::fail);
+								}
+								lambda_definition = definitions[0];
+								break;
+							}
+						}
+
+						auto lambda = lambda_definition->initial_value ? as<Lambda>(lambda_definition->initial_value) : 0;
+						if (!lambda) {
+							reporter.error(binary->right->location, "This is not a lambda.");
+							yield(YieldResult::fail);
+						}
+
+						auto first_argument_address = Unary::create();
+						first_argument_address->location = binary->left->location;
+						first_argument_address->expression = binary->left;
+						first_argument_address->operation = UnaryOperation::addr;
+
+						call->callable = binary->right;
+						call->arguments.insert_at(first_argument_address, 0);
+						return typecheck_impl(call, can_substitute);
+					}
+				}
+			}
+		}
+
+
 		typecheck(&call->callable);
 
+	typecheck_dot_succeeded:
 		auto &arguments = call->arguments;
 		for (auto &argument : arguments) {
 			typecheck(&argument);
 		}
 
-		auto [lambda, head] = get_lambda_and_head(call->callable);
+		auto [lambda, head, Struct] = get_lambda_and_head_or_struct(call->callable);
 
-		if (!head) {
-			reporter.error(call->callable->location, "Only lambdas can be called for now");
+		if (head) {
+			return typecheck_lambda_call(call, lambda, head);
+		} else if (Struct) {
+			return typecheck_constructor(call, Struct);
+		} else {
+			reporter.error(call->callable->location, "Only lambdas / structs can be called for now");
 			yield(YieldResult::fail);
+			return 0;
 		}
-
-		if (!yield_while_null(call->location, &head->return_type)) {
-			reporter.error(head->location, "Could not wait for lambda's return type");
-			yield(YieldResult::fail);
-		}
-
-		auto &parameters = head->parameters_block.definition_list;
-
-		if (arguments.count != parameters.count) {
-			reporter.error(call->location, "Too {} arguments. Expected {}, but got {}.", arguments.count > parameters.count ? "much"s : "few"s, parameters.count, arguments.count);
-			reporter.info(head->location, "Lambda is here:");
-			yield(YieldResult::fail);
-		}
-
-		for (umm i = 0; i < arguments.count; ++i) {
-			auto &argument = arguments[i];
-			auto &parameter = head->parameters_block.definition_list[i];
-			if (!implicitly_cast(&argument, parameter->type, true)) {
-				yield(YieldResult::fail);
-			}
-		}
-
-		if (lambda) {
-			Inline inline_status = {};
-			if (call->inline_status == Inline::unspecified) {
-				inline_status = lambda->inline_status;
-			} else {
-				inline_status = call->inline_status;
-				if ((call->inline_status == Inline::always && lambda->inline_status == Inline::never) ||
-					(call->inline_status == Inline::never && lambda->inline_status == Inline::always))
-				{
-					// What if that was intended? TODO: There should be an option to turn this on/off.
-					reporter.warning(call->location, "Conflicting inlining specifiers: {} at call size, {} at lambda definition. The one at call site ({}) will take place.", call->inline_status, lambda->inline_status, call->inline_status);
-					reporter.info(lambda->location, "Here is the lambda:");
-				}
-			}
-
-			if (inline_status == Inline::always) {
-				return inline_body(call, lambda);
-			}
-		}
-
-		call->type = head->return_type;
-		return call;
 	}
 	[[nodiscard]] Node *typecheck_impl(If *If, bool can_substitute) {
 		typecheck(&If->condition);
@@ -4820,8 +5758,8 @@ private:
 			NOTE_LEAK(If);
 
 			auto value = value_.value();
-			assert(value.kind == ValueKind::boolean);
-			if (value.boolean) {
+			assert(value.kind == ValueKind::Bool);
+			if (value.Bool) {
 				return If->true_branch;
 			} else {
 				if (If->false_branch) {
@@ -4848,37 +5786,44 @@ private:
 		return type;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Binary *binary, bool can_substitute) {
-		typecheck(&binary->left);
-		typecheck(&binary->right);
-
-		if (binary->operation == BinaryOperation::ass) {
-			auto result = is_mutable(binary->left);
-			if (!result) {
-				reporter.error(binary->left->location, "This expression can not be modified.");
-				assert(result.failed_node);
-				//reporter.info(result.failed_node->location, "Because this is not mutable.");
-				why_is_this_immutable(binary->left);
-
+		if (binary->operation == BinaryOperation::dot) {
+			if (!try_typecheck_binary_dot(binary, reporter)) {
 				yield(YieldResult::fail);
 			}
-			if (!implicitly_cast(&binary->right, binary->left->type, true)) {
-				yield(YieldResult::fail);
-			}
-			binary->type = get_builtin_type(BuiltinType::None);
 			return binary;
+		} else {
+			typecheck(&binary->left);
+			typecheck(&binary->right);
+
+			if (binary->operation == BinaryOperation::ass) {
+				auto result = is_mutable(binary->left);
+				if (!result) {
+					reporter.error(binary->left->location, "This expression can not be modified.");
+					assert(result.failed_node);
+					//reporter.info(result.failed_node->location, "Because this is not mutable.");
+					why_is_this_immutable(binary->left);
+
+					yield(YieldResult::fail);
+				}
+				if (!implicitly_cast(&binary->right, binary->left->type, true)) {
+					yield(YieldResult::fail);
+				}
+				binary->type = get_builtin_type(BuiltinType::None);
+				return binary;
+			}
+
+			auto dleft  = direct(binary->left->type);
+			auto dright = direct(binary->right->type);
+
+			if (auto found = binary_typecheckers.find({ dleft, dright, binary->operation })) {
+				return (this->*(found->value))(binary);
+			}
+
+		no_binop:
+			reporter.error(binary->location, "No binary operation {} defined for types {} and {}.", binary->operation, binary->left->type, binary->right->type);
+			yield(YieldResult::fail);
+			return 0;
 		}
-
-		auto dleft  = direct(binary->left->type);
-		auto dright = direct(binary->right->type);
-
-		if (auto found = binary_typecheckers.find({ dleft, dright, binary->operation })) {
-			return (this->*(found->value))(binary);
-		}
-
-	no_binop:
-		reporter.error(binary->location, "No binary operation {} defined for types {} and {}.", binary->operation, binary->left->type, binary->right->type);
-		yield(YieldResult::fail);
-		return 0;
 	}
 	[[nodiscard]] Match *typecheck_impl(Match *match, bool can_substitute) {
 		typecheck(&match->expression);
@@ -5038,6 +5983,109 @@ private:
 		}
 		return Break;
 	}
+	[[nodiscard]] Struct *typecheck_impl(Struct *Struct, bool can_substitute) {
+		for (auto &member : Struct->members) {
+			typecheck(&member);
+		}
+		Struct->type = get_builtin_type(BuiltinType::Type);
+		return Struct;
+	}
+	[[nodiscard]] ArrayType *typecheck_impl(ArrayType *arr, bool can_substitute) {
+		typecheck(&arr->count_expression);
+		if (auto maybe_count = get_constant_value(arr->count_expression)) {
+			auto count_value = maybe_count.value();
+			s64 count = 0;
+			switch (count_value.kind) {
+				case ValueKind::U8: count = count_value.U8; break;
+				case ValueKind::U16: count = count_value.U16; break;
+				case ValueKind::U32: count = count_value.U32; break;
+				case ValueKind::U64: count = count_value.U64; break;
+				case ValueKind::S8: count = count_value.S8; break;
+				case ValueKind::S16: count = count_value.S16; break;
+				case ValueKind::S32: count = count_value.S32; break;
+				case ValueKind::S64: count = count_value.S64; break;
+				default: {
+					reporter.error(arr->count_expression->location, "Count expression must be an integer.");
+					yield(YieldResult::fail);
+					break;
+				}
+			}
+
+			if (count <= 0) {
+				reporter.error(arr->count_expression->location, "Arrays of 0 elements or less are not allowed.");
+				yield(YieldResult::fail);
+			}
+			arr->count = (u64)count;
+		} else {
+			reporter.error(arr->count_expression->location, "Count expression must be constant.");
+			yield(YieldResult::fail);
+		}
+		
+		typecheck(&arr->element_type);
+		if (!is_type(arr->element_type)) {
+			reporter.error(arr->element_type->location, "This must be a type.");
+			reporter.info(arr->location, "Because this is an array.");
+			yield(YieldResult::fail);
+		}
+
+		arr->type = get_builtin_type(BuiltinType::Type);
+		return arr;
+	}
+	[[nodiscard]] Expression *typecheck_impl(Subscript *Subscript, bool can_substitute) {
+		typecheck(&Subscript->subscriptable);
+		auto array_type = direct_as<ArrayType>(Subscript->subscriptable->type);
+		if (!array_type) {
+			reporter.error(Subscript->subscriptable->location, "This must be an array.");
+			yield(YieldResult::fail);
+		}
+
+		typecheck(&Subscript->index);
+		make_concrete(Subscript->index);
+		if (!::is_concrete_integer(Subscript->index->type)) {
+			reporter.error(Subscript->index->location, "This must be an integer.");
+			yield(YieldResult::fail);
+		}
+
+		Subscript->type = array_type->element_type;
+
+		if (can_substitute) {
+			if (auto index_value = get_constant_value(Subscript->index)) {
+				if (auto array = direct_as<ArrayConstructor>(Subscript->subscriptable)) {
+					NOTE_LEAK(Subscript);
+					auto index = index_value.value();
+					switch (index.kind) {
+						case ValueKind::U8: return array->elements[index.U8];
+						case ValueKind::U16: return array->elements[index.U16];
+						case ValueKind::U32: return array->elements[index.U32];
+						case ValueKind::U64: return array->elements[index.U64];
+						case ValueKind::S8: return array->elements[index.S8];
+						case ValueKind::S16: return array->elements[index.S16];
+						case ValueKind::S32: return array->elements[index.S32];
+						case ValueKind::S64: return array->elements[index.S64];
+						default: invalid_code_path("invalid index kind: {}", index.kind);
+					}
+				}
+			}
+		}
+
+		return Subscript;
+	}
+	[[nodiscard]] ArrayConstructor *typecheck_impl(ArrayConstructor *arr, bool can_substitute) {
+		for (auto &element : arr->elements) {
+			typecheck(&element);
+		}
+
+		make_concrete(arr->elements[0]);
+		for (auto &element : arr->elements.skip(1)) {
+			if (!implicitly_cast(&element, arr->elements[0]->type, true)) {
+				yield(YieldResult::fail);
+			}
+		}
+
+		arr->type = make_array_type(arr->elements[0]->type, arr->elements.count);
+
+		return arr;
+	}
 
 
 	u32 debug_thread_id = 0;
@@ -5102,22 +6150,22 @@ public:
 		auto r = get_constant_value(binary->right).value();
 
 		switch (binary->operation) {
-			case BinaryOperation::add: return make_integer(l.s64 + r.s64, binary->location);
-			case BinaryOperation::sub: return make_integer(l.s64 - r.s64, binary->location);
-			case BinaryOperation::mul: return make_integer(l.s64 * r.s64, binary->location);
-			case BinaryOperation::div: return make_integer(l.s64 / r.s64, binary->location);
-			case BinaryOperation::mod: return make_integer(l.s64 % r.s64, binary->location);
-			case BinaryOperation::bxo: return make_integer(l.s64 ^ r.s64, binary->location);
-			case BinaryOperation::ban: return make_integer(l.s64 & r.s64, binary->location);
-			case BinaryOperation::bor: return make_integer(l.s64 | r.s64, binary->location);
-			case BinaryOperation::bsl: return make_integer(l.s64 << r.s64, binary->location);
-			case BinaryOperation::bsr: return make_integer(l.s64 >> r.s64, binary->location);
-			case BinaryOperation::equ: return make_boolean(l.s64 == r.s64, binary->location);
-			case BinaryOperation::neq: return make_boolean(l.s64 != r.s64, binary->location);
-			case BinaryOperation::les: return make_boolean(l.s64 < r.s64, binary->location);
-			case BinaryOperation::grt: return make_boolean(l.s64 > r.s64, binary->location);
-			case BinaryOperation::leq: return make_boolean(l.s64 <= r.s64, binary->location);
-			case BinaryOperation::grq: return make_boolean(l.s64 >= r.s64, binary->location);
+			case BinaryOperation::add: return make_integer(l.S64 + r.S64, binary->location);
+			case BinaryOperation::sub: return make_integer(l.S64 - r.S64, binary->location);
+			case BinaryOperation::mul: return make_integer(l.S64 * r.S64, binary->location);
+			case BinaryOperation::div: return make_integer(l.S64 / r.S64, binary->location);
+			case BinaryOperation::mod: return make_integer(l.S64 % r.S64, binary->location);
+			case BinaryOperation::bxo: return make_integer(l.S64 ^ r.S64, binary->location);
+			case BinaryOperation::ban: return make_integer(l.S64 & r.S64, binary->location);
+			case BinaryOperation::bor: return make_integer(l.S64 | r.S64, binary->location);
+			case BinaryOperation::bsl: return make_integer(l.S64 << r.S64, binary->location);
+			case BinaryOperation::bsr: return make_integer(l.S64 >> r.S64, binary->location);
+			case BinaryOperation::equ: return make_boolean(l.S64 == r.S64, binary->location);
+			case BinaryOperation::neq: return make_boolean(l.S64 != r.S64, binary->location);
+			case BinaryOperation::les: return make_boolean(l.S64 < r.S64, binary->location);
+			case BinaryOperation::grt: return make_boolean(l.S64 > r.S64, binary->location);
+			case BinaryOperation::leq: return make_boolean(l.S64 <= r.S64, binary->location);
+			case BinaryOperation::grq: return make_boolean(l.S64 >= r.S64, binary->location);
 		}
 		invalid_code_path("Attempt to evaluate binary {} on unsized integers. This is not supported/implemented", binary->operation);
 	};
@@ -5126,6 +6174,21 @@ public:
 	Expression *bt_comp_Type(Binary *binary) {
 		return make_boolean(invert ^ types_match(binary->left, binary->right));
 	}
+
+	template <auto operation>
+	Expression *bt_math_opt(Binary *binary) {
+		binary->type = binary->left->type;
+		if (auto left = get_constant_value(binary->left)) {
+			if (auto right = get_constant_value(binary->right)) {
+				auto l = left.value();
+				auto r = right.value();
+				auto result = operation(l, r);
+				result->location = binary->location;
+				return result;
+			}
+		}
+		return binary;
+	};
 
 	static void init_binary_typecheckers() {
 		construct(binary_typecheckers);
@@ -5150,12 +6213,12 @@ public:
 	x(type, type, grt) = &bt_set_bool; \
 	x(type, type, grq) = &bt_set_bool
 
-#define MATHABLE(type) \
-	x(type, type, add) = &bt_take_left; \
-	x(type, type, sub) = &bt_take_left; \
-	x(type, type, mul) = &bt_take_left; \
-	x(type, type, div) = &bt_take_left; \
-	x(type, type, mod) = &bt_take_left;
+#define MATHABLE_INTEGER(type) \
+	x(type, type, add) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type + r.type, get_builtin_type(BuiltinType::type)); }>; \
+	x(type, type, sub) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type - r.type, get_builtin_type(BuiltinType::type)); }>; \
+	x(type, type, mul) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type * r.type, get_builtin_type(BuiltinType::type)); }>; \
+	x(type, type, div) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type / r.type, get_builtin_type(BuiltinType::type)); }>; \
+	x(type, type, mod) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type % r.type, get_builtin_type(BuiltinType::type)); }>;
 
 #define SYMMETRIC(a, b, op) x(a, b, op) = x(b, a, op)
 
@@ -5187,15 +6250,14 @@ public:
 		ORDERABLE(S32);
 		ORDERABLE(S64);
 
-		MATHABLE(Bool);
-		MATHABLE(U8);
-		MATHABLE(U16);
-		MATHABLE(U32);
-		MATHABLE(U64);
-		MATHABLE(S8);
-		MATHABLE(S16);
-		MATHABLE(S32);
-		MATHABLE(S64);
+		MATHABLE_INTEGER(U8);
+		MATHABLE_INTEGER(U16);
+		MATHABLE_INTEGER(U32);
+		MATHABLE_INTEGER(U64);
+		MATHABLE_INTEGER(S8);
+		MATHABLE_INTEGER(S16);
+		MATHABLE_INTEGER(S32);
+		MATHABLE_INTEGER(S64);
 
 		UNSIZED_INT_AND_SIZED_INT(U8);
 		UNSIZED_INT_AND_SIZED_INT(U16);
@@ -5285,6 +6347,10 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 			print_uids = true;
 		} else if (args[i] == "-no-constant-name-inlining") {
 			constant_name_inlining = false;
+		} else if (args[i] == "-report-yields") {
+			report_yields = true;
+		} else if (args[i] == "-log-time") {
+			enable_time_log = true;
 		} else if (args[i][0] == '-') {
 			immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
 		} else {
@@ -5317,13 +6383,17 @@ void init_builtin_types() {
 }
 
 s32 tl_main(Span<Span<utf8>> args) {
+	debug_init();
+	
 	auto main_fiber = fiber_init(0);
 
 	set_console_encoding(Encoding::utf8);
 
 	defer {
-		for (auto time : timed_results) {
-			println("{} took {} ms", time.name, time.seconds * 1000);
+		if (enable_time_log) {
+			for (auto time : timed_results) {
+				println("{} took {} ms", time.name, time.seconds * 1000);
+			}
 		}
 
 #if ENABLE_STRING_HASH_COUNT
@@ -5450,8 +6520,9 @@ s32 tl_main(Span<Span<utf8>> args) {
 			thread_pool.wait_for_completion();
 
 			auto current_progress = get_typechecking_progress();
+			assert(current_progress >= initial_progress);
 
-			if (current_progress <= initial_progress) {
+			if (current_progress == initial_progress) {
 
 				// Inform all typecheckers that there's no more progress
 				// and that they should report whatever they couldn't wait for.
@@ -5534,7 +6605,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 								cycle.add(p);
 								p = vertices[p].parent;
 							}
-							reverse(cycle); // reverse to get correct order
+							flip_order(cycle); // reverse to get correct order
 							cycles.add(cycle);
 							cycle.clear();
 							break;
@@ -5626,7 +6697,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 				}
 
 				if (!types_match(lambda->head.return_type, get_builtin_type(BuiltinType::None)) &&
-					!::is_integer(lambda->head.return_type)) 
+					!::is_concrete_integer(lambda->head.return_type)) 
 				{
 					immediate_reporter.error(definition->location, "main must return integer or None, not {}.", lambda->head.return_type);
 					return 1;
@@ -5637,9 +6708,10 @@ s32 tl_main(Span<Span<utf8>> args) {
 				auto call = Call::create();
 				call->callable = lambda;
 
-				auto context = ExecutionContext::create(main_fiber);
-				if (auto value = context->run(call)) {
-					println("main returned {}", value.value());
+				auto context = ExecutionContext::create(main_fiber, call);
+				auto result = context->run();
+				if (result.is_value()) {
+					println("main returned {}", result.value());
 				} else {
 					with(ConsoleColor::red, println("main failed to execute"));
 				}
