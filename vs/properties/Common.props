@@ -28,10 +28,12 @@
       <ExceptionHandling>false</ExceptionHandling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <WarningLevel>EnableAllWarnings</WarningLevel>
+      <WarningLevel>Level3</WarningLevel>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
       <EnableModules>false</EnableModules>
       <BuildStlModules>false</BuildStlModules>
+      <PreprocessToFile>false</PreprocessToFile>
+      <UseStandardPreprocessor>false</UseStandardPreprocessor>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup />

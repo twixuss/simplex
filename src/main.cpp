@@ -36,6 +36,7 @@ void print_crash_info();
 #include <tl/fiber.h>
 #include <tl/time.h>
 #include <tl/debug.h>
+#include <tl/macros.h>
 
 #define ENABLE_STRING_HASH_COUNT 0
 #define ENABLE_NOTE_LEAK 0
@@ -98,6 +99,9 @@ bool constant_name_inlining = true;
 bool print_uids = false;
 bool report_yields = false;
 bool enable_time_log = false;
+bool is_debugging = false;
+
+#define dbgln(...) (is_debugging ? println(__VA_ARGS__) : 0)
 
 #define timed_block(name) \
 	if (enable_time_log) println("{} ...", name); \
@@ -622,7 +626,7 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 
 void print_crash_info() {
 	println("Call stack:");
-	println(resolve_names(get_call_stack(1)));
+	println(resolve_names(get_call_stack().skip(1).skip(-7)));
 }
 
 using Tokens = GList<Token>;
@@ -1205,11 +1209,12 @@ inline umm append(StringBuilder &builder, ValueKind kind) {
 bool is_type(Expression *expression);
 
 
-#define CHECK_THAT_TYPES_ARE_TYPES 0//BUILD_DEBUG
+#define CHECK_THAT_TYPES_ARE_TYPES 1//BUILD_DEBUG
 
 #if CHECK_THAT_TYPES_ARE_TYPES
 struct Type {
-	Expression *expression;
+	Expression *expression = 0;
+	Type() = default;
 	Type(Expression *expression) : expression(expression) {
 		if (expression) {
 			assert(is_type(expression));
@@ -1299,6 +1304,12 @@ struct Value {
 	explicit Value(ArrayTag,  List<Value> value) : kind(ValueKind::array),   elements(value) {}
 };
 
+enum class CallKind {
+	unknown,
+	lambda,
+	constructor,
+};
+
 DEFINE_EXPRESSION(Block) {
 	Block *parent = 0;
 	Expression *container = 0;
@@ -1322,6 +1333,7 @@ DEFINE_EXPRESSION(Call) {
 	GList<Expression *> arguments;
 
 	Inline inline_status = {};
+	CallKind call_kind = {};
 };
 DEFINE_EXPRESSION(Definition) {
 	Expression *container = 0;
@@ -1330,6 +1342,7 @@ DEFINE_EXPRESSION(Definition) {
 	Expression *initial_value = 0;
 	Optional<Value> constant_value = {};
 	Mutability mutability = {};
+	u64 offset = -1;
 	bool is_parameter : 1 = false;
 };
 DEFINE_EXPRESSION(IntegerLiteral) {
@@ -1372,10 +1385,10 @@ DEFINE_EXPRESSION(Name) {
 		return 0;
 	}
 };
-DEFINE_EXPRESSION(If) {
+DEFINE_EXPRESSION(IfExpression) {
 	Expression *condition = 0;
-	Node *true_branch = 0;
-	Node *false_branch = 0;
+	Expression *true_branch = 0;
+	Expression *false_branch = 0;
 };
 DEFINE_EXPRESSION(BuiltinTypeName) {
 	BuiltinType type_kind = {};
@@ -1401,6 +1414,7 @@ DEFINE_EXPRESSION(Unary) {
 };
 DEFINE_EXPRESSION(Struct) {
 	List<Definition *> members;
+	s64 size = -1;
 };
 DEFINE_EXPRESSION(ArrayType) {
 	Expression *element_type = 0;
@@ -1426,6 +1440,11 @@ DEFINE_STATEMENT(Continue) {};
 DEFINE_STATEMENT(Break) {
 	Block *tag_block = 0;
 	Expression *value = 0;
+};
+DEFINE_STATEMENT(IfStatement) {
+	Expression *condition = 0;
+	Node *true_branch = 0;
+	Node *false_branch = 0; // May be null
 };
 
 template <class T>
@@ -1525,12 +1544,19 @@ ForEachDirective visit_impl(Return **node, auto &&visitor) {
 	VISIT(&ret->value);
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(If **node, auto &&visitor) {
+ForEachDirective visit_impl(IfStatement **node, auto &&visitor) {
 	auto If = *node;
 	VISIT(&If->condition);
 	VISIT(&If->true_branch);
 	if (If->false_branch)
 		VISIT(&If->false_branch);
+	return ForEach_continue;
+}
+ForEachDirective visit_impl(IfExpression **node, auto &&visitor) {
+	auto If = *node;
+	VISIT(&If->condition);
+	VISIT(&If->true_branch);
+	VISIT(&If->false_branch);
 	return ForEach_continue;
 }
 ForEachDirective visit_impl(Definition **node, auto &&visitor) {
@@ -1874,17 +1900,11 @@ void propagate_concrete_type(Expression *expression, Type type) {
 			propagate_concrete_type(unary->expression, type);
 			break;
 		}
-		case NodeKind::If: {
-			auto If = (::If *)expression;
+		case NodeKind::IfExpression: {
+			auto If = (::IfExpression *)expression;
 			If->type = type;
-
-			if (auto true_expression = as<Expression>(If->true_branch)) {
-				if (auto false_expression = as<Expression>(If->false_branch)) {
-					propagate_concrete_type(true_expression, type);
-					propagate_concrete_type(false_expression, type);
-				}
-			}
-
+			propagate_concrete_type(If->true_branch, type);
+			propagate_concrete_type(If->false_branch, type);
 			break;
 		}
 		case NodeKind::Block: {
@@ -1916,16 +1936,57 @@ void make_concrete(Expression *expression) {
 
 u64 get_size(BuiltinType type_kind) {
 	switch (type_kind) {
-		case BuiltinType::U8:  return 1;
-		case BuiltinType::U16: return 2;
-		case BuiltinType::U32: return 4;
-		case BuiltinType::U64: return 8;
-		case BuiltinType::S8:  return 1;
-		case BuiltinType::S16: return 2;
-		case BuiltinType::S32: return 4;
-		case BuiltinType::S64: return 8;
+		case BuiltinType::None: return 0;
+		case BuiltinType::U8:   return 1;
+		case BuiltinType::U16:  return 2;
+		case BuiltinType::U32:  return 4;
+		case BuiltinType::U64:  return 8;
+		case BuiltinType::S8:   return 1;
+		case BuiltinType::S16:  return 2;
+		case BuiltinType::S32:  return 4;
+		case BuiltinType::S64:  return 8;
+		case BuiltinType::Bool: return 1;
 		default: invalid_code_path("Invalid BuiltinType {}", type_kind);
 	}
+}
+
+u64 get_size_impl(Block *node) { not_implemented(); }
+u64 get_size_impl(Call *node) { not_implemented(); }
+u64 get_size_impl(Definition *node) { not_implemented(); }
+u64 get_size_impl(IntegerLiteral *node) { not_implemented(); }
+u64 get_size_impl(BooleanLiteral *node) { not_implemented(); }
+u64 get_size_impl(StringLiteral *node) { not_implemented(); }
+u64 get_size_impl(Lambda *node) { not_implemented(); }
+u64 get_size_impl(LambdaHead *node) { not_implemented(); }
+u64 get_size_impl(Name *node) { not_implemented(); }
+u64 get_size_impl(IfStatement *node) { not_implemented(); }
+u64 get_size_impl(IfExpression *node) { not_implemented(); }
+u64 get_size_impl(BuiltinTypeName *node) {
+	return get_size(node->type_kind);
+}
+u64 get_size_impl(Binary *node) { not_implemented(); }
+u64 get_size_impl(Match *node) { not_implemented(); }
+u64 get_size_impl(Unary *node) {
+	if (node->operation == UnaryOperation::pointer)
+		return 8;
+	not_implemented();
+}
+u64 get_size_impl(Struct *Struct) {
+	assert(Struct->size != -1);
+	return Struct->size;
+}
+u64 get_size_impl(ArrayType *node) { not_implemented(); }
+u64 get_size_impl(Subscript *node) { not_implemented(); }
+u64 get_size_impl(ArrayConstructor *node) { not_implemented(); }
+
+u64 get_size(Type type) {
+	type = direct(type);
+	switch (type->kind) {
+#define x(name) case NodeKind::name: return get_size_impl((name *)type);
+		ENUMERATE_EXPRESSION_KIND(x)
+#undef x
+	}
+	invalid_code_path("invalid type->kind {}", type->kind);
 }
 
 enum class Sign : u8 {
@@ -2110,7 +2171,7 @@ void print_ast_impl(Return *return_) {
 		print_ast(return_->value);
 	}
 }
-void print_ast_impl(If *If) {
+void print_ast_impl(IfStatement *If) {
 	print("if ");
 	print_ast(If->condition);
 	print(" then ");
@@ -2119,6 +2180,14 @@ void print_ast_impl(If *If) {
 		print(" else ");
 		print_ast(If->false_branch);
 	}
+}
+void print_ast_impl(IfExpression *If) {
+	print("if ");
+	print_ast(If->condition);
+	print(" then ");
+	print_ast(If->true_branch);
+	print(" else ");
+	print_ast(If->false_branch);
 }
 void print_ast_impl(While *While) {
 	print("while ");
@@ -2297,6 +2366,16 @@ Optional<Mutability> to_mutability(TokenKind token_kind) {
 		case Token_var:   return Mutability::variable;
 	}
 	return {};
+}
+
+bool is_expression(Node *node) {
+	if (auto block = as<Block>(node)) {
+		if (block->children.count == 0)
+			return false;
+		return is_expression(block->children.back());
+	}
+
+	return as<Expression>(node);
 }
 
 struct Parser {
@@ -2782,7 +2861,7 @@ struct Parser {
 				return literal;
 			}
 			case Token_if: {
-				auto If = If::create();
+				auto If = IfExpression::create();
 				If->location = token->string;
 				next();
 				skip_lines();
@@ -2795,26 +2874,20 @@ struct Parser {
 					skip_lines();
 				}
 
-				If->true_branch = parse_statement();
+				If->true_branch = parse_expression();
 
-				auto saved = token;
 				skip_lines();
 				if (token->kind == ';') {
 					next();
 					skip_lines();
 				}
-				if (token->kind == Token_else) {
-					next();
-					skip_lines();
+				expect(Token_else);
+				next();
+				skip_lines();
 
-					If->false_branch = parse_statement();
+				If->false_branch = parse_expression();
 					
-					If->location = {If->location.begin(), If->false_branch->location.end()};
-				} else {
-					token = saved;
-					If->location = {If->location.begin(), If->true_branch->location.end()};
-				}
-
+				If->location = {If->location.begin(), If->false_branch->location.end()};
 				return If;
 			}
 			case Token_match: {
@@ -3085,6 +3158,59 @@ struct Parser {
 				yield(false);
 				break;
 			}
+
+			case Token_if: {
+				auto location = token->string;
+				next();
+				skip_lines();
+
+				auto condition = parse_expression();
+
+				skip_lines();
+				if (token->kind == Token_then) {
+					next();
+					skip_lines();
+				}
+
+				auto true_branch = parse_statement();
+				Node *false_branch = 0;
+
+				skip_lines();
+				if (token->kind == ';') {
+					next();
+					skip_lines();
+				}
+				if (token->kind == Token_else) {
+					next();
+					skip_lines();
+
+					false_branch = parse_statement();
+
+					location = {location.begin(), false_branch->location.end()};
+				} else {
+					location = {location.begin(), true_branch->location.end()};
+				}
+
+				if (false_branch) {
+					if (auto true_expression = as<Expression>(true_branch)) {
+						if (auto false_expression = as<Expression>(false_branch)) {
+							auto If = IfExpression::create();
+							If->location = location;
+							If->condition = condition;
+							If->true_branch = true_expression;
+							If->false_branch = false_expression;
+							return If;
+						}
+					}
+				}
+
+				auto If = IfStatement::create();
+				If->location = location;
+				If->condition = condition;
+				If->true_branch = true_branch;
+				If->false_branch = false_branch;
+				return If;
+			}
 		}
 
 		auto expression = parse_expression();
@@ -3136,7 +3262,8 @@ struct Parser {
 			case NodeKind::Block:
 			case NodeKind::Return:
 			case NodeKind::Call:
-			case NodeKind::If:
+			case NodeKind::IfExpression:
+			case NodeKind::IfStatement:
 			case NodeKind::While:
 			case NodeKind::Continue:
 			case NodeKind::Break:
@@ -3322,16 +3449,16 @@ Unary *as_pointer(Type type) {
 	return 0;
 }
 
-struct ExecutionContext {
+struct NodeInterpreter {
 	struct Scope {
 		// This needs to be pointer-stable
 		BucketHashMap<Definition *, Value> variables;
 	};
 
-	static ExecutionContext *create(Fiber parent_fiber, Node *node) {
-		auto context = DefaultAllocator{}.allocate<ExecutionContext>();
+	static NodeInterpreter *create(Fiber parent_fiber, Node *node) {
+		auto context = DefaultAllocator{}.allocate<NodeInterpreter>();
 		context->parent_fiber = parent_fiber;
-		context->fiber = fiber_create([](void *param) { ((ExecutionContext *)param)->fiber_main(); }, context);
+		context->fiber = fiber_create([](void *param) { ((NodeInterpreter *)param)->fiber_main(); }, context);
 		context->node_to_execute = node;
 		return context;
 	}
@@ -3491,7 +3618,7 @@ private:
 		return load_address(definition);
 	}
 	Value load_address_impl(Call *) { invalid_code_path(); }
-	Value load_address_impl(If *) { invalid_code_path(); }
+	Value load_address_impl(IfExpression *) { invalid_code_path(); }
 	Value load_address_impl(BuiltinTypeName *) { invalid_code_path(); }
 	Value load_address_impl(Binary *binary) {
 		assert(binary->operation == BinaryOperation::dot);
@@ -3814,7 +3941,7 @@ private:
 			return Value(struct_tag, argument_values);
 		}
 	}
-	Value execute_impl(If *If) {
+	Value execute_impl(IfStatement *If) {
 		EXECUTE_DEFN(condition, If->condition);
 		assert(condition.kind == ValueKind::Bool);
 		if (condition.Bool) {
@@ -3827,6 +3954,12 @@ private:
 			}
 		}
 		return {};
+	}
+	Value execute_impl(IfExpression *If) {
+		EXECUTE_DEFN(condition, If->condition);
+		assert(condition.kind == ValueKind::Bool);
+		EXECUTE_DEFN(value, condition.Bool ? If->true_branch : If->false_branch);
+		return value;
 	}
 	Value execute_impl(While *While) {
 		while (true) {
@@ -4020,6 +4153,1269 @@ private:
 #undef LOAD_ADDRESS_INTO
 #undef LOAD_ADDRESS_DEFN
 
+std::pair<Lambda *, LambdaHead *> get_lambda_and_head(Expression *expression) {
+	auto directed = direct(expression);
+	auto lambda = as<Lambda>(directed);
+	LambdaHead *head = 0;
+	if (lambda) {
+		head = &lambda->head;
+	} else {
+		if (auto definition = as<Definition>(directed)) {
+			head = direct_as<LambdaHead>(definition->type);
+		}
+	}
+	return {lambda, head};
+}
+std::tuple<Lambda *, LambdaHead *, Struct *> get_lambda_and_head_or_struct(Expression *expression) {
+	auto directed = direct(expression);
+	auto lambda = as<Lambda>(directed);
+	auto struct_ = as<Struct>(directed);
+	LambdaHead *head = 0;
+	if (lambda) {
+		head = &lambda->head;
+	} else {
+		if (auto definition = as<Definition>(directed)) {
+			head = direct_as<LambdaHead>(definition->type);
+		}
+	}
+	return {lambda, head, struct_};
+}
+
+#define PASSTHROUGH(...) __VA_ARGS__
+
+#define ENUMERATE_COMPARISONS \
+	x(equals) \
+	x(not_equals) \
+	x(signed_less) \
+	x(signed_greater) \
+	x(signed_less_equals) \
+	x(signed_greater_equals) \
+	x(unsigned_less) \
+	x(unsigned_greater) \
+	x(unsigned_less_equals) \
+	x(unsigned_greater_equals) \
+
+enum class Comparison : u8 {
+#define x(name) name,
+	ENUMERATE_COMPARISONS
+#undef x
+};
+
+inline umm append(StringBuilder &builder, Comparison c) {
+	switch (c) {
+#define x(name, value) case Comparison::name: return append(builder, #name);
+		ENUMERATE_COMPARISONS
+#undef x
+	}
+	return append_format(builder, "(unknown Comparison {})", (u64)c);
+}
+
+namespace Bytecode {
+
+#define ENUMERATE_1248 \
+	x(1) \
+	x(2) \
+	x(4) \
+	x(8) \
+
+#define ENUMERATE_NAMED_BYTECODE_REGISTERS \
+x(base      , 250) /* NOTE: all registers before this one can be allocated. */ \
+x(stack     , 251) \
+x(returns   , 252) \
+x(arguments , 253) \
+x(temporary , 254) \
+x(locals    , 255) \
+
+enum class Register : u8 {
+#define x(name, value) name = value,
+	ENUMERATE_NAMED_BYTECODE_REGISTERS
+#undef x
+};
+
+struct Address {
+	Optional<Register> base = {};
+	Register element_index = {};
+	u8 element_size = {};
+	s64 offset = {};
+};
+
+struct Site {
+	Site() { memset(this, 0, sizeof *this); }
+	Site(Register r) : _is_address(false), r(r) {}
+	Site(Address a) : _is_address(true), a(a) {}
+	~Site() {}
+
+	bool is_register() { return !_is_address; }
+	bool is_address() { return _is_address; }
+
+	Register &get_register() { assert(!_is_address); return r; }
+	Address &get_address() { assert(_is_address); return a; }
+
+private:
+	bool _is_address;
+	union {
+		Register r;
+		Address a;
+	};
+};
+
+struct InputValue {
+	InputValue() { memset(this, 0, sizeof *this); }
+	InputValue(Register r) : kind(Kind::Register), r(r) {}
+	InputValue(Address a) : kind(Kind::Address), a(a) {}
+	InputValue(s64 c) : kind(Kind::Constant), c(c) {}
+	InputValue(Site s) : kind(s.is_register() ? Kind::Register : Kind::Address) {
+		if (s.is_register())
+			r = s.get_register();
+		else
+			a = s.get_address();
+	}
+	~InputValue() {}
+
+	bool is_register() { return kind == Kind::Register; }
+	bool is_address() { return kind == Kind::Address; }
+	bool is_constant() { return kind == Kind::Constant; }
+
+	Register &get_register() { assert(is_register()); return r; }
+	Address &get_address() { assert(is_address()); return a; }
+	s64 &get_constant() { assert(is_constant()); return c; }
+
+private:
+	enum class Kind {
+		Register,
+		Address,
+		Constant,
+	};
+
+	Kind kind;
+	union {
+		Register r;
+		Address a;
+		s64 c;
+	};
+};
+
+#define ENUMERATE_INTRINSICS \
+	x(println) \
+
+enum class Intrinsic : u8 {
+#define x(name) name,
+	ENUMERATE_INTRINSICS
+#undef x
+};
+
+inline umm append(StringBuilder &builder, Intrinsic i) {
+	switch (i) {
+#define x(name, value) case Intrinsic::name: return append(builder, #name);
+		ENUMERATE_INTRINSICS
+#undef x
+	}
+	return append_format(builder, "(unknown Intrinsic {})", (u64)i);
+}
+
+#define xor xor_
+#define and and_
+#define or or_
+
+/*
+#define y(type, name)
+#define x(name, fields)
+ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+#undef y
+*/
+#define ENUMERATE_BYTECODE_INSTRUCTION_KIND \
+	x(nop,  ()) \
+	x(push, (y(InputValue, s))) \
+	x(pop,  (y(Site, d))) \
+	x(copy, (y(Site, d) y(InputValue, s) y(u64, size))) \
+	x(set,  (y(Address, d) y(u8, value) y(u64, size))) \
+	x(lea,  (y(Site, d) y(Address, s))) \
+	x(add1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sub1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mul1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(div1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mod1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(xor1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(and1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(or1,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sll1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(srl1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sra1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(cmp1, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
+	x(add2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sub2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mul2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(div2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mod2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(xor2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(and2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(or2,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sll2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(srl2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sra2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(cmp2, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
+	x(add4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sub4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mul4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(div4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mod4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(xor4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(and4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(or4,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sll4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(srl4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sra4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(cmp4, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
+	x(add8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sub8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mul8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(div8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mod8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(xor8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(and8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(or8,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sll8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(srl8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sra8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(cmp8, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
+	x(call, (y(InputValue, d))) \
+	x(ret,  ()) \
+	x(jmp,  (y(InputValue, d))) \
+	x(jz,   (y(Site, s) y(InputValue, d))) \
+	x(jnz,  (y(Site, s) y(InputValue, d))) \
+	x(intrinsic, (y(Intrinsic, i))) \
+
+enum class InstructionKind : u8 {
+#define x(name, fields) name,
+	ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+};
+
+struct Instruction {
+	InstructionKind kind;
+
+	// `Invalid` is here to prevent me from leaving an uninitialized member.
+#define y(type, name) type name = Invalid();
+#define x(name, fields)    \
+	template <class Invalid>  \
+	struct name##_x {   \
+		PASSTHROUGH fields \
+	};
+	ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+#undef y
+
+#define x(name, fields) using name##_t = name##_x<void>;
+	ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+
+#define x(name, fields) name##_t &name() { assert(kind == InstructionKind::name); return v_##name; }
+	ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+
+	union {
+#define x(name, fields) name##_t v_##name;
+		ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+	};
+
+	~Instruction() {}
+
+	void visit_addresses(auto &&visitor) {
+		switch (kind) {
+#define y(type, name) visit_address(i.name, visitor);
+#define x(name, fields)           \
+	case InstructionKind::name: { \
+		auto &i = v_##name;       \
+		PASSTHROUGH fields;       \
+		break;                    \
+	}
+		ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+#undef y
+		}
+	}
+
+private:
+	static void visit_address(auto, auto &&visitor) {}
+	static void visit_address(Address &a, auto &&visitor) { visitor(a); }
+	static void visit_address(Site &s, auto &&visitor) { if (s.is_address()) visitor(s.get_address()); }
+	static void visit_address(InputValue &v, auto &&visitor) { if (v.is_address()) visitor(v.get_address()); }
+};
+
+struct Builder {
+	// return value
+	// arg3
+	// arg2
+	// arg1
+	// arg0
+	// return address
+	// old base <- base
+
+#define MI(name, ...)                  \
+	Instruction {                      \
+		.kind = InstructionKind::name, \
+		.v_##name = { __VA_ARGS__ }    \
+	}
+#define I(name, ...) (instructions.add(MI(name, __VA_ARGS__)), 0)
+
+#define tmpreg(name) \
+	auto name = allocate_register(); \
+	defer { deallocate(name); }
+
+#define tmpaddr(name, size) \
+	auto CONCAT(_size_, __LINE__) = size; \
+	auto name = allocate_temporary(CONCAT(_size_, __LINE__)); \
+	defer { temporary_offset -= CONCAT(_size_, __LINE__); }
+
+#define tmpval(name, size) \
+	auto name = create_destination(size); \
+	defer { deallocate(name); }
+
+	Builder() {
+		for (umm i = 0; i < (umm)Register::base; ++i) {
+			available_registers.set(i);
+		}
+	}
+
+	List<Instruction> build(Expression *expression) {
+		entry_point_instruction_index = instructions.count;
+		tmpval(destination, get_size(expression->type));
+		output(destination, expression);
+		for (auto [index, lambda] : calls_to_patch) {
+			auto &i = instructions[index];
+			i.call().d = lambda_infos.find(lambda)->value.first_instruction_index;
+		}
+		return instructions;
+	}
+
+
+	void append_global(Node *node) {
+		switch (node->kind) {
+			case NodeKind::Definition: {
+				auto definition = (Definition *)node;
+
+				assert(definition->mutability == Mutability::constant, "not implemented");
+
+				if (auto lambda = as<Lambda>(definition->initial_value)) {
+					if (lambda->body)
+						return append_global_impl(lambda);
+					else
+						return;
+				} else if (auto struct_ = as<Struct>(definition->initial_value)) {
+					return;
+				}
+				break;
+			}
+		}
+		invalid_code_path();
+	}
+
+	void append_global_impl(Lambda *lambda) {
+		scoped_replace(locals_size, 0);
+		scoped_replace(max_temporary_size, 0);
+
+		auto first_instruction_index = instructions.count;
+
+		auto head = &lambda->head;
+
+		I(push, Register::base);
+		I(copy, Register::base, Register::stack, 8);
+		auto reserver_index = instructions.count;
+		I(sub8, Register::stack, Register::stack, 0);
+
+		u64 return_value_size = get_size(head->return_type);
+		u64 total_parameters_size = 0;
+
+		for (auto parameter : head->parameters_block.definition_list) {
+			parameter->offset = total_parameters_size;
+			total_parameters_size += get_size(parameter->type);
+		}
+
+		auto return_value_destination = Address { .base = Register::returns };
+
+		I(set, .d = return_value_destination, .value = 0, .size = align_size(return_value_size));
+
+		output(return_value_destination, lambda->body);
+
+		lambda_infos.insert(lambda, {
+			.first_instruction_index = first_instruction_index,
+			.locals_size = locals_size,
+			.temporary_size = max_temporary_size,
+		});
+
+		u64 reserved_stack_size = locals_size + max_temporary_size;
+
+		instructions[reserver_index].sub8().b = reserved_stack_size;
+		auto ret_destination = instructions.count;
+		I(add8, Register::stack, Register::stack, (s64)reserved_stack_size);
+		I(pop, Register::base);
+		I(ret);
+
+		auto lambda_instructions = instructions.skip(first_instruction_index);
+
+		for (auto i : jumps_to_ret) {
+			auto &jmp = instructions[i].jmp();
+			jmp.d = ret_destination;
+		}
+
+		for (auto &i : lambda_instructions) {
+			dbgln(i);
+
+			i.visit_addresses([&] (Address &a) {
+				if (a.base) {
+					switch(a.base.value()) {
+						case Register::locals: {
+							a.base = Register::base;
+							a.offset -= locals_size + max_temporary_size;
+							break;
+						}
+						case Register::temporary: {
+							a.base = Register::base;
+							a.offset -= locals_size;
+							break;
+						}
+						case Register::arguments: {
+							a.base = Register::base;
+							a.offset += 16; // saved base + return address
+							break;
+						}
+						case Register::returns: {
+							a.base = Register::base;
+							a.offset += total_parameters_size + 16; // parameters + saved base + return address
+							break;
+						}
+					}
+				}
+			});
+
+			if (i.kind == InstructionKind::copy) {
+				REDECLARE_REF(i, i.copy());
+				if (i.s.is_constant()) {
+					assert(i.size <= 8);
+				}
+			}
+		}
+
+		dbgln();
+	}
+
+	umm entry_point() { return entry_point_instruction_index; }
+
+private:
+	struct LambdaInfo {
+		umm first_instruction_index = 0;
+		umm locals_size = 0;
+		umm temporary_size = 0;
+	};
+
+	struct BlockInfo {
+		Site destination;
+		List<umm> break_jump_indices;
+	};
+
+	BitSet<(umm)Register::base> available_registers;
+	List<Instruction> instructions;
+	u64 temporary_offset = 0;
+	u64 max_temporary_size = 0;
+	umm entry_point_instruction_index = -1;
+	umm locals_size = 0;
+	List<std::tuple<umm, Lambda *>> calls_to_patch;
+	List<umm> jumps_to_ret;
+	BucketHashMap<Lambda *, LambdaInfo> lambda_infos;
+	BucketHashMap<Block *, BlockInfo> block_infos;
+
+	u64 align_size(u64 x) { return ceil<u64>(max<u64>(1, x), 8); }
+	s64 align_size(s64 x) { return ceil<s64>(max<s64>(1, x), 8); }
+
+	Register allocate_register() {
+		return (Register)available_registers.pop().value();
+	}
+	void deallocate(Register r) {
+		assert(!available_registers.get((umm)r));
+		available_registers.set((umm)r);
+	}
+
+	Address allocate_temporary(u64 size) {
+		Address result;
+		result.base = Register::temporary;
+		result.offset = temporary_offset;
+		temporary_offset += size;
+		max_temporary_size = max(max_temporary_size, temporary_offset);
+		return result;
+	}
+
+	Site create_destination(u64 size) {
+		if (size <= 8) {
+			return allocate_register();
+		} else {
+			return allocate_temporary(size);
+		}
+	}
+	void deallocate(Site d) {
+		if (d.is_register()) {
+			deallocate(d.get_register());
+		}
+	}
+
+	void output(Site destination, Expression *expression) {
+		switch (expression->kind) {
+#define x(name) case NodeKind::name: return output_impl(destination, (name *)expression);
+			ENUMERATE_EXPRESSION_KIND(x)
+#undef x
+		}
+		invalid_code_path("invalid expression kind {}", expression->kind);
+	}
+
+	void output(Statement *statement) {
+		switch (statement->kind) {
+#define x(name) case NodeKind::name: return output_impl((name *)statement);
+			ENUMERATE_STATEMENT_KIND(x)
+#undef x
+		}
+		invalid_code_path("invalid statement kind {}", statement->kind);
+	}
+
+	void output_discard(Node *node) {
+		if (auto definition = as<Definition>(node)) {
+			output_definition({}, definition);
+		} else if (auto expression = as<Expression>(node)) {
+			tmpval(destination, get_size(expression->type));
+			output(destination, expression);
+		} else {
+			auto statement = as<Statement>(node);
+			assert(statement);
+			output(statement);
+		}
+	}
+
+	void output_definition(Optional<Site> destination, Definition *definition) {
+		assert(definition->mutability != Mutability::constant);
+		auto offset = locals_size;
+		definition->offset = locals_size;
+		auto definition_size = get_size(definition->type);
+		locals_size = ceil<umm>(locals_size + definition_size, 8);
+		auto address = Address{.base = Register::locals, .offset = (s64)offset};
+		if (definition->initial_value) {
+			output(address, definition->initial_value);
+		} else {
+			assert(!direct_as<Struct>(definition->type), "default struct values not implemented");
+			I(set, .d = address, .value = 0, .size = definition_size);
+		}
+		if (destination) {
+			I(copy, .d = destination.value(), .s = address, .size = definition_size);
+		}
+	}
+
+	void output_impl(Site destination, Block *block) {
+		auto &info = block_infos.get_or_insert(block);
+		if (block->breaks.count) {
+			info.destination = destination;
+		}
+		info.break_jump_indices.clear();
+
+		defer {
+			for (auto i : info.break_jump_indices) {
+				instructions[i].jmp().d = instructions.count;
+			}
+		};
+
+		if (block->children.count) {
+			if (auto expression = as<Expression>(block->children.back())) {
+				for (auto child : block->children.skip(-1)) {
+					output_discard(child);
+				}
+				output(destination, expression);
+				return;
+			}
+		}
+
+		for (auto child : block->children) {
+			output_discard(child);
+		}
+	} 
+	void output_impl(Site destination, Call *call) {
+		auto [lambda, head, Struct] = get_lambda_and_head_or_struct(call->callable);
+		switch (call->call_kind) {
+			case CallKind::lambda: {
+				assert(lambda);
+				assert(head);
+
+				s64 total_arguments_size = 0;
+		
+				s64 return_value_size = get_size(head->return_type);
+
+				List<s64> argument_offsets;
+				argument_offsets.allocator = temporary_allocator;
+				argument_offsets.reserve(call->arguments.count);
+
+				for (auto argument : call->arguments) {
+					s64 argument_size = get_size(argument->type);
+					argument_offsets.add(total_arguments_size);
+					total_arguments_size += align_size(argument_size);
+				}
+
+				auto registers_to_save = ~available_registers;
+				if (destination.is_register())
+					registers_to_save.unset((umm)destination.get_register());
+
+				for_each(registers_to_save, [&] (umm r) {
+					I(push, (Register)r);
+				});
+				defer {
+					for_each<ForEach_reverse>(registers_to_save, [&] (umm r) {
+						I(pop, (Register)r);
+					});
+				};
+
+				I(sub8, .d = Register::stack, .a = Register::stack, .b = total_arguments_size + align_size(return_value_size));
+				defer {
+					I(add8, .d = Register::stack, .a = Register::stack, .b = total_arguments_size + align_size(return_value_size));
+				};
+
+				for (umm i = 0; i < call->arguments.count; ++i) {
+					auto offset = argument_offsets[i];
+					auto argument = call->arguments[i];
+
+					Site destination = Address{.base = Register::stack, .offset = offset};
+
+					output(destination, argument);
+				}
+
+				if (lambda->is_intrinsic) {
+					I(intrinsic, Intrinsic::println);
+				} else {
+					calls_to_patch.add({instructions.count, lambda});
+					I(call, .d = -1);
+				}
+				I(copy, .d = destination, .s = Address{.base = Register::stack, .offset = total_arguments_size}, .size = (u64)return_value_size);
+				break;
+			}
+			case CallKind::constructor: {
+				assert(Struct);
+				for (umm i = 0; i < Struct->members.count; ++i) {
+					auto argument = call->arguments[i];
+					auto member = Struct->members[i];
+
+					assert(destination.is_address());
+
+					auto member_address = destination.get_address();
+					member_address.offset += member->offset;
+
+					output(member_address, argument);
+				}
+				break;
+			}
+			default: 
+				not_implemented();
+		}
+	} 
+	void output_impl(Site destination, Definition *definition) {
+		output_definition(destination, definition);
+	}
+	void output_impl(Site destination, IntegerLiteral *literal) {
+		I(copy, .d = destination, .s = (s64)literal->value, .size = get_size(literal->type));
+	} 
+	void output_impl(Site destination, BooleanLiteral *literal) {
+		I(copy, .d = destination, .s = (s64)literal->value, .size = 1);
+	} 
+	void output_impl(Site destination, StringLiteral *literal) { not_implemented(); } 
+	void output_impl(Site destination, Lambda *node) { not_implemented(); } 
+	void output_impl(Site destination, LambdaHead *node) { not_implemented(); } 
+	void output_impl(Site destination, Name *name) {
+		auto definition = name->definition();
+		if (definition->is_parameter) {
+			I(copy, .d = destination, .s = Address{.base = Register::arguments, .offset = (s64)definition->offset}, .size = get_size(name->type));
+		} else {
+			I(copy, .d = destination, .s = Address{.base = Register::locals, .offset = (s64)definition->offset}, .size = get_size(name->type));
+		}
+	} 
+	void output_impl(Site destination, IfExpression *If) {
+		tmpreg(cr);
+		output(cr, If->condition);
+		auto jz_index = instructions.count;
+		I(jz, cr, 0);
+		output(destination, If->true_branch);
+		auto jmp_index = instructions.count;
+		I(jmp, 0);
+		instructions[jz_index].jz().d = instructions.count;
+		output(destination, If->false_branch);
+		instructions[jmp_index].jmp().d = instructions.count;
+	} 
+	void output_impl(Site destination, BuiltinTypeName *node) { not_implemented(); } 
+	void output_impl(Site destination, Binary *binary) {
+		if (binary->operation == BinaryOperation::dot) {
+			auto Struct = direct_as<::Struct>(binary->left->type);
+			auto member_size = get_size(binary->type);
+			auto member = as<Name>(binary->right)->definition();
+			if (Struct) {
+				tmpaddr(struct_addr, Struct->size);
+				output(struct_addr, binary->left);
+			
+				auto member_address = struct_addr;
+				member_address.offset += member->offset;
+				I(copy, destination, member_address, member_size);
+			} else {
+				assert(as_pointer(binary->left->type));
+				tmpreg(struct_addr_reg);
+				output(struct_addr_reg, binary->left);
+				I(copy, destination, Address { .base = struct_addr_reg, .offset = (s64)member->offset }, member_size);
+			}
+			return;
+		}
+		if (binary->operation == BinaryOperation::ass) {
+			tmpreg(addr);
+			load_address(addr, binary->left);
+			output(Address { addr }, binary->right);
+			return;
+		}
+		switch (binary->operation) {
+			case BinaryOperation::add:
+			case BinaryOperation::sub:
+			case BinaryOperation::mul:
+			case BinaryOperation::div:
+			case BinaryOperation::mod:
+			case BinaryOperation::bxo:
+			case BinaryOperation::ban:
+			case BinaryOperation::bor:
+			case BinaryOperation::bsl:
+			case BinaryOperation::bsr: {
+				auto result_size = get_size(binary->type);
+				auto left_size = get_size(binary->left->type);
+				auto right_size = get_size(binary->right->type);
+				assert(result_size == left_size);
+				assert(result_size == right_size);
+				assert(result_size <= 8);
+
+				tmpreg(left);
+				output(left, binary->left);
+				tmpreg(right);
+				output(right, binary->right);
+
+#define x(n)                                                                                       \
+	case n: {                                                                                      \
+		switch (binary->operation) {                                                               \
+			case BinaryOperation::add: I(add##n, .d = destination, .a = left, .b = right);  break; \
+			case BinaryOperation::sub: I(sub##n, .d = destination, .a = left, .b = right);  break; \
+			case BinaryOperation::mul: I(mul##n, .d = destination, .a = left, .b = right);  break; \
+			case BinaryOperation::div: I(div##n, .d = destination, .a = left, .b = right);  break; \
+			case BinaryOperation::mod: I(mod##n, .d = destination, .a = left, .b = right);  break; \
+			case BinaryOperation::bxo: I(xor##n, .d = destination, .a = left, .b = right);  break; \
+			case BinaryOperation::ban: I(and##n, .d = destination, .a = left, .b = right);  break; \
+			case BinaryOperation::bor: I(or##n,  .d = destination, .a = left, .b = right);  break; \
+			case BinaryOperation::bsl: I(sll##n, .d = destination, .a = left, .b = right);  break; \
+			case BinaryOperation::bsr: {                                                           \
+				if (is_signed_integer(binary->left->type))                                         \
+					I(sra##n, .d = destination, .a = left, .b = right);                            \
+				else                                                                               \
+					I(srl##n, .d = destination, .a = left, .b = right);                            \
+				break;                                                                             \
+			}                                                                                      \
+			default: not_implemented();                                                            \
+		}                                                                                          \
+		break;                                                                                     \
+	}
+
+				switch (result_size) {
+					ENUMERATE_1248
+				}
+#undef x
+
+				break;
+			}
+			case BinaryOperation::equ:
+			case BinaryOperation::neq:
+			case BinaryOperation::les:
+			case BinaryOperation::grt:
+			case BinaryOperation::leq:
+			case BinaryOperation::grq: {
+				auto left_size = get_size(binary->left->type);
+				auto right_size = get_size(binary->right->type);
+				assert(right_size == left_size);
+				assert(right_size <= 8);
+
+				tmpreg(left);
+				output(left, binary->left);
+				tmpreg(right);
+				output(right, binary->right);
+
+				if (::is_signed_integer(binary->left->type)) {
+					switch (binary->operation) {
+						case BinaryOperation::equ: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals    );  break;
+						case BinaryOperation::neq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals);  break;
+						case BinaryOperation::les: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less          );  break;
+						case BinaryOperation::grt: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater       );  break;
+						case BinaryOperation::leq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less_equals   );  break;
+						case BinaryOperation::grq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater_equals);  break;
+						default: not_implemented();
+					}
+				} else {
+					switch (binary->operation) {
+						case BinaryOperation::equ: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals    );  break;
+						case BinaryOperation::neq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals);  break;
+						case BinaryOperation::les: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less          );  break;
+						case BinaryOperation::grt: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater       );  break;
+						case BinaryOperation::leq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less_equals   );  break;
+						case BinaryOperation::grq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater_equals);  break;
+						default: not_implemented();
+					}
+				}
+				break;
+			}
+			case BinaryOperation::lan: {
+				output(destination, binary->left);
+				auto jz_index = instructions.count;
+				I(jz, destination, 0);
+				output(destination, binary->right);
+				instructions[jz_index].jz().d = instructions.count;
+				break;
+			}
+			case BinaryOperation::lor: {
+				output(destination, binary->left);
+				auto jnz_index = instructions.count;
+				I(jnz, destination, 0);
+				output(destination, binary->right);
+				instructions[jnz_index].jnz().d = instructions.count;
+				break;
+			}
+			default: not_implemented();
+		} 
+	}
+	void output_impl(Site destination, Match *node) { not_implemented(); } 
+	void output_impl(Site destination, Unary *unary) {
+		switch (unary->operation) {
+			case UnaryOperation::addr: {
+				load_address(destination, unary->expression);
+				break;
+			}
+			case UnaryOperation::dereference: {
+				tmpreg(addr);
+				output(addr, unary->expression);
+				I(copy, .d = destination, .s = Address { .base = addr }, .size = get_size(unary->expression->type));
+				break;
+			}
+			default: not_implemented();
+		}
+	} 
+	void output_impl(Site destination, Struct *node) { not_implemented(); } 
+	void output_impl(Site destination, ArrayType *node) { not_implemented(); } 
+	void output_impl(Site destination, Subscript *node) { not_implemented(); } 
+	void output_impl(Site destination, ArrayConstructor *node) { not_implemented(); } 
+	void output_impl(Return *ret) {
+		if (ret->value) {
+			Site return_value_destination = Address { .base = Register::returns };
+			output(return_value_destination, ret->value);
+		}
+		jumps_to_ret.add(instructions.count);
+		I(jmp, 0);
+	} 
+	void output_impl(While *While) {
+		tmpreg(cr);
+		auto condition_index = instructions.count;
+		output(cr, While->condition);
+		auto jz_index = instructions.count;
+		I(jz, cr, 0);
+		output_discard(While->body);
+		I(jmp, (s64)condition_index);
+		instructions[jz_index].jz().d = instructions.count;
+	} 
+	void output_impl(Continue *node) { not_implemented(); } 
+	void output_impl(Break *node) {
+		if (node->tag_block) {
+			auto &info = block_infos.find(node->tag_block)->value;
+			output(info.destination, node->value);
+			info.break_jump_indices.add(instructions.count);
+			I(jmp, 0);
+			return;
+		}
+		not_implemented();
+	}
+	void output_impl(IfStatement *If) {
+		tmpreg(cr);
+		output(cr, If->condition);
+		auto jz_index = instructions.count;
+		I(jz, cr, 0);
+		output_discard(If->true_branch);
+		if (If->false_branch) {
+			auto jmp_index = instructions.count;
+			I(jmp, 0);
+			instructions[jz_index].jz().d = instructions.count;
+			output_discard(If->false_branch);
+			instructions[jmp_index].jmp().d = instructions.count;
+		} else {
+			instructions[jz_index].jz().d = instructions.count;
+		}
+	} 
+
+	void load_address(Site destination, Expression *expression) {
+		switch (expression->kind) {
+#define x(name) case NodeKind::name: load_address_impl(destination, (name *)expression); break;
+			ENUMERATE_EXPRESSION_KIND(x)
+#undef x
+		}
+	}
+
+	void load_address_impl(Site destination, Block *block) {
+		for (auto child : block->children.skip(-1)) {
+			output_discard(child);
+		}
+		return load_address(destination, as<Expression>(block->children.back()));
+	}
+	void load_address_impl(Site destination, Call *node) { not_implemented(); }
+	void load_address_impl(Site destination, Definition *node) { not_implemented(); }
+	void load_address_impl(Site destination, IntegerLiteral *node) { not_implemented(); }
+	void load_address_impl(Site destination, BooleanLiteral *node) { not_implemented(); }
+	void load_address_impl(Site destination, StringLiteral *node) { not_implemented(); }
+	void load_address_impl(Site destination, Lambda *node) { not_implemented(); }
+	void load_address_impl(Site destination, LambdaHead *node) { not_implemented(); }
+	void load_address_impl(Site destination, Name *name) {
+		auto definition = name->definition();
+		if (definition->is_parameter) {
+			I(lea, destination, Address{.base = Register::arguments, .offset = (s64)definition->offset});
+		} else {
+			I(lea, destination, Address{.base = Register::locals, .offset = (s64)definition->offset});
+		}
+	}
+	void load_address_impl(Site destination, IfExpression *node) { not_implemented(); }
+	void load_address_impl(Site destination, BuiltinTypeName *node) { not_implemented(); }
+	void load_address_impl(Site destination, Binary *binary) {
+		assert(binary->operation == BinaryOperation::dot);
+		auto member = as<Name>(binary->right)->definition();
+		auto Struct = direct_as<::Struct>(binary->left->type);
+		if (Struct) {
+			load_address(destination, binary->left);
+		} else {
+			assert(as_pointer(binary->left->type));
+			output(destination, binary->left);
+		}
+		I(add8, destination, destination, (s64)member->offset);
+	}
+	void load_address_impl(Site destination, Match *node) { not_implemented(); }
+	void load_address_impl(Site destination, Unary *unary) {
+		switch (unary->operation) {
+			case UnaryOperation::dereference: {
+				output(destination, unary->expression);
+				break;
+			}
+			default: not_implemented();
+		}
+	}
+	void load_address_impl(Site destination, Struct *node) { not_implemented(); }
+	void load_address_impl(Site destination, ArrayType *node) { not_implemented(); }
+	void load_address_impl(Site destination, Subscript *node) { not_implemented(); }
+	void load_address_impl(Site destination, ArrayConstructor *node) { not_implemented(); }
+
+#undef MI
+#undef I
+#undef tmpreg
+#undef tmpval
+};
+
+struct Interpreter {
+	u64 run(Span<Instruction> instructions, umm entry_index) {
+		this->instructions = instructions;
+		current_instruction_index = entry_index;
+
+		reg(Register::stack) = autocast stack.end();
+
+		while (current_instruction_index < instructions.count) {
+			auto i = instructions[current_instruction_index];
+			switch (i.kind) {
+#define x(name, fields) case InstructionKind::name: execute(i.v_##name); break;
+				ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+			}
+			++current_instruction_index;
+		}
+		return val8(Address { .offset = (s64)(stack.end() - 8)});
+	}
+
+	
+private:
+	Span<Instruction> instructions;
+	umm current_instruction_index = (umm)-1;
+	s64 registers[256] = {};
+	Array<u8, 1*KiB> stack = {};
+
+	s64 &reg(Register r) {
+		return registers[to_underlying(r)];
+	}
+	s64 &val8(Register r) {
+		return registers[to_underlying(r)];
+	}
+	s64 &val8(Address a) {
+		s64 x = a.offset;
+		if (a.base) {
+			x += reg(a.base.value());
+		}
+		if (a.element_size) {
+			x += reg(a.element_index) * a.element_size;
+		}
+
+		return *(s64 *)x;
+	}
+	s64 &val8(Site s) {
+		if (s.is_register()) {
+			return reg(s.get_register());
+		} else {
+			return val8(s.get_address());
+		}
+	}
+	s64 &val8(InputValue v) {
+		if (v.is_register()) {
+			return reg(v.get_register());
+		} else if (v.is_address()) {
+			return val8(v.get_address());
+		} else {
+			return v.get_constant();
+		}
+	}
+	s32 &val4(Register   x) { return (s32 &)val8(x); }
+	s32 &val4(Address    x) { return (s32 &)val8(x); }
+	s32 &val4(Site       x) { return (s32 &)val8(x); }
+	s32 &val4(InputValue x) { return (s32 &)val8(x); }
+	s16 &val2(Register   x) { return (s16 &)val8(x); }
+	s16 &val2(Address    x) { return (s16 &)val8(x); }
+	s16 &val2(Site       x) { return (s16 &)val8(x); }
+	s16 &val2(InputValue x) { return (s16 &)val8(x); }
+	s8  &val1(Register   x) { return (s8  &)val8(x); }
+	s8  &val1(Address    x) { return (s8  &)val8(x); }
+	s8  &val1(Site       x) { return (s8  &)val8(x); }
+	s8  &val1(InputValue x) { return (s8  &)val8(x); }
+
+#define E(name, ...) execute(Instruction{.kind = InstructionKind::name, .v_##name = { __VA_ARGS__ }}.v_##name)
+
+	void execute(Instruction::pop_t i) {
+		E(copy, .d = i.d, .s = Address{.base = Register::stack}, .size = 8);
+		E(add8, .d = Register::stack, .a = Register::stack, .b = 8);
+	}
+
+	void execute(Instruction::nop_t i) {}
+	void execute(Instruction::push_t i) {
+		E(sub8, .d = Register::stack, .a = Register::stack, .b = 8);
+		E(copy, .d = Address{.base = Register::stack}, .s = i.s, .size = 8);
+	}
+	void execute(Instruction::copy_t i) { memcpy(&val8(i.d), &val8(i.s), i.size); }
+	void execute(Instruction::set_t i) { memset(&val8(i.d), i.value, i.size); }
+	void execute(Instruction::lea_t i) { val8(i.d) = (s64) &val8(i.s); }
+	void execute(Instruction::add1_t i) { val1(i.d) = val1(i.a) + val1(i.b); }
+	void execute(Instruction::sub1_t i) { val1(i.d) = val1(i.a) - val1(i.b); }
+	void execute(Instruction::mul1_t i) { val1(i.d) = val1(i.a) * val1(i.b); }
+	void execute(Instruction::div1_t i) { val1(i.d) = val1(i.a) / val1(i.b); }
+	void execute(Instruction::mod1_t i) { val1(i.d) = val1(i.a) % val1(i.b); }
+	void execute(Instruction::xor1_t i) { val1(i.d) = val1(i.a) ^ val1(i.b); }
+	void execute(Instruction::and1_t i) { val1(i.d) = val1(i.a) & val1(i.b); }
+	void execute(Instruction::or1_t i)  { val1(i.d) = val1(i.a) | val1(i.b); }
+	void execute(Instruction::sll1_t i) { val1(i.d) = val1(i.a) << val1(i.b); }
+	void execute(Instruction::srl1_t i) { val1(i.d) = (u8)val1(i.a) >> (u8)val1(i.b); }
+	void execute(Instruction::sra1_t i) { val1(i.d) = (s8)val1(i.a) >> (s8)val1(i.b); }
+	void execute(Instruction::cmp1_t i) {
+		switch (i.cmp) {
+			case Comparison::equals:                  val1(i.d) =     val1(i.a) ==     val1(i.b); break;
+			case Comparison::not_equals:              val1(i.d) =     val1(i.a) !=     val1(i.b); break;
+			case Comparison::signed_less:             val1(i.d) = (s8)val1(i.a) <  (s8)val1(i.b); break;
+			case Comparison::signed_greater:          val1(i.d) = (s8)val1(i.a) >  (s8)val1(i.b); break;
+			case Comparison::signed_less_equals:      val1(i.d) = (s8)val1(i.a) <= (s8)val1(i.b); break;
+			case Comparison::signed_greater_equals:   val1(i.d) = (s8)val1(i.a) >= (s8)val1(i.b); break;
+			case Comparison::unsigned_less:           val1(i.d) = (u8)val1(i.a) <  (u8)val1(i.b); break;
+			case Comparison::unsigned_greater:        val1(i.d) = (u8)val1(i.a) >  (u8)val1(i.b); break;
+			case Comparison::unsigned_less_equals:    val1(i.d) = (u8)val1(i.a) <= (u8)val1(i.b); break;
+			case Comparison::unsigned_greater_equals: val1(i.d) = (u8)val1(i.a) >= (u8)val1(i.b); break;
+		}
+	}
+	void execute(Instruction::add2_t i) { val2(i.d) = val2(i.a) + val2(i.b); }
+	void execute(Instruction::sub2_t i) { val2(i.d) = val2(i.a) - val2(i.b); }
+	void execute(Instruction::mul2_t i) { val2(i.d) = val2(i.a) * val2(i.b); }
+	void execute(Instruction::div2_t i) { val2(i.d) = val2(i.a) / val2(i.b); }
+	void execute(Instruction::mod2_t i) { val2(i.d) = val2(i.a) % val2(i.b); }
+	void execute(Instruction::xor2_t i) { val2(i.d) = val2(i.a) ^ val2(i.b); }
+	void execute(Instruction::and2_t i) { val2(i.d) = val2(i.a) & val2(i.b); }
+	void execute(Instruction::or2_t i)  { val2(i.d) = val2(i.a) | val2(i.b); }
+	void execute(Instruction::sll2_t i) { val2(i.d) = val2(i.a) << val2(i.b); }
+	void execute(Instruction::srl2_t i) { val2(i.d) = (u16)val2(i.a) >> (u16)val2(i.b); }
+	void execute(Instruction::sra2_t i) { val2(i.d) = (s16)val2(i.a) >> (s16)val2(i.b); }
+	void execute(Instruction::cmp2_t i) {
+		switch (i.cmp) {
+			case Comparison::equals:                  val2(i.d) =      val2(i.a) ==      val2(i.b); break;
+			case Comparison::not_equals:              val2(i.d) =      val2(i.a) !=      val2(i.b); break;
+			case Comparison::signed_less:             val2(i.d) = (s16)val2(i.a) <  (s16)val2(i.b); break;
+			case Comparison::signed_greater:          val2(i.d) = (s16)val2(i.a) >  (s16)val2(i.b); break;
+			case Comparison::signed_less_equals:      val2(i.d) = (s16)val2(i.a) <= (s16)val2(i.b); break;
+			case Comparison::signed_greater_equals:   val2(i.d) = (s16)val2(i.a) >= (s16)val2(i.b); break;
+			case Comparison::unsigned_less:           val2(i.d) = (u16)val2(i.a) <  (u16)val2(i.b); break;
+			case Comparison::unsigned_greater:        val2(i.d) = (u16)val2(i.a) >  (u16)val2(i.b); break;
+			case Comparison::unsigned_less_equals:    val2(i.d) = (u16)val2(i.a) <= (u16)val2(i.b); break;
+			case Comparison::unsigned_greater_equals: val2(i.d) = (u16)val2(i.a) >= (u16)val2(i.b); break;
+		}
+	}
+	void execute(Instruction::add4_t i) { val4(i.d) = val4(i.a) + val4(i.b); }
+	void execute(Instruction::sub4_t i) { val4(i.d) = val4(i.a) - val4(i.b); }
+	void execute(Instruction::mul4_t i) { val4(i.d) = val4(i.a) * val4(i.b); }
+	void execute(Instruction::div4_t i) { val4(i.d) = val4(i.a) / val4(i.b); }
+	void execute(Instruction::mod4_t i) { val4(i.d) = val4(i.a) % val4(i.b); }
+	void execute(Instruction::xor4_t i) { val4(i.d) = val4(i.a) ^ val4(i.b); }
+	void execute(Instruction::and4_t i) { val4(i.d) = val4(i.a) & val4(i.b); }
+	void execute(Instruction::or4_t i)  { val4(i.d) = val4(i.a) | val4(i.b); }
+	void execute(Instruction::sll4_t i) { val4(i.d) = val4(i.a) << val4(i.b); }
+	void execute(Instruction::srl4_t i) { val4(i.d) = (u32)val4(i.a) >> (u32)val4(i.b); }
+	void execute(Instruction::sra4_t i) { val4(i.d) = (s32)val4(i.a) >> (s32)val4(i.b); }
+	void execute(Instruction::cmp4_t i) {
+		switch (i.cmp) {
+			case Comparison::equals:                  val4(i.d) =      val4(i.a) ==      val4(i.b); break;
+			case Comparison::not_equals:              val4(i.d) =      val4(i.a) !=      val4(i.b); break;
+			case Comparison::signed_less:             val4(i.d) = (s32)val4(i.a) <  (s32)val4(i.b); break;
+			case Comparison::signed_greater:          val4(i.d) = (s32)val4(i.a) >  (s32)val4(i.b); break;
+			case Comparison::signed_less_equals:      val4(i.d) = (s32)val4(i.a) <= (s32)val4(i.b); break;
+			case Comparison::signed_greater_equals:   val4(i.d) = (s32)val4(i.a) >= (s32)val4(i.b); break;
+			case Comparison::unsigned_less:           val4(i.d) = (u32)val4(i.a) <  (u32)val4(i.b); break;
+			case Comparison::unsigned_greater:        val4(i.d) = (u32)val4(i.a) >  (u32)val4(i.b); break;
+			case Comparison::unsigned_less_equals:    val4(i.d) = (u32)val4(i.a) <= (u32)val4(i.b); break;
+			case Comparison::unsigned_greater_equals: val4(i.d) = (u32)val4(i.a) >= (u32)val4(i.b); break;
+		}
+	}
+	void execute(Instruction::add8_t i) { val8(i.d) = val8(i.a) + val8(i.b); }
+	void execute(Instruction::sub8_t i) { val8(i.d) = val8(i.a) - val8(i.b); }
+	void execute(Instruction::mul8_t i) { val8(i.d) = val8(i.a) * val8(i.b); }
+	void execute(Instruction::div8_t i) { val8(i.d) = val8(i.a) / val8(i.b); }
+	void execute(Instruction::mod8_t i) { val8(i.d) = val8(i.a) % val8(i.b); }
+	void execute(Instruction::xor8_t i) { val8(i.d) = val8(i.a) ^ val8(i.b); }
+	void execute(Instruction::and8_t i) { val8(i.d) = val8(i.a) & val8(i.b); }
+	void execute(Instruction::or8_t i)  { val8(i.d) = val8(i.a) | val8(i.b); }
+	void execute(Instruction::sll8_t i) { val8(i.d) = val8(i.a) << val8(i.b); }
+	void execute(Instruction::srl8_t i) { val8(i.d) = (u64)val8(i.a) >> (u64)val8(i.b); }
+	void execute(Instruction::sra8_t i) { val8(i.d) = (s64)val8(i.a) >> (s64)val8(i.b); }
+	void execute(Instruction::cmp8_t i) {
+		switch (i.cmp) {
+			case Comparison::equals:                  val8(i.d) =      val8(i.a) ==      val8(i.b); break;
+			case Comparison::not_equals:              val8(i.d) =      val8(i.a) !=      val8(i.b); break;
+			case Comparison::signed_less:             val8(i.d) = (s64)val8(i.a) <  (s64)val8(i.b); break;
+			case Comparison::signed_greater:          val8(i.d) = (s64)val8(i.a) >  (s64)val8(i.b); break;
+			case Comparison::signed_less_equals:      val8(i.d) = (s64)val8(i.a) <= (s64)val8(i.b); break;
+			case Comparison::signed_greater_equals:   val8(i.d) = (s64)val8(i.a) >= (s64)val8(i.b); break;
+			case Comparison::unsigned_less:           val8(i.d) = (u64)val8(i.a) <  (u64)val8(i.b); break;
+			case Comparison::unsigned_greater:        val8(i.d) = (u64)val8(i.a) >  (u64)val8(i.b); break;
+			case Comparison::unsigned_less_equals:    val8(i.d) = (u64)val8(i.a) <= (u64)val8(i.b); break;
+			case Comparison::unsigned_greater_equals: val8(i.d) = (u64)val8(i.a) >= (u64)val8(i.b); break;
+		}
+	}
+	void execute(Instruction::call_t i) {
+		E(push, (s64)current_instruction_index);
+		current_instruction_index = val8(i.d) - 1;
+	}
+	void execute(Instruction::ret_t i) {
+		current_instruction_index = val8(Address{.base = Register::stack});
+		E(add8, .d = Register::stack, .a = Register::stack, .b = 8);
+	}
+	void execute(Instruction::jmp_t i) { current_instruction_index = val8(i.d) - 1; }
+	void execute(Instruction::jz_t  i) { if (val8(i.s) == 0) current_instruction_index = val8(i.d) - 1; }
+	void execute(Instruction::jnz_t i) { if (val8(i.s) != 0) current_instruction_index = val8(i.d) - 1; }
+	void execute(Instruction::intrinsic_t i) {
+		switch (i.i) {
+			case Intrinsic::println: {
+				println(val8(Address { .base = Register::stack }));
+				break;
+			}
+		}
+	}
+
+#undef E
+};
+
+inline umm append(StringBuilder &builder, Register r) {
+	switch (r) {
+#define x(name, value) case Register::name: return append(builder, #name);
+		ENUMERATE_NAMED_BYTECODE_REGISTERS
+#undef x
+	}
+	return append_format(builder, "r{}", (u64)r);
+}
+
+inline umm append(StringBuilder &builder, Address a) {
+	umm result = 0;
+	result += append(builder, '[');
+	if (a.base)
+		if (a.element_size)
+			if (a.offset)
+				result += append_format(builder, "{}+{}*{}{}{}", a.base.value(), a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
+			else
+				result += append_format(builder, "{}+{}*{}", a.base.value(), a.element_index, a.element_size);
+		else
+			if (a.offset)
+				result += append_format(builder, "{}{}{}", a.base.value(), a.offset < 0 ? "-" : "+", abs(a.offset));
+			else
+				result += append_format(builder, "{}", a.base.value());
+	else
+		if (a.element_size)
+			if (a.offset)
+				result += append_format(builder, "{}*{}{}{}", a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
+			else
+				result += append_format(builder, "{}*{}", a.element_index, a.element_size);
+		else
+			if (a.offset)
+				result += append_format(builder, "{}{}", a.offset < 0 ? "-" : "", abs(a.offset));
+			else
+				result += append_format(builder, "0");
+
+	result += append(builder, ']');
+	return result;
+}
+
+inline umm append(StringBuilder &builder, Site s) {
+	if (s.is_register())
+		return append(builder, s.get_register());
+	else
+		return append(builder, s.get_address());
+}
+
+inline umm append(StringBuilder &builder, InputValue v) {
+	if (v.is_register())
+		return append(builder, v.get_register());
+	else if (v.is_address())
+		return append(builder, v.get_address());
+	else
+		return append(builder, v.get_constant());
+}
+
+inline umm append(StringBuilder &builder, InstructionKind i) {
+	switch (i) {
+#define x(name, fields) case InstructionKind::name: return append(builder, #name);
+		ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+	}
+	return append_format(builder, "(unknown InstructionKind {})", (u64)i);
+}
+
+#define y(type, name) \
+	if (need_comma) { result += append(builder, ", "); } \
+	need_comma = true; \
+	result += append(builder, i.name); \
+
+#define x(name, fields) \
+inline umm append(StringBuilder &builder, Instruction::name##_t i) { \
+	umm result = 0; \
+	result += append(builder, InstructionKind::name); \
+	result += append(builder, ' '); \
+	bool need_comma = false; \
+	PASSTHROUGH fields; \
+	return result; \
+}
+ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+#undef y
+
+inline umm append(StringBuilder &builder, Instruction i) {
+	switch (i.kind) {
+#define x(name, fields) case InstructionKind::name: return append(builder, i.v_##name);
+		ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+	}
+	return append_format(builder, "(unknown InstructionKind {})", (u64)i.kind);
+}
+
+}
+
+
 Type make_pointer(Type type, Mutability mutability) {
 	auto pointer = Unary::create();
 	pointer->expression = type;
@@ -4077,18 +5473,11 @@ CheckResult is_constant_impl(Call *call) {
 
 	return true;
 }
-CheckResult is_constant_impl(If *If) { 
+CheckResult is_constant_impl(IfExpression *If) { 
 	MUST_BE_CONSTANT(If->condition);
-	if (auto true_expression = as<Expression>(If->true_branch)) {
-		MUST_BE_CONSTANT(true_expression);
-		if (If->false_branch) {
-			if (auto false_expression = as<Expression>(If->false_branch)) {
-				MUST_BE_CONSTANT(false_expression);
-				return true;
-			}
-		}
-	}
-	return {false, If};
+	MUST_BE_CONSTANT(If->true_branch);
+	MUST_BE_CONSTANT(If->false_branch);
+	return true;
 }
 CheckResult is_constant_impl(BuiltinTypeName *type) { return true; }
 CheckResult is_constant_impl(Binary *binary) {
@@ -4162,7 +5551,7 @@ CheckResult is_mutable_impl(Name *name) {
 	return is_mutable_impl(definition);
 }
 CheckResult is_mutable_impl(Call *call) { return {false, call}; }
-CheckResult is_mutable_impl(If *If) { return {false, If}; }
+CheckResult is_mutable_impl(IfExpression *If) { return {false, If}; }
 CheckResult is_mutable_impl(BuiltinTypeName *type) { return {false, type}; }
 CheckResult is_mutable_impl(Binary *binary) {
 	if (binary->operation == BinaryOperation::dot) {
@@ -4229,7 +5618,8 @@ Result<Value, Node *> get_constant_value_impl(Name *node) {
 	}
 	return get_constant_value_impl(definition);
 }
-Result<Value, Node *> get_constant_value_impl(If *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(IfStatement *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(IfExpression *node) { return node; }
 Result<Value, Node *> get_constant_value_impl(BuiltinTypeName *node) { return node; }
 Result<Value, Node *> get_constant_value_impl(Binary *node) { return node; }
 Result<Value, Node *> get_constant_value_impl(Match *node) { return node; }
@@ -4301,34 +5691,6 @@ struct BinaryTypecheckerKey {
 template <>
 u64 get_hash(BinaryTypecheckerKey const &key) {
 	return (u64)key.left_type ^ rotate_left((u64)key.left_type, 21) ^ rotate_left((u64)key.operation, 42);
-}
-
-std::pair<Lambda *, LambdaHead *> get_lambda_and_head(Expression *expression) {
-	auto directed = direct(expression);
-	auto lambda = as<Lambda>(directed);
-	LambdaHead *head = 0;
-	if (lambda) {
-		head = &lambda->head;
-	} else {
-		if (auto definition = as<Definition>(directed)) {
-			head = direct_as<LambdaHead>(definition->type);
-		}
-	}
-	return {lambda, head};
-}
-std::tuple<Lambda *, LambdaHead *, Struct *> get_lambda_and_head_or_struct(Expression *expression) {
-	auto directed = direct(expression);
-	auto lambda = as<Lambda>(directed);
-	auto struct_ = as<Struct>(directed);
-	LambdaHead *head = 0;
-	if (lambda) {
-		head = &lambda->head;
-	} else {
-		if (auto definition = as<Definition>(directed)) {
-			head = direct_as<LambdaHead>(definition->type);
-		}
-	}
-	return {lambda, head, struct_};
 }
 
 struct Copier {
@@ -4467,12 +5829,16 @@ struct Copier {
 		assert(to->definition());
 		to->type = to->definition()->type;
 	} 
-	[[nodiscard]] void deep_copy_impl(If *from, If *to) {
+	[[nodiscard]] void deep_copy_impl(IfStatement *from, IfStatement *to) {
 		DEEP_COPY(condition);
 		DEEP_COPY(true_branch);
 		if (from->false_branch)
 			DEEP_COPY(false_branch);
-
+	} 
+	[[nodiscard]] void deep_copy_impl(IfExpression *from, IfExpression *to) {
+		DEEP_COPY(condition);
+		DEEP_COPY(true_branch);
+		DEEP_COPY(false_branch);
 		COPY(type);
 	} 
 	[[nodiscard]] void deep_copy_impl(BuiltinTypeName *from, BuiltinTypeName *to) {
@@ -4550,17 +5916,29 @@ inline bool do_all_paths_return(Node *node) {
 			}
 			return false;
 		}
-		case NodeKind::If: {
-			auto if_ = (If *)node;
-			if (do_all_paths_return(if_->condition)) {
+		case NodeKind::IfStatement: {
+			auto If = (IfStatement *)node;
+			if (do_all_paths_return(If->condition)) {
 				return true;
 			}
 
-			if (!if_->false_branch) {
+			if (!If->false_branch) {
 				return false;
 			}
 
-			if (do_all_paths_return(if_->true_branch) && do_all_paths_return(if_->false_branch)) {
+			if (do_all_paths_return(If->true_branch) && do_all_paths_return(If->false_branch)) {
+				return true;
+			}
+
+			return false;
+		}
+		case NodeKind::IfExpression: {
+			auto If = (IfExpression *)node;
+			if (do_all_paths_return(If->condition)) {
+				return true;
+			}
+
+			if (do_all_paths_return(If->true_branch) && do_all_paths_return(If->false_branch)) {
 				return true;
 			}
 
@@ -5032,7 +6410,7 @@ private:
 	}
 
 	Value execute(Node *node) {
-		auto context = ExecutionContext::create(fiber, node);
+		auto context = NodeInterpreter::create(fiber, node);
 		while (true) {
 			auto result = context->run();
 			if (result.is_value()) {
@@ -5054,6 +6432,8 @@ private:
 	}
 
 	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head) {
+		call->call_kind = CallKind::lambda;
+
 		auto &arguments = call->arguments;
 
 		if (!yield_while_null(call->location, &head->return_type)) {
@@ -5102,6 +6482,8 @@ private:
 		return call;
 	};
 	Expression *typecheck_constructor(Call *call, Struct *Struct) {
+		call->call_kind = CallKind::constructor;
+
 		auto &arguments = call->arguments;
 		auto &members = Struct->members;
 
@@ -5646,6 +7028,10 @@ private:
 		return 0;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Call *call, bool can_substitute) {
+		defer { 
+			assert(call->call_kind != CallKind::unknown);
+		};
+
 		if (auto binary = as<Binary>(call->callable)) {
 			if (binary->operation == BinaryOperation::dot) {
 				if (auto lambda_name = as<Name>(binary->right)) {
@@ -5707,51 +7093,14 @@ private:
 			return 0;
 		}
 	}
-	[[nodiscard]] Node *typecheck_impl(If *If, bool can_substitute) {
+	[[nodiscard]] Node *typecheck_impl(IfStatement *If, bool can_substitute) {
 		typecheck(&If->condition);
 
 		typecheck(&If->true_branch);
 
 		if (If->false_branch) {
 			typecheck(&If->false_branch);
-
-			if (auto true_branch_expression = as<Expression>(If->true_branch)) {
-				if (auto false_branch_expression = as<Expression>(If->false_branch)) {
-					if (types_match(true_branch_expression->type, false_branch_expression->type)) {
-						If->type = true_branch_expression->type;
-					} else {
-						defer {
-							If->true_branch = true_branch_expression;
-						If->false_branch = false_branch_expression;
-						};
-
-						Reporter cast_reporter;
-						cast_reporter.reports.allocator = temporary_allocator;
-						auto t2f = implicitly_cast(&true_branch_expression, false_branch_expression->type, &cast_reporter, false);
-						auto f2t = implicitly_cast(&false_branch_expression, true_branch_expression->type, &cast_reporter, false);
-
-						if (!t2f && !f2t) {
-							reporter.error(If->location, "Branch types {} and {} don't match in any way.", true_branch_expression->type, false_branch_expression->type);
-							reporter.reports.add(cast_reporter.reports);
-							cast_reporter.reports.clear();
-							yield(YieldResult::fail);
-						} else if (t2f && f2t) {
-							reporter.error(If->location, "Branch types {} and {} are both implicitly convertible to each other.", true_branch_expression->type, false_branch_expression->type);
-							reporter.reports.add(cast_reporter.reports);
-							cast_reporter.reports.clear();
-							yield(YieldResult::fail);
-						} else if (t2f) {
-							assert_always(implicitly_cast(&true_branch_expression, false_branch_expression->type, &cast_reporter, true));
-							If->type = true_branch_expression->type;
-						} else {
-							assert_always(implicitly_cast(&false_branch_expression, true_branch_expression->type, &cast_reporter, true));
-							If->type = false_branch_expression->type;
-						}
-					}
-				}
-			}
 		}
-
 
 		if (auto value_ = get_constant_value(If->condition)) {
 
@@ -5775,6 +7124,54 @@ private:
 			}
 		}
 
+		return If;
+	}
+	[[nodiscard]] Expression *typecheck_impl(IfExpression *If, bool can_substitute) {
+		typecheck(&If->condition);
+
+		typecheck(&If->true_branch);
+		typecheck(&If->false_branch);
+
+		if (types_match(If->true_branch->type, If->false_branch->type)) {
+			If->type = If->true_branch->type;
+		} else {
+			defer {
+				If->true_branch = If->true_branch;
+				If->false_branch = If->false_branch;
+			};
+
+			Reporter cast_reporter;
+			cast_reporter.reports.allocator = temporary_allocator;
+			auto t2f = implicitly_cast(&If->true_branch, If->false_branch->type, &cast_reporter, false);
+			auto f2t = implicitly_cast(&If->false_branch, If->true_branch->type, &cast_reporter, false);
+
+			if (!t2f && !f2t) {
+				reporter.error(If->location, "Branch types {} and {} don't match in any way.", If->true_branch->type, If->false_branch->type);
+				reporter.reports.add(cast_reporter.reports);
+				cast_reporter.reports.clear();
+				yield(YieldResult::fail);
+			} else if (t2f && f2t) {
+				reporter.error(If->location, "Branch types {} and {} are both implicitly convertible to each other.", If->true_branch->type, If->false_branch->type);
+				reporter.reports.add(cast_reporter.reports);
+				cast_reporter.reports.clear();
+				yield(YieldResult::fail);
+			} else if (t2f) {
+				assert_always(implicitly_cast(&If->true_branch, If->false_branch->type, &cast_reporter, true));
+				If->type = If->true_branch->type;
+			} else {
+				assert_always(implicitly_cast(&If->false_branch, If->true_branch->type, &cast_reporter, true));
+				If->type = If->false_branch->type;
+			}
+		}
+
+		if (auto value_ = get_constant_value(If->condition)) {
+
+			NOTE_LEAK(If);
+
+			auto value = value_.value();
+			assert(value.kind == ValueKind::Bool);
+			return value.Bool ? If->true_branch : If->false_branch;
+		}
 
 		if (!If->type)
 			If->type = get_builtin_type(BuiltinType::None);
@@ -5984,10 +7381,18 @@ private:
 		return Break;
 	}
 	[[nodiscard]] Struct *typecheck_impl(Struct *Struct, bool can_substitute) {
+		defer {
+			assert(Struct->size != -1);
+		};
+
+		s64 struct_size = 0;
 		for (auto &member : Struct->members) {
 			typecheck(&member);
+			member->offset = struct_size;
+			struct_size += get_size(member->type);
 		}
 		Struct->type = get_builtin_type(BuiltinType::Type);
+		Struct->size = struct_size;
 		return Struct;
 	}
 	[[nodiscard]] ArrayType *typecheck_impl(ArrayType *arr, bool can_substitute) {
@@ -6220,6 +7625,13 @@ public:
 	x(type, type, div) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type / r.type, get_builtin_type(BuiltinType::type)); }>; \
 	x(type, type, mod) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type % r.type, get_builtin_type(BuiltinType::type)); }>;
 
+#define BITWISE(type) \
+	x(type, type, bxo) = &bt_take_left; \
+	x(type, type, ban) = &bt_take_left; \
+	x(type, type, bor) = &bt_take_left; \
+	x(type, type, bsl) = &bt_take_left; \
+	x(type, type, bsr) = &bt_take_left; \
+
 #define SYMMETRIC(a, b, op) x(a, b, op) = x(b, a, op)
 
 #define UNSIZED_INT_AND_SIZED_INT(t) \
@@ -6259,6 +7671,15 @@ public:
 		MATHABLE_INTEGER(S32);
 		MATHABLE_INTEGER(S64);
 
+		BITWISE(U8);
+		BITWISE(U16);
+		BITWISE(U32);
+		BITWISE(U64);
+		BITWISE(S8);
+		BITWISE(S16);
+		BITWISE(S32);
+		BITWISE(S64);
+
 		UNSIZED_INT_AND_SIZED_INT(U8);
 		UNSIZED_INT_AND_SIZED_INT(U16);
 		UNSIZED_INT_AND_SIZED_INT(U32);
@@ -6292,6 +7713,7 @@ public:
 #undef SYMMETRIC
 #undef MATHABLE
 #undef ORDERABLE
+#undef BITWISE
 #undef x
 #undef y
 	}
@@ -6351,6 +7773,8 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 			report_yields = true;
 		} else if (args[i] == "-log-time") {
 			enable_time_log = true;
+		} else if (args[i] == "-debug") {
+			is_debugging = true;
 		} else if (args[i][0] == '-') {
 			immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
 		} else {
@@ -6707,14 +8131,31 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 				auto call = Call::create();
 				call->callable = lambda;
-
-				auto context = ExecutionContext::create(main_fiber, call);
+				call->type = lambda->head.return_type;
+				call->call_kind = CallKind::lambda;
+#if 1
+				dbgln("\nBytecode:\n");
+				Bytecode::Builder builder;
+				for (auto node : global_block.children) {
+					builder.append_global(node);
+				}
+				auto instructions = builder.build(call);
+				dbgln("\Final instructions:\n");
+				for (auto [index, instruction] : enumerate(instructions)) {
+					dbgln("{}: {}", index, instruction);
+				}
+				dbgln();
+				auto result = Bytecode::Interpreter{}.run(instructions, builder.entry_point());
+				println("main returned {}", result);
+#else
+				auto context = NodeInterpreter::create(main_fiber, call);
 				auto result = context->run();
 				if (result.is_value()) {
 					println("main returned {}", result.value());
 				} else {
 					with(ConsoleColor::red, println("main failed to execute"));
 				}
+#endif
 			}
 		}
 	}

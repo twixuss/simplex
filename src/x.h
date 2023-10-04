@@ -110,8 +110,8 @@
 	x(grt, ">" , 4) \
 	x(grq, ">=", 4) \
 	\
-	x(lan, "||", 3) \
-	x(lor, "&&", 3) \
+	x(lan, "&&", 3) \
+	x(lor, "||", 3) \
 	\
 	x(ran, "..", 2) \
 	\
@@ -159,7 +159,7 @@
 	x(Lambda) \
 	x(LambdaHead) \
 	x(Name) \
-	x(If) \
+	x(IfExpression) \
 	x(BuiltinTypeName) \
 	x(Binary) \
 	x(Match) \
@@ -170,6 +170,7 @@
 	x(ArrayConstructor) \
 
 #define ENUMERATE_STATEMENT_KIND(x) \
+	x(IfStatement) \
 	x(Return) \
 	x(While) \
 	x(Continue) \
