@@ -22,6 +22,9 @@
             <Item Name="[value]" Condition="kind==NodeKind::Binary             " Optional="true">*(Binary             *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::Match              " Optional="true">*(Match              *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::Unary              " Optional="true">*(Unary              *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::ArrayType          " Optional="true">*(ArrayType          *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::ArrayConstructor   " Optional="true">*(ArrayConstructor   *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Subscript          " Optional="true">*(Subscript          *)this</Item>
         </Expand>
     </Type>
     <Type Name="Name">
