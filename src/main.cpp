@@ -2,6 +2,8 @@
 #include <xtr1common>
 #include <concepts>
 
+#undef assert
+
 namespace tl {
 template <class, class Size>
 struct Span;
@@ -106,7 +108,7 @@ bool is_debugging = false;
 #define timed_block(name) \
 	if (enable_time_log) println("{} ...", name); \
 	auto timer = create_precise_timer(); \
-	defer { if (enable_time_log) timed_results.add({name, get_time(timer)}); }
+	defer { if (enable_time_log) timed_results.add({name, elapsed_time(timer)}); }
 
 #define timed_function() \
 	static constexpr auto funcname = __FUNCTION__; \
@@ -454,6 +456,10 @@ SourceLocation get_source_location(String location) {
 	return result;
 }
 
+inline umm append(StringBuilder &builder, SourceLocation location) {
+	return append_format(builder, "{}:{}:{}", location.file, location.line_number, location.column_number);
+}
+
 void print_replacing_tabs_with_spaces(String string) {
 	const umm n_spaces = 4;
 	for (auto c : string) {
@@ -518,7 +524,7 @@ struct Report {
 		if (location.data) {
 			auto source_location = get_source_location(location);
 
-			println("{}:{}:{}: ", source_location.file, source_location.line_number, source_location.column_number);
+			println("{}: ", source_location);
 			print_report_kind(kind);
 			println(": {}",  message);
 
@@ -580,8 +586,6 @@ struct ReporterBase {
 	void error  (this auto &&self, auto const &...args) { return self.error  (String{}, args...); }
 	void help   (this auto &&self, auto const &...args) { return self.help   (String{}, args...); }
 };
-
-RecursiveSpinLock stdout_mutex;
 
 struct Reporter : ReporterBase {
 	List<Report> reports;
@@ -1265,22 +1269,17 @@ struct Value {
 		Value *pointer;
 		List<Value> elements;
 	};
-	Block *break_tag = 0;
-	Value() : kind(ValueKind::none) {}
+	Value() {
+		memset(this, 0, sizeof(*this));
+	}
 	Value(const Value &that) {
 		memcpy(this, &that, sizeof Value);
-		if (kind == ValueKind::struct_ || kind == ValueKind::array) {
-			elements = copy(elements);
-		}
 	}
 	Value(Value &&that) { 
 		memcpy(this, &that, sizeof Value);
 		memset(&that, 0, sizeof Value);
 	}
 	~Value() {
-		if (kind == ValueKind::struct_ || kind == ValueKind::array) {
-			free(elements);
-		}
 		memset(this, 0, sizeof Value);
 	}
 	Value &operator=(const Value &that) { return this->~Value(), *new(this) Value(that); }
@@ -1308,8 +1307,27 @@ struct Value {
 	explicit Value(Lambda     *value) : kind(ValueKind::lambda ), lambda (value) {}
 	explicit Value(::Type      value) : kind(ValueKind::Type   ), Type   (value) {}
 	explicit Value(Value      *value) : kind(ValueKind::pointer), pointer(value) {}
-	explicit Value(StructTag, List<Value> value) : kind(ValueKind::struct_), elements(value) {}
-	explicit Value(ArrayTag,  List<Value> value) : kind(ValueKind::array),   elements(value) {}
+	explicit Value(StructTag, Span<Value> value) : kind(ValueKind::struct_), elements(to_list(value)) {}
+	explicit Value(ArrayTag,  Span<Value> value) : kind(ValueKind::array),   elements(to_list(value)) {}
+	
+	Value copy() {
+		Value result = *this;
+		switch (kind) {
+			case ValueKind::array:
+			case ValueKind::struct_:
+				result.elements = tl::copy(result.elements);
+				break;
+		}
+		return result;
+	}
+	void free() {
+		switch (kind) {
+			case ValueKind::array:
+			case ValueKind::struct_:
+				tl::free(elements);
+				break;
+		}
+	}
 };
 
 enum class CallKind {
@@ -2455,6 +2473,10 @@ bool is_expression(Node *node) {
 	return as<Expression>(node);
 }
 
+bool is_substitutable(Block *block) {
+	return block->children.count == 1 && block->breaks.count == 0;
+}
+
 struct Parser {
 	Token *token = 0;
 	Block *current_block = &global_block;
@@ -2853,7 +2875,7 @@ struct Parser {
 					ensure_allowed_in_statement_context(child);
 				}
 
-				if (block->children.count == 1) {
+				if (is_substitutable(block)) {
 					if (auto expression = as<Expression>(block->children[0])) {
 						block->free();
 						return expression;
@@ -3602,7 +3624,7 @@ private:
 
 	Node *current_node = 0;
 	Block *current_block = 0;
-	bool breaking_from_block = false;
+	Block *currently_breaking_from = 0;
 
 	List<Scope> scope_stack;
 	Value return_value;
@@ -3630,20 +3652,20 @@ private:
 		fiber_yield(parent_fiber);
 	}
 
-#define PERFORM_WITH_BREAKS(name, execute, node) \
-	name = execute(node); \
-	switch (name.kind) { \
-		case ValueKind::return_: \
-		case ValueKind::break_: \
-		case ValueKind::continue_: return name; \
-		default: \
-			if (breaking_from_block) { \
-				if (name.break_tag == current_node) { \
-					breaking_from_block = false; \
-				} \
-				return name; \
-			} \
-			break; \
+#define PERFORM_WITH_BREAKS(name, execute, node)               \
+	name = execute(node);                                      \
+	switch (name.kind) {                                       \
+		case ValueKind::return_:                               \
+		case ValueKind::break_:                                \
+		case ValueKind::continue_: return name;                \
+		default:                                               \
+			if (currently_breaking_from) {                     \
+				if (currently_breaking_from == current_node) { \
+					currently_breaking_from = 0;               \
+				}                                              \
+				return name;                                   \
+			}                                                  \
+			break;                                             \
 	}
 
 #define EXECUTE_INTO(name, node) PERFORM_WITH_BREAKS(name, execute, node)
@@ -3787,7 +3809,7 @@ private:
 		} else {
 			default_initialize(&value, definition->type);
 		}
-		scope_stack.back().variables.get_or_insert(definition) = value;
+		scope_stack.back().variables.insert(definition, value);
 		return value;
 	}
 	Value execute_impl(Return *return_) {
@@ -3863,8 +3885,7 @@ private:
 			auto lambda = callable.lambda;
 			auto &parameters = lambda->head.parameters_block.definition_list;
 
-			List<Value> argument_values;
-			argument_values.allocator = temporary_allocator;
+			List<Value, TemporaryAllocator> argument_values;
 			argument_values.reserve(arguments.count);
 			for (auto argument : arguments) {
 				EXECUTE_DEFN(argument_value, argument);
@@ -3998,14 +4019,14 @@ private:
 			scope_stack.add(prev_scope_stack[0]);
 			defer {
 				prev_scope_stack[0] = scope_stack[0];
-			free(scope_stack);
-			scope_stack = prev_scope_stack;
+				free(scope_stack);
+				scope_stack = prev_scope_stack;
 			};
 
 			auto &param_scope = scope_stack.add();
 
 			for (umm i = 0; i < arguments.count; ++i) {
-				param_scope.variables.get_or_insert(parameters[i]) = argument_values[i];
+				param_scope.variables.insert(parameters[i], argument_values[i]);
 			}
 
 			auto result = execute(lambda->body);
@@ -4021,8 +4042,7 @@ private:
 
 			assert(members.count == arguments.count);
 
-			List<Value> argument_values;
-			argument_values.allocator = temporary_allocator;
+			List<Value, TemporaryAllocator> argument_values;
 			argument_values.reserve(arguments.count);
 			for (auto argument : arguments) {
 				EXECUTE_DEFN(argument_value, argument);
@@ -4080,8 +4100,7 @@ private:
 		assert(Break->tag_block);
 
 		EXECUTE_DEFN(value, Break->value);
-		value.break_tag = Break->tag_block;
-		breaking_from_block = true;
+		currently_breaking_from = Break->tag_block;
 		return value;
 	}
 	Value execute_impl(BuiltinTypeName *type) { 
@@ -4169,7 +4188,7 @@ private:
 
 #undef OPS
 
-		immediate_reporter.error(binary->location, "Invalid binary operation");
+		immediate_reporter.error(binary->location, "Invalid binary operation: {} {} {}", left.kind, binary->operation, right.kind);
 		yield(YieldResult::fail);
 		return {};
 	}
@@ -4674,9 +4693,15 @@ struct Builder : Bytecode {
 			jmp.d = ret_destination;
 		}
 
+		if (lambda->definition) {
+			dbgln(lambda->definition->name);
+		} else {
+			dbgln(get_source_location(lambda->location));
+		}
 		for (auto [index, instr] : enumerate(lambda_instructions)) {
 			dbgln("{}: {}", first_instruction_index + index, instr);
 		}
+
 		for (auto &i : lambda_instructions) {
 			i.visit_addresses([&] (Address &a) {
 				if (a.base) {
@@ -4909,8 +4934,7 @@ private:
 		
 				s64 return_value_size = get_size(head->return_type);
 
-				List<s64> argument_offsets;
-				argument_offsets.allocator = temporary_allocator;
+				List<s64, TemporaryAllocator> argument_offsets;
 				argument_offsets.reserve(call->arguments.count);
 
 				for (auto argument : call->arguments) {
@@ -5950,8 +5974,9 @@ Result<Value, Node *> get_constant_value(Node *node) {
 	invalid_code_path("get_constant_value: Invalid node kind {}", node->kind);
 }
 
-SpinLock retired_typecheckers_lock;
-List<struct Typechecker *> retired_typecheckers;
+LockProtected<List<struct Typechecker *>, SpinLock> retired_typecheckers;
+
+#define locked_use_it(protected, expr) protected.use([&](auto &it) { return expr; })
 
 volatile u32 typechecker_uid_counter;
 
@@ -6372,6 +6397,11 @@ ArrayType *make_array_type(Type element_type, u64 count) {
 	return result;
 }
 
+enum class FailStrategy {
+	yield,
+	unwind,
+};
+
 struct Typechecker {
 	const u32 uid = atomic_add(&typechecker_uid_counter, 1);
 	u32 progress = 0;
@@ -6380,7 +6410,7 @@ struct Typechecker {
 		assert(node);
 
 		auto typechecker = [&] {
-			if (auto typechecker_ = with(retired_typecheckers_lock, retired_typecheckers.pop())) {
+			if (auto typechecker_ = locked_use_it(retired_typecheckers, it.pop())) {
 				auto typechecker = typechecker_.value();
 				// immediate_reporter.info("created cached typechecker {} for node {}", typechecker->uid, node->location);
 
@@ -6445,7 +6475,7 @@ struct Typechecker {
 		initial_node = 0;
 		current_block = 0;
 
-		with(retired_typecheckers_lock, retired_typecheckers.add(this));
+		locked_use_it(retired_typecheckers, it.add(this));
 	}
 
 private:
@@ -6459,6 +6489,18 @@ private:
 	While *current_loop = 0;
 	List<Node *> node_stack;
 	TypecheckEntry *entry = 0;
+
+	FailStrategy fail_strategy = FailStrategy::yield;
+	#define fail()                                      \
+		do {                                            \
+			if (fail_strategy == FailStrategy::yield) { \
+				yield(YieldResult::fail);               \
+			}                                           \
+			return 0;                                   \
+		} while (0)
+	#define with_unwind_strategy(x) ([&]()->decltype(auto){ scoped_replace(fail_strategy, FailStrategy::unwind); return x; }())
+
+	#define typecheck_or_unwind(...) do { if (!typecheck(__VA_ARGS__)) return 0; } while (0)
 
 	struct VectorizedLambdaKey {
 		Lambda *lambda;
@@ -6670,7 +6712,7 @@ private:
 	Expression *inline_body(Call *call, Lambda *lambda) {
 		if (!yield_while_null(call->location, &lambda->body->type)) {
 			reporter.error(lambda->location, "Could not wait for lambda's body to typecheck for inlining");
-			yield(YieldResult::fail);
+			fail();
 		}
 		
 		auto copied_lambda = as<Lambda>(Copier{}.deep_copy(lambda));
@@ -6837,14 +6879,14 @@ private:
 		return new_lambda_definition;
 	}
 
-	Expression *try_typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, Reporter &reporter, bool apply) {
+	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply = true) {
 
 		auto &arguments = call->arguments;
-		auto callable = call->callable;
+		auto &callable = call->callable;
 
 		if (!yield_while_null(call->location, &head->return_type)) {
 			reporter.error(head->location, "Could not wait for lambda's return type");
-			return 0;
+			fail();
 		}
 
 		auto &parameters = head->parameters_block.definition_list;
@@ -6852,7 +6894,7 @@ private:
 		if (arguments.count != parameters.count) {
 			reporter.error(call->location, "Too {} arguments. Expected {}, but got {}.", arguments.count > parameters.count ? "many"s : "few"s, parameters.count, arguments.count);
 			reporter.info(head->location, "Lambda is here:");
-			return 0;
+			fail();
 		}
 
 
@@ -6864,7 +6906,7 @@ private:
 						auto vectorized_lambda_definition = get_vectorized_lambda_definition(lambda, array->count.value());
 
 						auto name = Name::create();
-						name->location = call->callable->location;
+						name->location = callable->location;
 						name->name = vectorized_lambda_definition->name;
 						name->possible_definitions.set(vectorized_lambda_definition);
 						name->type = vectorized_lambda_definition->type;
@@ -6884,7 +6926,7 @@ private:
 			auto &parameter = head->parameters_block.definition_list[i];
 			if (!implicitly_cast(&argument, parameter->type, &reporter, apply)) {
 				reporter.info(parameter->location, "Parameter declared here:");
-				return 0;
+				fail();
 			}
 		}
 
@@ -6926,31 +6968,23 @@ private:
 
 		if (arguments.count != members.count) {
 			reporter.error(call->location, "Too {} arguments. Expected {}, but got {}.", arguments.count > members.count ? "many"s : "few"s, members.count, arguments.count);
-			yield(YieldResult::fail);
+			fail();
 		}
 
 		for (umm i = 0; i < arguments.count; ++i) {
 			auto &argument = arguments[i];
 			auto &member = members[i];
 			if (!implicitly_cast(&argument, member->type, true)) {
-				yield(YieldResult::fail);
+				fail();
 			}
 		}
 
 		call->type = call->callable;
 		return call;
 	};
-	
-	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head) {
-		auto result = try_typecheck_lambda_call(call, lambda, head, reporter, true);
-		if (!result) {
-			yield(YieldResult::fail);
-		}
-		return result;
-	}
 
-	bool try_typecheck_binary_dot(Binary *binary, Reporter &reporter) {
-		typecheck(&binary->left);
+	bool typecheck_binary_dot(Binary *binary, Reporter &reporter) {
+		typecheck_or_unwind(&binary->left);
 		auto struct_ = direct_as<Struct>(binary->left->type);
 		if (!struct_) {
 			if (auto pointer = direct_as<Unary>(binary->left->type); pointer && pointer->operation == UnaryOperation::pointer) {
@@ -6960,7 +6994,7 @@ private:
 
 		if (!struct_) {
 			reporter.error(binary->left->location, "Left of the dot must have struct or pointer to struct type.");
-			return false;
+			fail();
 		}
 
 		auto member_name = as<Name>(binary->right);
@@ -6972,7 +7006,7 @@ private:
 			binary->type = definition->type;
 		} else {
 			reporter.error(binary->right->location, "Struct {} does not contain member named {}.", struct_, member_name->name);
-			return false;
+			fail();
 		}
 
 		return true;
@@ -6981,22 +7015,26 @@ private:
 	//
 	// These `typecheck` overloads automatically substitute old node with new one.
 	//
-	void typecheck(Node **node) {
+	[[nodiscard]] bool typecheck(Node **node) {
 		*node = typecheck(*node, true);
+		return *node != 0;
 	}
 	template <CNode T>
-	void typecheck(T **node) { 
+	[[nodiscard]] bool typecheck(T **node) { 
 		auto new_node = typecheck(*node, true);
-		*node = as<T>(new_node);
-		assert(*node);
+		if (new_node) {
+			*node = as<T>(new_node);
+			assert(*node);
+		}
+		return new_node != 0;
 	}
 
 	//
 	// This `typecheck` overload doesn't substitute the node
 	//
 	template <CNode T>
-	void typecheck(T &node) {
-		(void)typecheck(&node, false);
+	[[nodiscard]] bool typecheck(T &node) {
+		return typecheck(&node, false) != 0;
 	}
 
 	[[nodiscard]] Node *typecheck(Node *node, bool can_substitute) {
@@ -7024,18 +7062,21 @@ private:
 				invalid_code_path();
 		}
 
-		assert(new_node);
+		if (fail_strategy != FailStrategy::unwind) {
+			assert(new_node);
 
-		if (!can_substitute) {
-			assert(new_node == node, "Attempt to substitute a node which can't be substituted.");
-		}
+			if (!can_substitute) {
+				assert(new_node == node, "Attempt to substitute a node which can't be substituted.");
+			}
 
-		if (auto expression = as<Expression>(new_node)) {
-			if (!expression->type) {
-				reporter.error(expression->location, "Could not compute the type of this expression.");
-				yield(YieldResult::fail);
+			if (auto expression = as<Expression>(new_node)) {
+				if (!expression->type) {
+					reporter.error(expression->location, "Could not compute the type of this expression.");
+					fail();
+				}
 			}
 		}
+
 		return new_node;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Block *block, bool can_substitute) {
@@ -7054,11 +7095,9 @@ private:
 		if (block->children.count) {
 			if (auto last_expression = as<Expression>(block->children.back())) {
 				block->type = last_expression->type;
-				if (block->children.count == 1) {
-					if (can_substitute) {
-						NOTE_LEAK(block);
-						return last_expression;
-					}
+				if (can_substitute && is_substitutable(block)) {
+					NOTE_LEAK(block);
+					return last_expression;
 				}
 			}
 		}
@@ -7112,7 +7151,7 @@ private:
 						reporter.info(get_non_block_location(picked_value), "Block's type {} was deduced from this expression:", picked_value->type);
 						reporter.info("Here's the conversion attempt report:");
 						reporter.reports.add(cast_reporter.reports);
-						yield(YieldResult::fail);
+						fail();
 					}
 				}
 
@@ -7134,17 +7173,17 @@ private:
 	}
 	[[nodiscard]] Definition *typecheck_impl(Definition *definition, bool can_substitute) {
 		if (definition->parsed_type) {
-			typecheck(&definition->parsed_type);
+			typecheck_or_unwind(&definition->parsed_type);
 		} else {
 			assert(definition->initial_value);
 		}
 
 		if (definition->initial_value) {
-			typecheck(&definition->initial_value);
+			typecheck_or_unwind(&definition->initial_value);
 
 			if (definition->parsed_type) {
 				if (!implicitly_cast(&definition->initial_value, definition->parsed_type, true)) {
-					yield(YieldResult::fail);
+					fail();
 				}
 			} else {
 				make_concrete(definition->initial_value);
@@ -7156,14 +7195,14 @@ private:
 					reporter.error(definition->location, "Initial value is not constant.");
 					assert(constant_check.failed_node);
 					reporter.info(constant_check.failed_node->location, "Because this is not constant.");
-					yield(YieldResult::fail);
+					fail();
 				}
 
 				// NOTE:
 				// Maybe this should not be an error, I just don't wanna deal with it rigt now.
 				if (types_match(definition->initial_value->type, BuiltinType::None)) {
 					reporter.error(definition->location, "Definitions with type None can't exist.");
-					yield(YieldResult::fail);
+					fail();
 				}
 
 				definition->constant_value = execute(definition->initial_value);
@@ -7202,10 +7241,10 @@ private:
 		return literal;
 	}
 	[[nodiscard]] LambdaHead *typecheck_impl(LambdaHead *head, bool can_substitute) {
-		typecheck(head->parameters_block);
+		typecheck_or_unwind(head->parameters_block);
 
 		if (head->parsed_return_type) {
-			typecheck(&head->parsed_return_type);
+			typecheck_or_unwind(&head->parsed_return_type);
 			head->return_type = head->parsed_return_type;
 		}
 
@@ -7218,7 +7257,7 @@ private:
 				reporter.warning(lambda->location, "Inline specifiers for intrinsic lambda are meaningless.");
 			}
 		}
-		typecheck(lambda->head);
+		typecheck_or_unwind(lambda->head);
 
 		lambda->type = &lambda->head;
 
@@ -7234,7 +7273,7 @@ private:
 			scoped_replace(current_container, lambda);
 			scoped_replace(current_block, &lambda->head.parameters_block);
 
-			typecheck(&lambda->body);
+			typecheck_or_unwind(&lambda->body);
 
 			all_paths_return = do_all_paths_return(lambda->body);
 		}
@@ -7243,13 +7282,13 @@ private:
 			for (auto ret : lambda->returns) {
 				if (!implicitly_cast(&ret->value, lambda->head.return_type, true)) {
 					reporter.info(lambda->head.return_type->location, "Return type specified here:");
-					yield(YieldResult::fail);
+					fail();
 				}
 			}
 
 			if (lambda->body) {
 				if (!implicitly_cast(&lambda->body, lambda->head.return_type, true)) {
-					yield(YieldResult::fail);
+					fail();
 				}
 			}
 		} else {
@@ -7257,23 +7296,23 @@ private:
 				List<Expression **> return_values;
 				List<Return *> empty_returns;
 
-				auto mixed_return_value_presence_error = [&] (String location, String location2) {
-					reporter.error(location, "Right now you are not allowed to mix return statements with values and without.");
-					reporter.info(location2, "Here's the other return statement:");
-					yield(YieldResult::fail);
-				};
-
 				for (auto &ret : lambda->returns) {
+					String mixed_return_value_presence_location = {};
 					if (ret->value) {
 						return_values.add(&ret->value);
 						if (empty_returns.count) {
-							mixed_return_value_presence_error(ret->location, empty_returns.back()->location);
+							mixed_return_value_presence_location = empty_returns.back()->location;
 						}
 					} else {
 						empty_returns.add(ret);
 						if (return_values.count) {
-							mixed_return_value_presence_error(ret->location, (*return_values.back())->location);
+							mixed_return_value_presence_location = (*return_values.back())->location;
 						}
+					}
+					if (mixed_return_value_presence_location.count) {
+						reporter.error(ret->location, "Right now you are not allowed to mix return statements with values and without.");
+						reporter.info(mixed_return_value_presence_location, "Here's the other return statement:");
+						fail();
 					}
 				}
 
@@ -7317,7 +7356,7 @@ private:
 							reporter.info(get_non_block_location(picked_value), "Return type {} was deduced from this expression:", picked_value->type);
 							reporter.info("Here's the conversion attempt report:");
 							reporter.reports.add(cast_reporter.reports);
-							yield(YieldResult::fail);
+							fail();
 						}
 					}
 
@@ -7325,14 +7364,14 @@ private:
 						if (!types_match(lambda->body->type, BuiltinType::None)) {
 							reporter.error(lambda->location, "All return statements in this lambda do not provide a value, but lambda's body has a type {}", lambda->body->type);
 							reporter.info(get_non_block_location(lambda->body), "Here's the expression that is implicitly returned");
-							yield(YieldResult::fail);
+							fail();
 						}
 					}
 
 					if (!all_paths_return) {
 						if (!types_match(lambda->body->type, picked_value->type)) {
 							reporter.error(lambda->location, "Not all paths return a value.");
-							yield(YieldResult::fail);
+							fail();
 						}
 					}
 					for (auto &ret : lambda->returns) {
@@ -7362,7 +7401,7 @@ private:
 
 					if (empty_returns.count > lambda->returns.count) {
 						reporter.error(empty_returns[0]->location, "TODO: Using both valued and empty return statement in a single function is not yet implemented.");
-						yield(YieldResult::fail);
+						fail();
 					}
 
 					if (concrete_return_types.count) {
@@ -7373,7 +7412,7 @@ private:
 						make_concrete(lambda->returns[0]->value);
 						for (auto ret : lambda->returns.skip(1)) {
 							if (!implicitly_cast(&ret->value, lambda->returns[0]->value->type, true)) {
-								yield(YieldResult::fail);
+								fail();
 							}
 						}
 						lambda->head.return_type = lambda->returns[0]->value->type;
@@ -7384,7 +7423,7 @@ private:
 							if (!types_match(ret->value->type, lambda->head.return_type)) {
 								reporter.error(ret->location, "Type {} does not match previously deduced return type {}.", ret->value->type, lambda->head.return_type);
 								reporter.info(lambda->returns[0]->location, "First deduced here:");
-								yield(YieldResult::fail);
+								fail();
 							}
 						}
 					}
@@ -7442,7 +7481,7 @@ private:
 
 					if (!yield_while_null(name->location, &definition->type)) {
 						reporter.error(name->location, "Couldn't wait for definition type.");
-						yield(YieldResult::fail);
+						fail();
 					}
 
 					entry->dependency = 0;
@@ -7472,7 +7511,7 @@ private:
 			}
 		}
 		reporter.error(name->location, "`{}` was not declared.", name->name);
-		yield(YieldResult::fail);
+		fail();
 		return 0;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Call *call, bool can_substitute) {
@@ -7480,7 +7519,7 @@ private:
 			if (binary->operation == BinaryOperation::dot) {
 				if (auto lambda_name = as<Name>(binary->right)) {
 					Reporter reporter2;
-					if (try_typecheck_binary_dot(binary, reporter2)) {
+					if (with_unwind_strategy(typecheck_binary_dot(binary, reporter2))) {
 						goto typecheck_dot_succeeded;
 					} else {
 						Definition *lambda_definition = 0;
@@ -7490,7 +7529,7 @@ private:
 								assert(definitions.count != 0);
 								if (definitions.count > 1) {
 									reporter.error(binary->right->location, "Function overloading not implemented yet.");
-									yield(YieldResult::fail);
+									fail();
 								}
 								lambda_definition = definitions[0];
 								break;
@@ -7500,29 +7539,63 @@ private:
 						auto lambda = lambda_definition->initial_value ? as<Lambda>(lambda_definition->initial_value) : 0;
 						if (!lambda) {
 							reporter.error(binary->right->location, "This is not a lambda.");
-							yield(YieldResult::fail);
+							fail();
 						}
 
-						auto first_argument_address = Unary::create();
-						first_argument_address->location = binary->left->location;
-						first_argument_address->expression = binary->left;
-						first_argument_address->operation = UnaryOperation::addr;
 
 						call->callable = binary->right;
-						call->arguments.insert_at(first_argument_address, 0);
-						return typecheck_impl(call, can_substitute);
+
+						// Attempt passing `this` as follows (return on first successful attempt):
+						//     1. As-is.
+						//     2. By pointer.
+
+						call->arguments.insert_at(binary->left, 0);
+
+						Reporter as_is_reporter;
+						{
+							scoped_exchange(reporter, as_is_reporter);
+							auto result = with_unwind_strategy(typecheck_impl(call, can_substitute));
+							if (result) {
+								as_is_reporter.reports.add(reporter.reports);
+								return result;
+							}
+						}
+						
+						Reporter by_pointer_reporter;
+						{
+							scoped_exchange(reporter, by_pointer_reporter);
+
+							auto first_argument_address = Unary::create();
+							first_argument_address->location = binary->left->location;
+							first_argument_address->expression = binary->left;
+							first_argument_address->operation = UnaryOperation::addr;
+							call->arguments[0] = first_argument_address;
+
+							auto result = with_unwind_strategy(typecheck_impl(call, can_substitute));
+							if (result) {
+								by_pointer_reporter.reports.add(reporter.reports);
+								return result;
+							}
+						}
+
+						reporter.error(call->location, "Unable to pass `this` argument. Here are attempt results:");
+						reporter.info("Attempt to pass `this` as-is:");
+						reporter.reports.add(as_is_reporter.reports);
+						reporter.info("Attempt to pass `this` by pointer:");
+						reporter.reports.add(by_pointer_reporter.reports);
+						fail();
 					}
 				}
 			}
 		}
 
 
-		typecheck(&call->callable);
+		typecheck_or_unwind(&call->callable);
 
 	typecheck_dot_succeeded:
 		auto &arguments = call->arguments;
 		for (auto &argument : arguments) {
-			typecheck(&argument);
+			typecheck_or_unwind(&argument);
 		}
 
 		auto directed_callable = direct(call->callable);
@@ -7536,7 +7609,7 @@ private:
 				return typecheck_lambda_call(call, 0, lambda_head);
 			} else {
 				reporter.error(directed_callable->location, "This is not a lambda nor a struct.");
-				yield(YieldResult::fail);
+				fail();
 				return 0;
 			}
 		} else if (auto name = as<Name>(directed_callable)) {
@@ -7551,7 +7624,7 @@ private:
 				Reporter reporter;
 			};
 
-			List<Overload> overloads{.allocator = temporary_allocator};
+			List<Overload, TemporaryAllocator> overloads;
 
 			overloads.reserve(name->possible_definitions.count);
 
@@ -7576,10 +7649,12 @@ private:
 				overloads.add(overload);
 			}
 
-			List<Overload *> matching_overloads{.allocator = temporary_allocator}; 
+			List<Overload *, TemporaryAllocator> matching_overloads;
 
 			for (auto &overload : overloads) {
-				if (try_typecheck_lambda_call(call, overload.lambda, overload.lambda_head, overload.reporter, false)) {
+				scoped_replace(fail_strategy, FailStrategy::unwind);
+				scoped_exchange(reporter, overload.reporter);
+				if (typecheck_lambda_call(call, overload.lambda, overload.lambda_head, false)) {
 					matching_overloads.add(&overload);
 				}
 			}
@@ -7595,27 +7670,27 @@ private:
 					reporter.info("Overload #{}:", i);
 					reporter.reports.add(overload.reporter.reports);
 				}
-				yield(YieldResult::fail);
+				fail();
 			}
 
 			reporter.error(call->location, "Multiple matching overload were found:");
 			for (auto [i, overload] : enumerate(matching_overloads)) {
 				reporter.info(overload->definition->location, "Overload #{}:", i);
 			}
-			yield(YieldResult::fail);
+			fail();
 		}
 
 		reporter.error(call->callable->location, "Only lambdas / structs can be called for now");
-		yield(YieldResult::fail);
+		fail();
 		return 0;
 	}
 	[[nodiscard]] Node *typecheck_impl(IfStatement *If, bool can_substitute) {
-		typecheck(&If->condition);
+		typecheck_or_unwind(&If->condition);
 
-		typecheck(&If->true_branch);
+		typecheck_or_unwind(&If->true_branch);
 
 		if (If->false_branch) {
-			typecheck(&If->false_branch);
+			typecheck_or_unwind(&If->false_branch);
 		}
 
 		if (auto value_ = get_constant_value(If->condition)) {
@@ -7643,10 +7718,10 @@ private:
 		return If;
 	}
 	[[nodiscard]] Expression *typecheck_impl(IfExpression *If, bool can_substitute) {
-		typecheck(&If->condition);
+		typecheck_or_unwind(&If->condition);
 
-		typecheck(&If->true_branch);
-		typecheck(&If->false_branch);
+		typecheck_or_unwind(&If->true_branch);
+		typecheck_or_unwind(&If->false_branch);
 
 		if (types_match(If->true_branch->type, If->false_branch->type)) {
 			If->type = If->true_branch->type;
@@ -7657,7 +7732,7 @@ private:
 			};
 
 			Reporter cast_reporter;
-			cast_reporter.reports.allocator = temporary_allocator;
+			cast_reporter.reports.allocator = current_temporary_allocator;
 			auto t2f = implicitly_cast(&If->true_branch, If->false_branch->type, &cast_reporter, false);
 			auto f2t = implicitly_cast(&If->false_branch, If->true_branch->type, &cast_reporter, false);
 
@@ -7665,12 +7740,12 @@ private:
 				reporter.error(If->location, "Branch types {} and {} don't match in any way.", If->true_branch->type, If->false_branch->type);
 				reporter.reports.add(cast_reporter.reports);
 				cast_reporter.reports.clear();
-				yield(YieldResult::fail);
+				fail();
 			} else if (t2f && f2t) {
 				reporter.error(If->location, "Branch types {} and {} are both implicitly convertible to each other.", If->true_branch->type, If->false_branch->type);
 				reporter.reports.add(cast_reporter.reports);
 				cast_reporter.reports.clear();
-				yield(YieldResult::fail);
+				fail();
 			} else if (t2f) {
 				assert_always(implicitly_cast(&If->true_branch, If->false_branch->type, &cast_reporter, true));
 				If->type = If->true_branch->type;
@@ -7700,13 +7775,13 @@ private:
 	}
 	[[nodiscard]] Expression *typecheck_impl(Binary *binary, bool can_substitute) {
 		if (binary->operation == BinaryOperation::dot) {
-			if (!try_typecheck_binary_dot(binary, reporter)) {
-				yield(YieldResult::fail);
+			if (!with_unwind_strategy(typecheck_binary_dot(binary, reporter))) {
+				fail();
 			}
 			return binary;
 		} else {
-			typecheck(&binary->left);
-			typecheck(&binary->right);
+			typecheck_or_unwind(&binary->left);
+			typecheck_or_unwind(&binary->right);
 
 			if (binary->operation == BinaryOperation::ass) {
 				auto result = is_mutable(binary->left);
@@ -7716,10 +7791,10 @@ private:
 					//reporter.info(result.failed_node->location, "Because this is not mutable.");
 					why_is_this_immutable(binary->left);
 
-					yield(YieldResult::fail);
+					fail();
 				}
 				if (!implicitly_cast(&binary->right, binary->left->type, true)) {
-					yield(YieldResult::fail);
+					fail();
 				}
 				binary->type = get_builtin_type(BuiltinType::None);
 				return binary;
@@ -7734,29 +7809,29 @@ private:
 
 		no_binop:
 			reporter.error(binary->location, "No binary operation {} defined for types {} and {}.", binary->operation, binary->left->type, binary->right->type);
-			yield(YieldResult::fail);
+			fail();
 			return 0;
 		}
 	}
 	[[nodiscard]] Match *typecheck_impl(Match *match, bool can_substitute) {
-		typecheck(&match->expression);
+		typecheck_or_unwind(&match->expression);
 
 		make_concrete(match->expression);
 
 		for (auto &Case : match->cases) {
 			if (Case.from) {
-				typecheck(&Case.from);
+				typecheck_or_unwind(&Case.from);
 
 				if (!is_constant(Case.from)) {
 					reporter.error(Case.from->location, "Match case expression must be constant.");
-					yield(YieldResult::fail);
+					fail();
 				}
 
 				if (!implicitly_cast(&Case.from, match->expression->type, true))
-					yield(YieldResult::fail);
+					fail();
 			}
 
-			typecheck(&Case.to);
+			typecheck_or_unwind(&Case.to);
 		}
 
 		if (match->default_case) {
@@ -7774,7 +7849,7 @@ private:
 
 			for (auto &Case : match->cases) {
 				if (!implicitly_cast(&Case.to, match->type, true)) {
-					yield(YieldResult::fail);
+					fail();
 				}
 			}
 		} else {
@@ -7789,7 +7864,7 @@ private:
 		return match;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Unary *unary, bool can_substitute) {
-		typecheck(&unary->expression);
+		typecheck_or_unwind(&unary->expression);
 		auto constant = get_constant_value(unary->expression);
 		switch (unary->operation) {
 			case UnaryOperation::star: {
@@ -7802,7 +7877,7 @@ private:
 				} else {
 					reporter.error(unary->location, "Star is used to create pointer types and to dereference pointer values, but this expression is not a type nor a pointer.");
 					reporter.info(unary->expression->location, "Type of this expression is {}.", unary->expression->type);
-					yield(YieldResult::fail);
+					fail();
 				}
 				break;
 			}
@@ -7813,7 +7888,7 @@ private:
 					unary->type = make_pointer(unary->expression->type, definition->mutability);
 				} else {
 					reporter.error(unary->location, "You can only take address of names or blocks that end with a name.");
-					yield(YieldResult::fail);
+					fail();
 				}
 				break;
 			}
@@ -7835,7 +7910,7 @@ private:
 
 				if (!unary->type) {
 					reporter.error(unary->location, "Unary plus can't be applied to expression of type {}", unary->expression->type);
-					yield(YieldResult::fail);
+					fail();
 				}
 
 				NOTE_LEAK(unary);
@@ -7859,7 +7934,7 @@ private:
 
 				if (!unary->type) {
 					reporter.error(unary->location, "Unary minus can't be applied to expression of type {}", unary->expression->type);
-					yield(YieldResult::fail);
+					fail();
 				}
 				break;
 			}
@@ -7885,21 +7960,21 @@ private:
 	}
 	[[nodiscard]] Return *typecheck_impl(Return *return_, bool can_substitute) {
 		if (return_->value)
-			typecheck(&return_->value);
+			typecheck_or_unwind(&return_->value);
 
 		return return_;
 	}
 	[[nodiscard]] While *typecheck_impl(While *While, bool can_substitute) {
-		typecheck(&While->condition);
+		typecheck_or_unwind(&While->condition);
 
 		scoped_replace(current_loop, While);
 
 		if (auto builtin_type = direct_as<BuiltinTypeName>(While->condition->type); !builtin_type || builtin_type->type_kind != BuiltinType::Bool) {
 			reporter.error(While->condition->location, "Condition type must be Bool.");
-			yield(YieldResult::fail);
+			fail();
 		}
 
-		typecheck(&While->body);
+		typecheck_or_unwind(&While->body);
 
 		return While;
 	}
@@ -7910,7 +7985,7 @@ private:
 	}
 	[[nodiscard]] Break *typecheck_impl(Break *Break, bool can_substitute) {
 		if (Break->value) {
-			typecheck(&Break->value);
+			typecheck_or_unwind(&Break->value);
 		} else {
 			assert(current_loop);
 			Break->loop = current_loop;
@@ -7924,7 +7999,7 @@ private:
 
 		s64 struct_size = 0;
 		for (auto &member : Struct->members) {
-			typecheck(&member);
+			typecheck_or_unwind(&member);
 			member->offset = struct_size;
 			struct_size += get_size(member->type);
 		}
@@ -7933,7 +8008,7 @@ private:
 		return Struct;
 	}
 	[[nodiscard]] ArrayType *typecheck_impl(ArrayType *arr, bool can_substitute) {
-		typecheck(&arr->count_expression);
+		typecheck_or_unwind(&arr->count_expression);
 		if (auto maybe_count = get_constant_value(arr->count_expression)) {
 			auto count_value = maybe_count.value();
 			s64 count = 0;
@@ -7948,44 +8023,44 @@ private:
 				case ValueKind::S64: count = count_value.S64; break;
 				default: {
 					reporter.error(arr->count_expression->location, "Count expression must be an integer.");
-					yield(YieldResult::fail);
+					fail();
 					break;
 				}
 			}
 
 			if (count <= 0) {
 				reporter.error(arr->count_expression->location, "Arrays of 0 elements or less are not allowed.");
-				yield(YieldResult::fail);
+				fail();
 			}
 			arr->count = (u64)count;
 		} else {
 			reporter.error(arr->count_expression->location, "Count expression must be constant.");
-			yield(YieldResult::fail);
+			fail();
 		}
 		
-		typecheck(&arr->element_type);
+		typecheck_or_unwind(&arr->element_type);
 		if (!is_type(arr->element_type)) {
 			reporter.error(arr->element_type->location, "This must be a type.");
 			reporter.info(arr->location, "Because this is an array.");
-			yield(YieldResult::fail);
+			fail();
 		}
 
 		arr->type = get_builtin_type(BuiltinType::Type);
 		return arr;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Subscript *Subscript, bool can_substitute) {
-		typecheck(&Subscript->subscriptable);
+		typecheck_or_unwind(&Subscript->subscriptable);
 		auto array_type = direct_as<ArrayType>(Subscript->subscriptable->type);
 		if (!array_type) {
 			reporter.error(Subscript->subscriptable->location, "This must be an array.");
-			yield(YieldResult::fail);
+			fail();
 		}
 
-		typecheck(&Subscript->index);
+		typecheck_or_unwind(&Subscript->index);
 		make_concrete(Subscript->index);
 		if (!::is_concrete_integer(Subscript->index->type)) {
 			reporter.error(Subscript->index->location, "This must be an integer.");
-			yield(YieldResult::fail);
+			fail();
 		}
 
 		Subscript->type = array_type->element_type;
@@ -8014,13 +8089,13 @@ private:
 	}
 	[[nodiscard]] ArrayConstructor *typecheck_impl(ArrayConstructor *arr, bool can_substitute) {
 		for (auto &element : arr->elements) {
-			typecheck(&element);
+			typecheck_or_unwind(&element);
 		}
 
 		make_concrete(arr->elements[0]);
 		for (auto &element : arr->elements.skip(1)) {
 			if (!implicitly_cast(&element, arr->elements[0]->type, true)) {
-				yield(YieldResult::fail);
+				fail();
 			}
 		}
 
@@ -8254,7 +8329,9 @@ public:
 #undef x
 #undef y
 	}
-
+	
+	#undef fail
+	#undef with_unwind_strategy
 };
 
 u64 get_typechecking_progress() {
@@ -8443,8 +8520,10 @@ s32 tl_main(Span<Span<utf8>> args) {
 		};
 
 		ThreadPool thread_pool;
-		init_thread_pool(&thread_pool, thread_count - 1, { .worker_initter = init_worker_fiber });
-		defer { deinit_thread_pool(&thread_pool); };
+		thread_pool.init(thread_count - 1, {.worker_initter = init_worker_fiber});
+		defer { thread_pool.deinit(); };
+
+		auto tasks = thread_pool.create_task_list();
 
 		static bool failed = false;
 
@@ -8482,13 +8561,13 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 			for (auto &entry : typecheck_entries) {
 				if (entry.status == TypecheckEntryStatus::unfinished || entry.status == TypecheckEntryStatus::unstarted) {
-					thread_pool += [&entry] {
+					tasks += [&entry] {
 						perform_typechecking(entry);
 					};
 				}
 			}
 
-			thread_pool.wait_for_completion();
+			tasks.wait_for_completion(WaitForCompletionOption::do_my_task);
 
 			auto current_progress = get_typechecking_progress();
 			assert(current_progress >= initial_progress);
@@ -8502,14 +8581,14 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 				for (auto &entry : typecheck_entries) {
 					if (entry.status == TypecheckEntryStatus::unfinished) {
-						thread_pool += [&entry] {
+						tasks += [&entry] {
 							perform_typechecking(entry);
 							assert(entry.status != TypecheckEntryStatus::unfinished);
 						};
 					}
 				}
 
-				thread_pool.wait_for_completion();
+				tasks.wait_for_completion(WaitForCompletionOption::do_my_task);
 
 				break;
 			}

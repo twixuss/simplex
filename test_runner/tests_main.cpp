@@ -143,13 +143,15 @@ s32 tl_main(Span<String> arguments) {
 	u32 n_succeeded = 0;
 
 	ThreadPool thread_pool;
-	init_thread_pool(&thread_pool, get_cpu_info().logical_processor_count - 1);
-	defer { deinit_thread_pool(&thread_pool); };
+	thread_pool.init(get_cpu_info().logical_processor_count - 1);
+	defer { thread_pool.deinit(); };
 
 	u32 volatile test_counter = 0;
 
+	auto tasks = thread_pool.create_task_list();
+
 	for (auto test_filename : test_filenames) {
-		thread_pool += [=, &n_failed, &n_succeeded, &test_counter] {
+		tasks += [=, &n_failed, &n_succeeded, &test_counter] {
 			auto test_index = atomic_add(&test_counter, 1);
 
 			bool fail = false;
@@ -332,7 +334,7 @@ s32 tl_main(Span<String> arguments) {
 		};
 	}
 
-	thread_pool.wait_for_completion();
+	tasks.wait_for_completion();
 
 	if (do_coverage) {
 		println("Merging coverage results...");

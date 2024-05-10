@@ -117,7 +117,7 @@ s32 tl_main(Span<String> arguments) {
 	current_allocator = tracking_allocator;
 
 	while (1) {
-		defer { temporary_allocator.clear(); };
+		defer { current_temporary_allocator.clear(); };
 		scoped(temporary_allocator_and_checkpoint);
 		StringBuilder builder;
 
