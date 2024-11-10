@@ -33,7 +33,7 @@
       <EnableModules>false</EnableModules>
       <BuildStlModules>false</BuildStlModules>
       <PreprocessToFile>false</PreprocessToFile>
-      <UseStandardPreprocessor>false</UseStandardPreprocessor>
+      <UseStandardPreprocessor>true</UseStandardPreprocessor>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup />

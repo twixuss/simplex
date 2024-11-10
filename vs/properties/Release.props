@@ -15,9 +15,12 @@
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <OmitFramePointers>true</OmitFramePointers>
       <PreprocessorDefinitions>BUILD_DEBUG=0;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <WholeProgramOptimization>true</WholeProgramOptimization>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
     </ClCompile>
     <Link>
       <OptimizeReferences>true</OptimizeReferences>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup />

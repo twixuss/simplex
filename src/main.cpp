@@ -21,7 +21,7 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 
 void print_crash_info();
 
-#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCSIG__, __VA_ARGS__), print_crash_info(), debugger_attached() ? (debug_break(), 0) : 0, exit(-1))
+#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCSIG__ __VA_OPT__(,) __VA_ARGS__), print_crash_info(), debugger_attached() ? (debug_break(), 0) : 0, exit(-1))
 
 #if !BUILD_DEBUG
 #define assert(...)
@@ -39,6 +39,7 @@ void print_crash_info();
 #include <tl/time.h>
 #include <tl/debug.h>
 #include <tl/macros.h>
+#include <tl/bits.h>
 
 #define ENABLE_STRING_HASH_COUNT 0
 #define ENABLE_NOTE_LEAK 0
@@ -102,6 +103,8 @@ bool print_uids = false;
 bool report_yields = false;
 bool enable_time_log = false;
 bool is_debugging = false;
+bool print_tokens = false;
+bool print_wait_failures = false;
 
 #define dbgln(...) (is_debugging ? println(__VA_ARGS__) : 0)
 
@@ -326,41 +329,14 @@ using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, DefaultAllocator>;
 
 #include "x.h"
 
-enum TokenKind : u16 {
-#define x(name) Token_##name,
-#define y(name, value) Token_##name = value,
-	ENUMERATE_TOKEN_KIND(x, y)
-#undef y
-#undef x
-};
-
-consteval u16 const_string_to_token_kind(Span<char> token) {
-	constexpr u32 counter_start = __COUNTER__;
-	constexpr u32 long_token_kind_base = 0x9000;
-	switch (token.count) {
-		case 1:
-		case 2: {
-			u16 result = 0;
-			for (auto c : token) {
-				result <<= 8;
-				result |= c;
-			}
-			return result;
-		}
-#define x(string) if (token == string##s) return long_token_kind_base + __COUNTER__ - counter_start - 1;
-		case 3: {
-			ENUMERATE_TRIPLE_CHAR_TOKENS(x)
-				break;
-		}
-		default: {
-			if (token == "typeof"s) return Token_typeof;
-			break;
-		}
-#undef x
+consteval u64 const_string_to_token_kind(Span<char> string) {
+	assert(string.count <= 8);
+	u64 result = 0;
+	for (umm i = string.count - 1; i != -1; --i) {
+		result <<= 8;
+		result |= string.data[i];
 	}
-
-
-	*(int *)0 = 0; /*invalid token*/;
+	return result;
 }
 consteval u32 const_string_to_token_kind(char a, char b) {
 	char buffer[] { a, b };
@@ -369,6 +345,30 @@ consteval u32 const_string_to_token_kind(char a, char b) {
 consteval u32 const_string_to_token_kind(char a, char b, char c) {
 	char buffer[] { a, b, c };
 	return const_string_to_token_kind(array_as_span(buffer));
+}
+
+enum TokenKind : u64 {
+	#define x(name) Token_##name = const_string_to_token_kind(#name##s),
+	#define y(name, value) Token_##name = value,
+	ENUMERATE_TOKEN_KIND(x, y)
+	#undef y
+	#undef x
+};
+
+String enum_name(TokenKind k) {
+	switch (k) {
+		#define x(name) case Token_##name: return u8 ## #name ## s;
+		#define y(name, value) x(name)
+			ENUMERATE_TOKEN_KIND(x, y)
+		#undef y
+		#undef x
+	}
+	List<utf8, TemporaryAllocator> s;
+	if (k >= 256) {
+		s.add((utf8)(k >> 8));
+	}
+	s.add((utf8)k);
+	return s;
 }
 
 inline umm append(StringBuilder &builder, TokenKind kind) {
@@ -385,11 +385,13 @@ inline umm append(StringBuilder &builder, TokenKind kind) {
 
 	switch (kind) {
 #define x(name) case Token_##name: return append(builder, #name);
-		ENUMERATE_TOKEN_KIND(x, x)
+#define y(name, value) x(name)
+		ENUMERATE_TOKEN_KIND(x, y)
+#undef y
 #undef x
 	}
 
-	return append(builder, "unknown");
+	return append_format(builder, "(unknown TokenKind 0x{} \"{}\")", FormatInt{.value=(u64)kind, .radix=16}, as_chars(value_as_bytes(kind)));
 }
 
 struct Token {
@@ -451,7 +453,9 @@ SourceLocation get_source_location(String location) {
 		--cursor;
 	}
 
-	result.file = content_start_to_file_name.find(cursor + 1)->value;
+	auto found_file_name = content_start_to_file_name.find(cursor + 1);
+	assert(found_file_name);
+	result.file = found_file_name->value;
 
 	return result;
 }
@@ -479,22 +483,25 @@ enum class ReportKind : u8 {
 };
 
 struct Report {
-	ReportKind kind;
-	String location;
-	String message;
+	ReportKind kind = {};
+	String location = {};
+	String message = {};
+	u32 indentation = 0;
 
-	static Report create(ReportKind kind, String location, auto const &message) {
+	static Report create(ReportKind kind, u32 indentation, String location, auto const &message) {
 		return {
 			.kind = kind,
 			.location = location,
 			.message = (String)to_string(message),
+			.indentation = indentation,
 		};
 	}
-	static Report create(ReportKind kind, String location, char const *format, auto const &arg, auto const &...args) {
+	static Report create(ReportKind kind, u32 indentation, String location, char const *format, auto const &arg, auto const &...args) {
 		return {
 			.kind = kind,
 			.location = location,
 			.message = (String)tl::format(format, arg, args...),
+			.indentation = indentation,
 		};
 	}
 
@@ -521,10 +528,19 @@ struct Report {
 	void print() {
 		scoped(temporary_allocator_and_checkpoint);
 
+		auto indent = [&] {
+			for (u32 i = indentation; i--;) {
+				tl::print(u8"|   "s);
+			}
+		};
+
 		if (location.data) {
 			auto source_location = get_source_location(location);
 
+			indent();
 			println("{}: ", source_location);
+
+			indent();
 			print_report_kind(kind);
 			println(": {}",  message);
 
@@ -536,6 +552,7 @@ struct Report {
 				auto prefix = format(u8" {} | {}", Format(line_number, line_number_alignment), String(line.begin(), highlight.begin()));
 				auto postfix = String(highlight.end(), line.end());
 
+				indent();
 				print_replacing_tabs_with_spaces(prefix);
 				with(get_color(kind), print_replacing_tabs_with_spaces(highlight));
 				print_replacing_tabs_with_spaces(postfix);
@@ -562,6 +579,7 @@ struct Report {
 				output_line(source_location.line_number + source_location.lines.count - 1, source_location.lines.back(), String{source_location.lines.back().begin(), location.end()});
 			}
 		} else {
+			indent();
 			print_report_kind(kind);
 			println(": {}", message);
 		}
@@ -572,15 +590,16 @@ struct Report {
 bool break_on_error = false;
 
 struct ReporterBase {
-	void info   (this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::info,    location, args...)); }
-	void warning(this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::warning, location, args...)); }
+	u32 indentation = 0;
+	void info   (this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::info,    self.indentation, location, args...)); }
+	void warning(this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::warning, self.indentation, location, args...)); }
 	void error  (this auto &&self, String location, auto const &...args) {
 		if (break_on_error) {
 			debug_break();
 		}
-		self.on_report(Report::create(ReportKind::error, location, args...));
+		self.on_report(Report::create(ReportKind::error, self.indentation, location, args...));
 	}
-	void help   (this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::help, location, args...)); }
+	void help   (this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::help, self.indentation, location, args...)); }
 	void info   (this auto &&self, auto const &...args) { return self.info   (String{}, args...); }
 	void warning(this auto &&self, auto const &...args) { return self.warning(String{}, args...); }
 	void error  (this auto &&self, auto const &...args) { return self.error  (String{}, args...); }
@@ -637,8 +656,17 @@ void print_crash_info() {
 	println(resolve_names(get_call_stack().skip(1).skip(-7)));
 }
 
+template <int byte_count>
+auto chars_as_int(utf8 const *chars) {
+	using Int = UintWithBits<byte_count * 8>;
+	Int result = *(Int *)chars;
+	result &= ((1ull<<(8*byte_count))-1);
+	return result;
+}
+
 using Tokens = GList<Token>;
 
+// TODO: don't make a giant list, cmon
 Optional<Tokens> source_to_tokens(String source, String path) {
 	timed_function();
 
@@ -646,6 +674,30 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 
 	Tokens tokens;
 	tokens.reserve(source.count / characters_per_token_prediction);
+
+	defer {
+		if (print_tokens) {
+			println("\nTokens of \"{}\":", path);
+			for (umm i = 0; i < tokens.count; ++i) {
+				auto &token = tokens[i];
+
+				print("{}) {} ", i, enum_name(token.kind));
+
+				switch (token.kind) {
+					case Token_number:
+					case Token_name: 
+					case Token_directive: 
+						print("\"{}\"", EscapedString{token.string}); 
+						break;
+					case Token_string: 
+						print("{}", EscapedString{token.string}); 
+						break;
+				}
+
+				println();
+			}
+		}
+	};
 
 	utf8 *cursor = source.data;
 
@@ -780,12 +832,27 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 			CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE('>', '=')
 			CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE('<', '=')
 			CASE_SINGLE_OR_DOUBLE('.', '.');
-			CASE_SINGLE_OR_DOUBLE('+', '=');
-			CASE_SINGLE_OR_DOUBLE('-', '=');
-			CASE_SINGLE_OR_DOUBLE('*', '=');
-			CASE_SINGLE_OR_DOUBLE('%', '=');
-			CASE_SINGLE_OR_DOUBLE('^', '=');
-			CASE_SINGLE_OR_DOUBLE('!', '=');
+			case '+':
+			case '-':
+			case '*':
+			case '%':
+			case '^':
+			case '!': {
+				char a = *cursor;
+				next();
+
+				u8 shift_table[] = {0, 8};
+				u16 or_table[] = {0, '=' << 8};
+				bool is_equals = *cursor == '=';
+
+				cursor += is_equals;
+				token.kind = (TokenKind)(a | or_table[is_equals]);
+				token.string.count = is_equals + 1;
+
+				tokens.add(token);
+				break;
+			}
+
 			CASE_SINGLE_OR_TWO_DOUBLES('=', '>');
 			CASE_SINGLE_OR_TWO_DOUBLES('&', '=');
 			CASE_SINGLE_OR_TWO_DOUBLES('|', '=');
@@ -842,7 +909,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 				while (true) {
 					switch (*cursor) {
 						ENUMERATE_CHARS_ALPHA(PASTE_CASE)
-							ENUMERATE_CHARS_DIGIT(PASTE_CASE)
+						ENUMERATE_CHARS_DIGIT(PASTE_CASE)
 						case '_': {
 							next();
 							break;
@@ -858,25 +925,43 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 				break;
 			}
 
-					ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
-						token.kind = Token_number;
+			ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
+				token.kind = Token_number;
 
-						while (true) {
-							switch (*cursor) {
-								ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
-									next();
-									break;
-								}
-								default:
-									goto number_loop_end;
+				next();
+				
+				if (*cursor == 'x') {
+					next();
+
+					while (true) {
+						switch (*cursor) {
+							ENUMERATE_CHARS_HEX(PASTE_CASE) {
+								next();
+								break;
 							}
+							default:
+								goto number_loop_end;
 						}
-					number_loop_end:;
-
-						token.string.set_end(cursor);
-						tokens.add(token);
-						break;
 					}
+
+				} else {
+					while (true) {
+						switch (*cursor) {
+							ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
+								next();
+								break;
+							}
+							default:
+								goto number_loop_end;
+						}
+					}
+				}
+			number_loop_end:;
+
+				token.string.set_end(cursor);
+				tokens.add(token);
+				break;
+			}
 			default: {
 				token.kind = Token_name;
 
@@ -902,28 +987,184 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 
 				static constexpr umm max_keyword_size = []{
 					umm max = 0;
-#define x(name) max = tl::max(max, u8#name##s.count);
+					#define x(name) max = tl::max(max, u8###name##s.count);
 					ENUMERATE_KEYWORDS(x)
-#undef x
-						return max; 
+					#undef x
+					return max; 
 				}();
 
 				// NOTE:
 				// This relies on compiler being able to optimize out branches.
 				// Based on string size, check only keywords with that size.
 				switch (token.string.count) {
-#define x(name) \
-	else if (u8#name##s.count == COUNT && token.string == #name) { \
-		token.kind = Token_##name; \
-	}
+					#if 0
+					// Preprocessor way with switch
 
-#define CASE(N) \
-	case N: { \
-		umm const COUNT = N; \
-		if (false) {} \
-		ENUMERATE_KEYWORDS(x); \
-		break; \
-	}
+					#define x(name) \
+						case const_string_to_token_kind(#name##s): { token.kind = Token_##name; break; }
+
+					#define CASE(N) \
+						case N: { \
+							umm const COUNT = N; \
+							auto token_as_int = chars_as_int<N>(token.string.data); \
+							switch (token_as_int) { \
+								ENUMERATE_KEYWORDS_L##N(x) \
+							} \
+							break; \
+						}
+					CASE(1)
+					CASE(2)
+					CASE(3)
+					CASE(4)
+					CASE(5)
+					CASE(6)
+					CASE(7)
+					CASE(8)
+					static_assert(max_keyword_size <= 9, "");
+					#undef CASE
+					#undef x
+
+					#elif 1
+					// Manual switch
+					case 2: {
+						u16 token_as_int = *(u16 *)token.string.data;
+						switch (token_as_int) {
+							case const_string_to_token_kind("U8"s): { token.kind = Token_U8; break; }
+							case const_string_to_token_kind("S8"s): { token.kind = Token_S8; break; }
+							case const_string_to_token_kind("if"s): { token.kind = Token_if; break; }
+							case const_string_to_token_kind("as"s): { token.kind = Token_as; break; }
+						}
+						break;
+					}
+					case 3: {
+						u32 token_as_int = *(u32 *)token.string.data & 0xff'ff'ff;
+						switch (token_as_int) {
+							case const_string_to_token_kind("U16"s): { token.kind = Token_U16; break; }
+							case const_string_to_token_kind("U32"s): { token.kind = Token_U32; break; }
+							case const_string_to_token_kind("U64"s): { token.kind = Token_U64; break; }
+							case const_string_to_token_kind("S16"s): { token.kind = Token_S16; break; }
+							case const_string_to_token_kind("S32"s): { token.kind = Token_S32; break; }
+							case const_string_to_token_kind("S64"s): { token.kind = Token_S64; break; }
+							case const_string_to_token_kind("let"s): { token.kind = Token_let; break; }
+							case const_string_to_token_kind("var"s): { token.kind = Token_var; break; }
+						}
+						break;
+					}
+					case 4: {
+						u32 token_as_int = *(u32 *)token.string.data;
+						switch (token_as_int) {
+							case const_string_to_token_kind("Type"s): { token.kind = Token_Type; break; }
+							case const_string_to_token_kind("Bool"s): { token.kind = Token_Bool; break; }
+							case const_string_to_token_kind("None"s): { token.kind = Token_None; break; }
+							case const_string_to_token_kind("none"s): { token.kind = Token_none; break; }
+							case const_string_to_token_kind("then"s): { token.kind = Token_then; break; }
+							case const_string_to_token_kind("else"s): { token.kind = Token_else; break; }
+							case const_string_to_token_kind("true"s): { token.kind = Token_true; break; }
+						}
+						break;
+					}
+					case 5: {
+						u64 token_as_int = *(u64 *)token.string.data & 0xff'ff'ff'ff'ff;
+						switch (token_as_int) {
+							case const_string_to_token_kind("const"s): { token.kind = Token_const; break; }
+							case const_string_to_token_kind("false"s): { token.kind = Token_false; break; }
+							case const_string_to_token_kind("while"s): { token.kind = Token_while; break; }
+							case const_string_to_token_kind("break"s): { token.kind = Token_break; break; }
+							case const_string_to_token_kind("match"s): { token.kind = Token_match; break; }
+						}
+						break;
+					}
+					case 6: {
+						u64 token_as_int = *(u64 *)token.string.data & 0xff'ff'ff'ff'ff'ff;
+						switch (token_as_int) {
+							case const_string_to_token_kind("String"s): { token.kind = Token_String; break; }
+							case const_string_to_token_kind("return"s): { token.kind = Token_return; break; }
+							case const_string_to_token_kind("typeof"s): { token.kind = Token_typeof; break; }
+							case const_string_to_token_kind("inline"s): { token.kind = Token_inline; break; }
+							case const_string_to_token_kind("struct"s): { token.kind = Token_struct; break; }
+						}
+						break;
+					}
+					case 8: {
+						u64 token_as_int = *(u64 *)token.string.data;
+						switch (token_as_int) {
+							case const_string_to_token_kind("continue"s): { token.kind = Token_continue; break; }
+							case const_string_to_token_kind("noinline"s): { token.kind = Token_noinline; break; }
+						}
+						break;
+					}
+					#elif 0
+					// Manual ifs
+					case 2: {
+						if (false) {}
+						else if (token.string == "U8") { token.kind = Token_U8; }
+						else if (token.string == "S8") { token.kind = Token_S8; }
+						else if (token.string == "if") { token.kind = Token_if; }
+						else if (token.string == "as") { token.kind = Token_as; }
+						break;
+					}
+					case 3: {
+						if (false) {}
+						else if (token.string == "U16") { token.kind = Token_U16; }
+						else if (token.string == "U32") { token.kind = Token_U32; }
+						else if (token.string == "U64") { token.kind = Token_U64; }
+						else if (token.string == "S16") { token.kind = Token_S16; }
+						else if (token.string == "S32") { token.kind = Token_S32; }
+						else if (token.string == "S64") { token.kind = Token_S64; }
+						else if (token.string == "let") { token.kind = Token_let; }
+						else if (token.string == "var") { token.kind = Token_var; }
+						break;
+					}
+					case 4: {
+						if (false) {}
+						else if (token.string == "Type") { token.kind = Token_Type; }
+						else if (token.string == "Bool") { token.kind = Token_Bool; }
+						else if (token.string == "None") { token.kind = Token_None; }
+						else if (token.string == "then") { token.kind = Token_then; }
+						else if (token.string == "else") { token.kind = Token_else; }
+						else if (token.string == "true") { token.kind = Token_true; }
+						break;
+					}
+					case 5: {
+						if (false) {}
+						else if (token.string == "const") { token.kind = Token_const; }
+						else if (token.string == "false") { token.kind = Token_false; }
+						else if (token.string == "while") { token.kind = Token_while; }
+						else if (token.string == "break") { token.kind = Token_break; }
+						else if (token.string == "match") { token.kind = Token_match; }
+						break;
+					}
+					case 6: {
+						if (false) {}
+						else if (token.string == "String") { token.kind = Token_String; }
+						else if (token.string == "return") { token.kind = Token_return; }
+						else if (token.string == "typeof") { token.kind = Token_typeof; }
+						else if (token.string == "inline") { token.kind = Token_inline; }
+						else if (token.string == "struct") { token.kind = Token_struct; }
+						break;
+					}
+					case 8: {
+						if (false) {}
+						else if (token.string == "continue") { token.kind = Token_continue; }
+						else if (token.string == "noinline") { token.kind = Token_noinline; }
+						break;
+					}
+					#else
+					// Preprocessor way with ifs
+
+
+					#define x(name) \
+						else if (u8###name##s.count == COUNT && token.string == #name) { \
+							token.kind = Token_##name; \
+						}
+
+					#define CASE(N) \
+						case N: { \
+							umm const COUNT = N; \
+							if (false) {} \
+							ENUMERATE_KEYWORDS(x); \
+							break; \
+						}
 					CASE(1)
 					CASE(2)
 					CASE(3)
@@ -934,8 +1175,9 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 					CASE(8)
 					CASE(9)
 					static_assert(max_keyword_size <= 9, "");
-#undef CASE
-#undef x
+					#undef CASE
+					#undef x
+					#endif
 				}
 
 				tokens.add(token);
@@ -955,22 +1197,14 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 
 constexpr u32 custom_precedence = 4;
 
-enum class BinaryOperation : u16 {
-#define x(name, token, precedence) name = const_string_to_token_kind(token##s),
+enum class BinaryOperation : u8 {
+#define x(name, token, precedence) name,
 	ENUMERATE_BINARY_OPERATIONS(x)
 #undef x
 };
 
-enum class UnaryOperation : u16 {
-#define x(name, token) name = const_string_to_token_kind(token##s),
-#define y(name)
-	ENUMERATE_UNARY_OPERATIONS(x, y)
-#undef y
-#undef x
-
-	_unused = 0xefff,
-
-#define x(name, token)
+enum class UnaryOperation : u8 {
+#define x(name, token) name,
 #define y(name) name,
 	ENUMERATE_UNARY_OPERATIONS(x, y)
 #undef y
@@ -1111,13 +1345,79 @@ Statement *as(Node *node) {
 	return 0;
 }
 
+struct AtomicArenaAllocator : AllocatorBase<AtomicArenaAllocator> {
+	Allocator parent_allocator;
+	umm buffer_size = 0;
+	u8 *base = 0;
+	u8 * volatile cursor = 0;
+
+	forceinline static AtomicArenaAllocator create(umm size TL_LP) {
+		AtomicArenaAllocator result = {};
+		result.parent_allocator = TL_GET_CURRENT(allocator);
+		result.buffer_size = size;
+		result.cursor = result.base = result.parent_allocator.allocate_uninitialized<u8>(size TL_LA);
+		return result;
+	}
+
+	forceinline static AtomicArenaAllocator current() { return {}; }
+
+	forceinline AllocationResult allocate_impl(umm size, umm alignment TL_LP) {
+		assert(cursor, "arena allocator was not initialized");
+
+		u8 *target = 0;
+
+		atomic_update(&cursor, [=, &target](u8 *cursor) {
+			target = ceil(cursor, alignment);
+			cursor = target + size;
+			assert(cursor <= base + buffer_size, "Out of arena memory");
+			return cursor;
+		});
+
+		return AllocationResult { .data = target, .count = size, .is_zeroed = true };
+	}
+	forceinline AllocationResult reallocate_impl(void *old_data, umm old_size, umm new_size, umm alignment TL_LP) {
+		auto new_data = allocate_impl(new_size, alignment);
+		memcpy(new_data.data, old_data, old_size);
+		return new_data;
+	}
+	forceinline void deallocate_impl(void *data, umm size, umm alignment TL_LP) {
+		(void)data;
+		(void)size;
+		(void)alignment;
+	}
+
+	forceinline operator Allocator() {
+		return {
+			.func = [](AllocatorAction action, void *data, umm old_size, umm new_size, umm align, void *state TL_LPD) -> AllocationResult {
+				return ((AtomicArenaAllocator *)state)->execute(action, data, old_size, new_size, align TL_LA);
+			},
+			.state = this
+		};
+	}
+
+	forceinline void clear() {
+		atomic_set(&cursor, base);
+	}
+	forceinline void free() {
+		if (!base)
+			return;
+
+		parent_allocator.free(base);
+		base = 0;
+		cursor = 0;
+		buffer_size = 0;
+	}
+};
+
+AtomicArenaAllocator node_arena;
+
 template <class T>
 struct NodeBase {
 	NodeBase() {
 		((T *)this)->kind = NodeTypeToKind<T>::kind;
 	}
 	static T *create() {
-		return DefaultAllocator{}.allocate<T>();
+		return node_arena.allocate<T>();
 	}
 	void free() {
 		((T *)this)->free_impl();
@@ -1139,15 +1439,12 @@ inline umm append(StringBuilder &builder, Mutability mutability) {
 	return append_format(builder, "(unknown Mutability {})", (u32)mutability);
 }
 
+template <class T>
 struct Meaning {
-	Mutability value = {};
+	T value = {};
 };
 
-Meaning meaning(Mutability mutability) {
-	return {mutability};
-}
-
-inline umm append(StringBuilder &builder, Meaning mutability) {
+inline umm append(StringBuilder &builder, Meaning<Mutability> mutability) {
 	switch (mutability.value) {
 		case Mutability::constant: return append(builder, "constant");
 		case Mutability::readonly: return append(builder, "read-only");
@@ -1161,17 +1458,19 @@ inline umm append(StringBuilder &builder, Meaning mutability) {
 #define DEFINE_STATEMENT(name) struct name : Statement, NodeBase<name>
 
 enum class BuiltinType : u8 {
-#define x(name) name,
+	#define x(name) name,
 	ENUMERATE_BUILTIN_TYPES(x)
-#undef x
+	#undef x
 	count,
 };
 
 umm append(StringBuilder &builder, BuiltinType type_kind) {
 	switch (type_kind) {
-#define x(name, value) case BuiltinType::name: return append(builder, #name);
+		#define x(name) case BuiltinType::name: return append(builder, #name);
+		#define y(name, value) x(name)
 		ENUMERATE_BUILTIN_TYPES(x)
-#undef x
+		#undef y
+		#undef x
 	}
 	return append_format(builder, "(unknown BuiltinType {})", (u32)type_kind);
 }
@@ -1289,6 +1588,7 @@ struct Value {
 			case ValueKind::return_:
 			case ValueKind::break_:
 			case ValueKind::continue_:
+			case ValueKind::none:
 				break;
 			default:
 				invalid_code_path();
@@ -1336,6 +1636,8 @@ enum class CallKind {
 	constructor,
 };
 
+constexpr u64 invalid_definition_offset = 1ull << 63;
+
 DEFINE_EXPRESSION(Block) {
 	Block *parent = 0;
 	Expression *container = 0;
@@ -1368,7 +1670,7 @@ DEFINE_EXPRESSION(Definition) {
 	Expression *initial_value = 0;
 	Optional<Value> constant_value = {};
 	Mutability mutability = {};
-	u64 offset = 1ull << 63;
+	u64 offset = invalid_definition_offset;
 	bool is_parameter : 1 = false;
 };
 DEFINE_EXPRESSION(IntegerLiteral) {
@@ -1377,6 +1679,7 @@ DEFINE_EXPRESSION(IntegerLiteral) {
 DEFINE_EXPRESSION(BooleanLiteral) {
 	bool value = false;
 };
+DEFINE_EXPRESSION(NoneLiteral) {};
 DEFINE_EXPRESSION(StringLiteral) {
 	String value;
 };
@@ -1395,6 +1698,8 @@ DEFINE_EXPRESSION(Lambda) {
 
 	GList<Return *> returns;
 	
+	u64 first_instruction_index = -1;
+
 	Inline inline_status = {};
 
 	String extern_library = {};
@@ -1480,21 +1785,21 @@ DEFINE_STATEMENT(IfStatement) {
 };
 
 template <class T>
-concept CNode = std::_Is_any_of_v<T, Expression, Statement
+concept CNode = OneOf<T, Expression, Statement
 #define x(name) , name
 	ENUMERATE_NODE_KIND(x)
 #undef x
 >;
 
 template <class T>
-concept CExpression = std::_Is_any_of_v<T, Expression
+concept CExpression = OneOf<T, Expression
 #define x(name) , name
 	ENUMERATE_EXPRESSION_KIND(x)
 #undef x
 >;
 
 template <class T>
-concept CStatement = std::_Is_any_of_v<T, Statement
+concept CStatement = OneOf<T, Statement
 #define x(name) , name
 	ENUMERATE_STATEMENT_KIND(x)
 #undef x
@@ -1656,6 +1961,7 @@ ForEachDirective visit_impl(While **node, auto &&visitor) {
 ForEachDirective visit_impl(Name **node, auto &&visitor) { return ForEach_continue; }
 ForEachDirective visit_impl(IntegerLiteral **node, auto &&visitor) { return ForEach_continue; }
 ForEachDirective visit_impl(BooleanLiteral **node, auto &&visitor) { return ForEach_continue; }
+ForEachDirective visit_impl(NoneLiteral **node, auto &&visitor) { return ForEach_continue; }
 ForEachDirective visit_impl(StringLiteral  **node, auto &&visitor) { return ForEach_continue; }
 ForEachDirective visit_impl(BuiltinTypeName **node, auto &&visitor) { return ForEach_continue; }
 ForEachDirective visit_impl(Continue **node, auto &&visitor) { return ForEach_continue; }
@@ -2024,26 +2330,27 @@ u64 get_size(BuiltinType type_kind) {
 }
 
 u64 get_size(Type type);
-u64 get_size_impl(Block *node) { not_implemented(); }
-u64 get_size_impl(Call *node) { not_implemented(); }
-u64 get_size_impl(Definition *node) { not_implemented(); }
-u64 get_size_impl(IntegerLiteral *node) { not_implemented(); }
-u64 get_size_impl(BooleanLiteral *node) { not_implemented(); }
-u64 get_size_impl(StringLiteral *node) { not_implemented(); }
-u64 get_size_impl(Lambda *node) { not_implemented(); }
-u64 get_size_impl(LambdaHead *node) { not_implemented(); }
-u64 get_size_impl(Name *node) { not_implemented(); }
-u64 get_size_impl(IfStatement *node) { not_implemented(); }
-u64 get_size_impl(IfExpression *node) { not_implemented(); }
+u64 get_size_impl(Block *node) { invalid_code_path("get_size({}) is invalid", "Block"); }
+u64 get_size_impl(Call *node) { invalid_code_path("get_size({}) is invalid", "Call"); }
+u64 get_size_impl(Definition *node) { invalid_code_path("get_size({}) is invalid", "Definition"); }
+u64 get_size_impl(IntegerLiteral *node) { invalid_code_path("get_size({}) is invalid", "IntegerLiteral"); }
+u64 get_size_impl(BooleanLiteral *node) { invalid_code_path("get_size({}) is invalid", "BooleanLiteral"); }
+u64 get_size_impl(NoneLiteral *node) { invalid_code_path("get_size({}) is invalid", "NoneLiteral"); }
+u64 get_size_impl(StringLiteral *node) { invalid_code_path("get_size({}) is invalid", "StringLiteral"); }
+u64 get_size_impl(Lambda *node) { invalid_code_path("get_size({}) is invalid", "Lambda"); }
+u64 get_size_impl(LambdaHead *node) { invalid_code_path("get_size({}) is invalid", "LambdaHead"); }
+u64 get_size_impl(Name *node) { invalid_code_path("get_size({}) is invalid", "Name"); }
+u64 get_size_impl(IfStatement *node) { invalid_code_path("get_size({}) is invalid", "IfStatement"); }
+u64 get_size_impl(IfExpression *node) { invalid_code_path("get_size({}) is invalid", "IfExpression"); }
 u64 get_size_impl(BuiltinTypeName *node) {
 	return get_size(node->type_kind);
 }
-u64 get_size_impl(Binary *node) { not_implemented(); }
-u64 get_size_impl(Match *node) { not_implemented(); }
+u64 get_size_impl(Binary *node) { invalid_code_path("get_size({}) is invalid", "Binary"); }
+u64 get_size_impl(Match *node) { invalid_code_path("get_size({}) is invalid", "Match"); }
 u64 get_size_impl(Unary *node) {
 	if (node->operation == UnaryOperation::pointer)
 		return 8;
-	not_implemented();
+	invalid_code_path("get_size(Unary {}) is invalid", node->operation);
 }
 u64 get_size_impl(Struct *Struct) {
 	assert(Struct->size != -1);
@@ -2052,8 +2359,8 @@ u64 get_size_impl(Struct *Struct) {
 u64 get_size_impl(ArrayType *arr) {
 	return get_size(arr->element_type) * arr->count.value();
 }
-u64 get_size_impl(Subscript *node) { not_implemented(); }
-u64 get_size_impl(ArrayConstructor *node) { not_implemented(); }
+u64 get_size_impl(Subscript *node) { invalid_code_path("get_size({}) is invalid", "Subscript"); }
+u64 get_size_impl(ArrayConstructor *node) { invalid_code_path("get_size({}) is invalid", "ArrayConstructor"); }
 
 u64 get_size(Type type) {
 	type = direct(type);
@@ -2153,10 +2460,11 @@ void print_ast_impl(Definition *definition) {
 	}
 	print(": ");
 	print_ast(definition->type);
-	print(" = ");
 	if (definition->constant_value) {
+		print(" = ");
 		print_ast(definition->constant_value.value());
 	} else if (definition->initial_value) {
+		print(" = ");
 		print_ast(definition->initial_value);
 	}
 }
@@ -2171,6 +2479,9 @@ void print_ast_impl(IntegerLiteral *literal) {
 }
 void print_ast_impl(BooleanLiteral *literal) {
 	print(literal->value);
+}
+void print_ast_impl(NoneLiteral *) {
+	print("none");
 }
 void print_ast_impl(StringLiteral *literal) {
 	print("\"{}\"", EscapedString{literal->value});
@@ -2273,9 +2584,11 @@ void print_ast_impl(While *While) {
 }
 void print_ast_impl(BuiltinTypeName *type) {
 	switch (type->type_kind) {
-#define x(name, value) case BuiltinType::name: print(#name); return;
+		#define x(name) case BuiltinType::name: print(#name); return;
+		#define y(name, value) x(name)
 		ENUMERATE_BUILTIN_TYPES(x)
-#undef x
+		#undef y
+		#undef x
 	}
 	invalid_code_path();
 }
@@ -2526,6 +2839,16 @@ struct Parser {
 					skip_lines();
 
 					definition->parsed_type = parse_expression_2(); // NOTE: don't parse '='
+
+					switch (definition->parsed_type->kind) {
+						case NodeKind::Name:
+						case NodeKind::BuiltinTypeName:
+						case NodeKind::Unary:
+							break;
+						default:
+							reporter.error(definition->parsed_type->location, "{} is not allowed in type context.", definition->parsed_type->kind);
+							yield(false);
+					}
 				}
 
 				if (token->kind == '=') {
@@ -2641,7 +2964,7 @@ struct Parser {
 								break;
 							}
 
-							reporter.error(token->string, "Unexpected token {} when parsing call argument list. Expected ',' or ')'.", token->string);
+							reporter.error(token->string, "Unexpected token `{}` when parsing call argument list. Expected `,` or `)`.", token->string);
 							yield(false);
 						}
 					}
@@ -2917,6 +3240,12 @@ struct Parser {
 				next();
 				return constructor;
 			}
+			case Token_none: {
+				auto none = NoneLiteral::create();
+				none->location = token->string;
+				next();
+				return none;
+			}
 			case Token_name: {
 				auto name = Name::create();
 				name->location = token->string;
@@ -2934,13 +3263,35 @@ struct Parser {
 				auto literal = IntegerLiteral::create();
 				literal->location = token->string;
 
-				auto parsed = parse_u64(token->string);
-				if (!parsed) {
-					reporter.error(token->string, "Could not parse number {}", token->string);
-					yield(false);
-				}
+				auto hex_digit_to_int = [](utf8 c) -> u8 {
+					u32 u = c;
+					if (u - '0' < 10) {
+						return u - '0';
+					}
+					if (u - 'A' < 6) {
+						return u - 'A' + 10;
+					}
+					if (u - 'a' < 6) {
+						return u - 'a' + 10;
+					}
+					invalid_code_path();
+				};
 
-				literal->value = parsed.value();
+				if (token->string.count >= 2 && token->string.data[1] == 'x') {
+					u64 result = 0;
+					for (int i = 2; i < token->string.count; ++i) {
+						result = (result << 4) | hex_digit_to_int(token->string.data[i]);
+					}
+					literal->value = result;
+				} else {
+					auto parsed = parse_u64(token->string);
+					if (!parsed) {
+						reporter.error(token->string, "Could not parse number {}", token->string);
+						yield(false);
+					}
+
+					literal->value = parsed.value();
+				}
 
 				next();
 
@@ -3014,7 +3365,7 @@ struct Parser {
 					}
 
 					skip_lines();
-					expect('=>');
+					expect(const_string_to_token_kind("=>"s));
 					next();
 					skip_lines();
 
@@ -3704,6 +4055,7 @@ private:
 	}
 	Value load_address_impl(IntegerLiteral *) { invalid_code_path(); }
 	Value load_address_impl(BooleanLiteral *) { invalid_code_path(); }
+	Value load_address_impl(NoneLiteral *) { invalid_code_path(); }
 	Value load_address_impl(StringLiteral *) { invalid_code_path(); }
 	Value load_address_impl(Definition *definition) {
 		for (auto &scope : reversed(scope_stack)) {
@@ -3783,16 +4135,28 @@ private:
 		invalid_code_path();
 	}
 	Value execute_impl(IntegerLiteral *literal) {
-		if (::is_unsigned_integer(literal->type))
-			return Value((u64)literal->value);
-		if (::is_signed_integer(literal->type))
-			return Value((s64)literal->value);
+		if (auto builtin_type = direct_as<BuiltinTypeName>(literal->type)) {
+			switch (builtin_type->type_kind) {
+				case BuiltinType::U8: return Value((u8)literal->value);
+				case BuiltinType::U16: return Value((u16)literal->value);
+				case BuiltinType::U32: return Value((u32)literal->value);
+				case BuiltinType::U64: return Value((u64)literal->value);
+				case BuiltinType::S8: return Value((s8)literal->value);
+				case BuiltinType::S16: return Value((s16)literal->value);
+				case BuiltinType::S32: return Value((s32)literal->value);
+				case BuiltinType::S64: return Value((s64)literal->value);
+			}
+		}
 
-		invalid_code_path();
+		immediate_reporter.error(literal->location, "Could not execute this literal because it does not have a concrete type, its type is {}. This is probably a bug in the compiler.", literal->type);
+		yield(YieldResult::fail);
 		return {};
 	}
 	Value execute_impl(BooleanLiteral *literal) {
 		return Value(literal->value);
+	}
+	Value execute_impl(NoneLiteral *literal) {
+		return Value(ValueKind::none);
 	}
 	Value execute_impl(StringLiteral *literal) {
 		return Value(literal->value);
@@ -4230,6 +4594,9 @@ private:
 			case UnaryOperation::typeof: {
 				return Value(Type(unary->expression->type));
 			}
+			case UnaryOperation::pointer: {
+				return Value(Type(unary));
+			}
 			default:
 				invalid_code_path();
 		}
@@ -4313,9 +4680,11 @@ enum class Comparison : u8 {
 
 inline umm append(StringBuilder &builder, Comparison c) {
 	switch (c) {
-#define x(name, value) case Comparison::name: return append(builder, #name);
+		#define x(name) case Comparison::name: return append(builder, #name);
+		#define y(name, value) x(name)
 		ENUMERATE_COMPARISONS
-#undef x
+		#undef y
+		#undef x
 	}
 	return append_format(builder, "(unknown Comparison {})", (u64)c);
 }
@@ -4352,7 +4721,7 @@ struct Address {
 };
 
 struct Site {
-	Site() { memset(this, 0, sizeof *this); }
+	Site() { memset(this, 0, sizeof(*this)); }
 	Site(Register r) : _is_address(false), r(r) {}
 	Site(Address a) : _is_address(true), a(a) {}
 	~Site() {}
@@ -4411,6 +4780,7 @@ private:
 	x(println_S64) \
 	x(println_String) \
 	x(panic) \
+	x(debug_break) \
 
 enum class Intrinsic : u8 {
 #define x(name) name,
@@ -4420,9 +4790,12 @@ enum class Intrinsic : u8 {
 
 inline umm append(StringBuilder &builder, Intrinsic i) {
 	switch (i) {
-#define x(name, value) case Intrinsic::name: return append(builder, #name);
+		#define x(name) case Intrinsic::name: return append(builder, #name);
+		#define y(name, value) x(name)
 		ENUMERATE_INTRINSICS
-#undef x
+		#undef y
+		#undef x		
+
 	}
 	return append_format(builder, "(unknown Intrinsic {})", (u64)i);
 }
@@ -4493,7 +4866,14 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(srl8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(sra8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(cmp8, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
+	x(sex21,  (y(Site, d) y(InputValue, a))) \
+	x(sex41,  (y(Site, d) y(InputValue, a))) \
+	x(sex42,  (y(Site, d) y(InputValue, a))) \
+	x(sex81,  (y(Site, d) y(InputValue, a))) \
+	x(sex82,  (y(Site, d) y(InputValue, a))) \
+	x(sex84,  (y(Site, d) y(InputValue, a))) \
 	x(call, (y(InputValue, d))) \
+	x(callext, (y(Lambda *, lambda) y(String, lib) y(String, name))) \
 	x(ret,  ()) \
 	x(jmp,  (y(InputValue, d))) \
 	x(jz,   (y(Site, s) y(InputValue, d))) \
@@ -4558,13 +4938,70 @@ private:
 	static void visit_address(InputValue &v, auto &&visitor) { if (v.is_address()) visitor(v.get_address()); }
 };
 
+
+struct Callback {
+	void *start_address;
+};
+
+u64 ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *lambda);
+
+Callback generate_callback(Lambda *lambda) {
+	// arg0 - rcx
+	// arg1 - rdx
+	// arg2 - r8
+	// arg3 - r9
+	assert(lambda->head.parameters_block.definition_list.count == 4, "Other count of arguments not implemented");
+	List<u8> bytes;
+	
+	// sub rsp, 40 // 8 bytes for lambda and 32 bytes for shadow space
+	bytes.add({0x48, 0x83, 0xec, 40});
+
+	// mov r10, lambda
+	bytes.add({0x49, 0xba});
+	bytes.add(value_as_bytes(lambda));
+
+	// mov r11, ffi_callback
+	bytes.add({0x49, 0xbb});
+	bytes.add(value_as_bytes(&ffi_callback));
+	
+	// mov qword ptr[rsp+32], r10
+	bytes.add({0x4c, 0x89, 0x54, 0x24, 32});
+
+	// call r11
+	bytes.add({0x41, 0xff, 0xd3});
+	
+	// add rsp, 40
+	bytes.add({0x48, 0x83, 0xc4, 40});
+
+	// ret
+	bytes.add({0xc3});
+
+
+	void *page = VirtualAlloc(0, bytes.count, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+
+	memcpy(page, bytes.data, bytes.count);
+	memset((char *)page + bytes.count, 0xcc, ceil(bytes.count, (umm)4096) - bytes.count);
+
+	DWORD old_protect;
+	if (!VirtualProtect(page, bytes.count, PAGE_EXECUTE_READ, &old_protect)) {
+		immediate_reporter.error(lambda->location, "FATAL: VirtualProtect failed: {}", win32_error());
+		exit(-1);
+	}
+
+	return {page};
+}
+
+
 struct Bytecode {
 	List<Instruction> instructions;
 	List<u8> global_readonly_data;
 	List<u8> global_mutable_data;
 };
 
-struct Builder : Bytecode {
+struct Builder {
+	static constexpr s64 register_size = 8;
+	static constexpr s64 pointer_size = 8;
+
 	// return value
 	// arg3
 	// arg2
@@ -4578,7 +5015,7 @@ struct Builder : Bytecode {
 		.kind = InstructionKind::name, \
 		.v_##name = { __VA_ARGS__ }    \
 	}
-#define I(name, ...) (instructions.add(MI(name, __VA_ARGS__)), 0)
+#define I(name, ...) (output_bytecode.instructions.add(MI(name, __VA_ARGS__)), 0)
 
 #define tmpreg(name) \
 	auto name = allocate_register(); \
@@ -4595,24 +5032,33 @@ struct Builder : Bytecode {
 
 	Builder() {
 		for (umm i = 0; i < (umm)Register::base; ++i) {
-			available_registers.set(i);
+			available_registers.set(i, true);
 		}
 	}
 
+	Bytecode output_bytecode;
+
 	Bytecode build(Expression *expression) {
-		entry_point_instruction_index = instructions.count;
+		entry_point_instruction_index = output_bytecode.instructions.count;
 		tmpval(destination, get_size(expression->type));
 		output(destination, expression);
 		for (auto [index, lambda] : calls_to_patch) {
-			auto &i = instructions[index];
-			i.call().d = lambda_infos.find(lambda)->value.first_instruction_index;
+			auto &i = output_bytecode.instructions[index];
+
+			if (lambda->is_extern) {
+				immediate_reporter.error(lambda->location, "External calls not implemented yet");
+				// TODO: better failing
+				invalid_code_path();
+			}
+
+			i.call().d = lambda->first_instruction_index;
 		}
 		
 		for (auto relocation : lambda_relocations) {
-			*(u64 *)&(*relocation.section)[relocation.offset] = lambda_infos.find(relocation.lambda)->value.first_instruction_index;
+			*(u64 *)&(*relocation.section)[relocation.offset] = relocation.lambda->first_instruction_index;
 		}
 
-		return *this;
+		return output_bytecode;
 	}
 
 
@@ -4623,9 +5069,9 @@ struct Builder : Bytecode {
 		auto &section = [&] () -> List<u8> & {
 			switch (definition->mutability) {
 				case Mutability::variable:
-					return global_mutable_data;
+					return output_bytecode.global_mutable_data;
 				case Mutability::readonly:
-					return global_readonly_data;
+					return output_bytecode.global_readonly_data;
 			}
 			invalid_code_path();
 		} ();
@@ -4648,14 +5094,15 @@ struct Builder : Bytecode {
 	void append_lambda(Lambda *lambda) {
 		scoped_replace(locals_size, 0);
 		scoped_replace(max_temporary_size, 0);
+		jumps_to_ret.clear();
 
-		auto first_instruction_index = instructions.count;
+		auto first_instruction_index = output_bytecode.instructions.count;
 
 		auto head = &lambda->head;
 
 		I(push, Register::base);
-		I(copy, Register::base, Register::stack, 8);
-		auto reserver_index = instructions.count;
+		I(copy, Register::base, Register::stack, register_size);
+		auto reserver_index = output_bytecode.instructions.count;
 		I(sub8, Register::stack, Register::stack, 0);
 
 		u64 return_value_size = get_size(head->return_type);
@@ -4672,24 +5119,24 @@ struct Builder : Bytecode {
 
 		output(return_value_destination, lambda->body);
 
+		lambda->first_instruction_index = first_instruction_index;
 		lambda_infos.insert(lambda, {
-			.first_instruction_index = first_instruction_index,
 			.locals_size = locals_size,
 			.temporary_size = max_temporary_size,
 		});
 
 		u64 reserved_stack_size = locals_size + max_temporary_size;
 
-		instructions[reserver_index].sub8().b = reserved_stack_size;
-		auto ret_destination = instructions.count;
+		output_bytecode.instructions[reserver_index].sub8().b = reserved_stack_size;
+		auto ret_destination = output_bytecode.instructions.count;
 		I(add8, Register::stack, Register::stack, (s64)reserved_stack_size);
 		I(pop, Register::base);
 		I(ret);
 
-		auto lambda_instructions = instructions.skip(first_instruction_index);
+		auto lambda_instructions = output_bytecode.instructions.skip(first_instruction_index);
 
 		for (auto i : jumps_to_ret) {
-			auto &jmp = instructions[i].jmp();
+			auto &jmp = output_bytecode.instructions[i].jmp();
 			jmp.d = ret_destination;
 		}
 
@@ -4743,9 +5190,7 @@ struct Builder : Bytecode {
 
 	umm entry_point() { return entry_point_instruction_index; }
 
-private:
 	struct LambdaInfo {
-		umm first_instruction_index = 0;
 		umm locals_size = 0;
 		umm temporary_size = 0;
 	};
@@ -4796,7 +5241,7 @@ private:
 				break;
 			}
 			default:
-				not_implemented();
+				invalid_code_path("Writing {} to section is not handled.", value.kind);
 		}
 	}
 
@@ -4808,7 +5253,7 @@ private:
 	}
 	void deallocate(Register r) {
 		assert(!available_registers.get((umm)r));
-		available_registers.set((umm)r);
+		available_registers.set((umm)r, true);
 	}
 
 	Address allocate_temporary(u64 size) {
@@ -4874,7 +5319,9 @@ private:
 		if (definition->initial_value) {
 			output(address, definition->initial_value);
 		} else {
-			assert(!direct_as<Struct>(definition->type), "default struct values not implemented");
+			if (direct_as<Struct>(definition->type)) {
+				immediate_reporter.warning(definition->location, "default struct values not implemented. initializing with zero");
+			}
 			I(set, .d = address, .value = 0, .size = definition_size);
 		}
 		if (destination) {
@@ -4883,6 +5330,7 @@ private:
 	}
 
 	Address get_definition_address(Definition *definition) {
+		assert(definition->offset != invalid_definition_offset);
 		if (definition->is_parameter) {
 			return Address{.base = Register::arguments, .offset = (s64)definition->offset};
 		} else if (!definition->container) {
@@ -4905,7 +5353,7 @@ private:
 
 		defer {
 			for (auto i : info.break_jump_indices) {
-				instructions[i].jmp().d = instructions.count;
+				output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count;
 			}
 		};
 
@@ -4945,7 +5393,7 @@ private:
 
 				auto registers_to_save = ~available_registers;
 				if (destination.is_register())
-					registers_to_save.unset((umm)destination.get_register());
+					registers_to_save.set((umm)destination.get_register(), false);
 
 				for_each(registers_to_save, [&] (umm r) {
 					I(push, (Register)r);
@@ -4987,8 +5435,12 @@ private:
 					} else {
 						invalid_code_path(definition->location, "Unknown intrinsic name '{}'", definition->name);
 					}
+				} else if (lambda->is_extern) {
+					assert(lambda->definition);
+					assert(lambda->definition->name.count);
+					I(callext, .lambda = lambda, .lib = lambda->extern_library, .name = lambda->definition->name);
 				} else {
-					calls_to_patch.add({instructions.count, lambda});
+					calls_to_patch.add({output_bytecode.instructions.count, lambda});
 					I(call, .d = -1);
 				}
 				I(copy, .d = destination, .s = Address{.base = Register::stack, .offset = total_arguments_size}, .size = (u64)return_value_size);
@@ -5022,14 +5474,18 @@ private:
 	void output_impl(Site destination, BooleanLiteral *literal) {
 		I(copy, .d = destination, .s = (s64)literal->value, .size = 1);
 	} 
+	void output_impl(Site destination, NoneLiteral *literal) {
+		I(copy, .d = destination, .s = 0, .size = get_size(literal->type));
+	} 
 	void output_impl(Site destination, StringLiteral *literal) {
 		umm offset = -1;
 		auto found = string_literal_offsets.find(literal->value);
 		if (found) {
 			offset = found->value;
 		} else {
-			offset = global_readonly_data.count;
-			global_readonly_data.add((Span<u8>)literal->value);
+			offset = output_bytecode.global_readonly_data.count;
+			output_bytecode.global_readonly_data.add((Span<u8>)literal->value);
+			output_bytecode.global_readonly_data.add('\0');
 			string_literal_offsets.insert(literal->value, offset);
 		}
 
@@ -5048,14 +5504,14 @@ private:
 	void output_impl(Site destination, IfExpression *If) {
 		tmpreg(cr);
 		output(cr, If->condition);
-		auto jz_index = instructions.count;
+		auto jz_index = output_bytecode.instructions.count;
 		I(jz, cr, 0);
 		output(destination, If->true_branch);
-		auto jmp_index = instructions.count;
+		auto jmp_index = output_bytecode.instructions.count;
 		I(jmp, 0);
-		instructions[jz_index].jz().d = instructions.count;
+		output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
 		output(destination, If->false_branch);
-		instructions[jmp_index].jmp().d = instructions.count;
+		output_bytecode.instructions[jmp_index].jmp().d = output_bytecode.instructions.count;
 	} 
 	void output_impl(Site destination, BuiltinTypeName *node) {
 		I(copy, destination, (s64)node->type_kind, 8);
@@ -5181,18 +5637,131 @@ private:
 			}
 			case BinaryOperation::lan: {
 				output(destination, binary->left);
-				auto jz_index = instructions.count;
+				auto jz_index = output_bytecode.instructions.count;
 				I(jz, destination, 0);
 				output(destination, binary->right);
-				instructions[jz_index].jz().d = instructions.count;
+				output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
 				break;
 			}
 			case BinaryOperation::lor: {
 				output(destination, binary->left);
-				auto jnz_index = instructions.count;
+				auto jnz_index = output_bytecode.instructions.count;
 				I(jnz, destination, 0);
 				output(destination, binary->right);
-				instructions[jnz_index].jnz().d = instructions.count;
+				output_bytecode.instructions[jnz_index].jnz().d = output_bytecode.instructions.count;
+				break;
+			}
+			case BinaryOperation::as: {
+				auto source_type = direct(binary->left->type);
+				auto target_type = direct(binary->right);
+				// From none
+				if (types_match(source_type, BuiltinType::None)) {
+					// To pointer
+					if (auto right_pointer = as_pointer(target_type)) {
+						I(copy, destination, 0, pointer_size);
+						break;
+					}
+				}
+
+				// From lambda
+				if (auto lambda = direct_as<Lambda>(binary->left)) {
+					// To pointer
+					if (auto right_pointer = as_pointer(target_type)) {
+						// TODO: only works with direct lambdas.
+						auto callback = generate_callback(lambda);
+						I(copy, destination, (s64)callback.start_address, pointer_size);
+						break;
+					}
+				}
+
+				// From string
+				if (types_match(source_type, BuiltinType::String)) {
+					// To pointer
+					if (auto right_pointer = as_pointer(target_type)) {
+						tmpaddr(tmpstr, get_size(BuiltinType::String));
+						output(tmpstr, binary->left);
+						I(copy, destination, tmpstr, pointer_size);
+						break;
+					}
+				}
+
+				// From pointer
+				if (auto left_pointer = as_pointer(source_type)) {
+					// To pointer
+					if (auto right_pointer = as_pointer(target_type)) {
+						output(destination, binary->left);
+						break;
+					}
+					// To integer
+					if (is_concrete_integer(target_type)) {
+						output(destination, binary->left);
+						break;
+					}
+				}
+				
+
+				// From integer
+				if (is_concrete_integer(source_type)) {
+					// To integer
+					if (is_concrete_integer(target_type)) {
+						auto target_size = get_size(target_type);
+						auto source_size = get_size(source_type);
+						if (target_size == source_size) {
+							output(destination, binary->left);
+							// Same size, noop
+						} else if (target_size >= source_size) {
+							output(destination, binary->left);
+							// Sign or zero extend
+							if (is_signed_integer(source_type)) {
+								switch (target_size) {
+									case 2: 
+										I(sex21, destination, destination);
+										break;
+									case 4:
+										switch (source_size) {
+											case 1: I(sex41, destination, destination); break;
+											case 2: I(sex42, destination, destination); break;
+										}
+										break;
+									case 8:
+										switch (source_size) {
+											case 1: I(sex81, destination, destination); break;
+											case 2: I(sex82, destination, destination); break;
+											case 4: I(sex84, destination, destination); break;
+										}
+										break;
+								}
+							} else {
+								switch (target_size) {
+									case 2: 
+										I(and2, destination, destination, 0x00ff);
+										break;
+									case 4:
+										switch (source_size) {
+											case 1: I(and4, destination, destination, 0x000000ff); break;
+											case 2: I(and4, destination, destination, 0x0000ffff); break;
+										}
+										break;
+									case 8:
+										switch (source_size) {
+											case 1: I(and8, destination, destination, 0x00000000000000ff); break;
+											case 2: I(and8, destination, destination, 0x000000000000ffff); break;
+											case 4: I(and8, destination, destination, 0x00000000ffffffff); break;
+										}
+										break;
+								}
+							}
+						} else {
+							tmpreg(tmp);
+							output(tmp, binary->left);
+							// Truncate
+							I(copy, destination, tmp, target_size);
+						}
+						break;
+					}
+				}
+
+				invalid_code_path();
 				break;
 			}
 			default: not_implemented();
@@ -5205,7 +5774,7 @@ private:
 
 		auto matchee_size = get_size(match->expression->type);
 		assert(matchee_size <= 8);
-		tmpreg(matchee, matchee_size);
+		tmpreg(matchee);
 		output(matchee, match->expression);
 
 		tmpreg(does_match);
@@ -5221,13 +5790,13 @@ private:
 				tmpreg(from);
 				output(from, Case.from);
 				I(cmp8, does_match, matchee, from, Comparison::equals);
-				prev_case_jump_over_index = instructions.count;
+				prev_case_jump_over_index = output_bytecode.instructions.count;
 				I(jz, does_match, 0);
 			}
 			output(destination, Case.to);
-			jump_to_end_indices.add(instructions.count);
+			jump_to_end_indices.add(output_bytecode.instructions.count);
 			I(jmp, 0);
-			instructions[prev_case_jump_over_index].jz().d = instructions.count;
+			output_bytecode.instructions[prev_case_jump_over_index].jz().d = output_bytecode.instructions.count;
 		}
 
 		if (match->default_case) {
@@ -5237,7 +5806,7 @@ private:
 		}
 
 		for (auto i : jump_to_end_indices) {
-			instructions[i].jmp().d = instructions.count;
+			output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count;
 		}
 	}
 	void output_impl(Site destination, Unary *unary) {
@@ -5289,55 +5858,55 @@ private:
 			Site return_value_destination = Address { .base = Register::returns };
 			output(return_value_destination, ret->value);
 		}
-		jumps_to_ret.add(instructions.count);
+		jumps_to_ret.add(output_bytecode.instructions.count);
 		I(jmp, 0);
 	} 
 	void output_impl(While *While) {
 		tmpreg(cr);
-		auto condition_index = instructions.count;
+		auto condition_index = output_bytecode.instructions.count;
 		output(cr, While->condition);
-		auto jz_index = instructions.count;
+		auto jz_index = output_bytecode.instructions.count;
 		I(jz, cr, 0);
 		output_discard(While->body);
 		I(jmp, (s64)condition_index);
-		instructions[jz_index].jz().d = instructions.count;
+		output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
 		for (auto i : continue_jump_indices.get_or_insert(While)) {
-			instructions[i].jmp().d = condition_index;
+			output_bytecode.instructions[i].jmp().d = condition_index;
 		}
 		for (auto i : loop_break_indices.get_or_insert(While)) {
-			instructions[i].jmp().d = instructions.count;
+			output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count;
 		}
 	} 
 	void output_impl(Continue *node) {
-		continue_jump_indices.get_or_insert(node->loop).add(instructions.count);
+		continue_jump_indices.get_or_insert(node->loop).add(output_bytecode.instructions.count);
 		I(jmp, 0);
 	} 
 	void output_impl(Break *node) {
 		if (node->tag_block) {
 			auto &info = block_infos.find(node->tag_block)->value;
 			output(info.destination, node->value);
-			info.break_jump_indices.add(instructions.count);
+			info.break_jump_indices.add(output_bytecode.instructions.count);
 			I(jmp, 0);
 		} else {
 			assert(node->loop);
-			loop_break_indices.get_or_insert(node->loop).add(instructions.count);
+			loop_break_indices.get_or_insert(node->loop).add(output_bytecode.instructions.count);
 			I(jmp, 0);
 		}
 	}
 	void output_impl(IfStatement *If) {
 		tmpreg(cr);
 		output(cr, If->condition);
-		auto jz_index = instructions.count;
+		auto jz_index = output_bytecode.instructions.count;
 		I(jz, cr, 0);
 		output_discard(If->true_branch);
 		if (If->false_branch) {
-			auto jmp_index = instructions.count;
+			auto jmp_index = output_bytecode.instructions.count;
 			I(jmp, 0);
-			instructions[jz_index].jz().d = instructions.count;
+			output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
 			output_discard(If->false_branch);
-			instructions[jmp_index].jmp().d = instructions.count;
+			output_bytecode.instructions[jmp_index].jmp().d = output_bytecode.instructions.count;
 		} else {
-			instructions[jz_index].jz().d = instructions.count;
+			output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
 		}
 	} 
 
@@ -5359,6 +5928,7 @@ private:
 	void load_address_impl(Site destination, Definition *node) { not_implemented(); }
 	void load_address_impl(Site destination, IntegerLiteral *node) { not_implemented(); }
 	void load_address_impl(Site destination, BooleanLiteral *node) { not_implemented(); }
+	void load_address_impl(Site destination, NoneLiteral *node) { not_implemented(); }
 	void load_address_impl(Site destination, StringLiteral *node) { not_implemented(); }
 	void load_address_impl(Site destination, Lambda *node) { not_implemented(); }
 	void load_address_impl(Site destination, LambdaHead *node) { not_implemented(); }
@@ -5401,17 +5971,26 @@ private:
 #undef tmpval
 };
 
-struct Interpreter : Bytecode {
-	u64 run(Bytecode bytecode, umm entry_index) {
-		(Bytecode &)*this = bytecode;
+struct Interpreter {
+	inline static Interpreter *current_interpreter;
+	Bytecode *bytecode;
+
+	u64 run(Bytecode *bytecode, umm entry_index) {
+		scoped_replace(current_interpreter, this);
+		this->bytecode = bytecode;
 		current_instruction_index = entry_index;
 
 		reg(Register::stack) = (s64)stack.end();
-		reg(Register::global_mutable) = (s64)global_mutable_data.data;
-		reg(Register::global_readonly) = (s64)global_readonly_data.data;
+		reg(Register::global_mutable) = (s64)bytecode->global_mutable_data.data;
+		reg(Register::global_readonly) = (s64)bytecode->global_readonly_data.data;
 
-		while (current_instruction_index < instructions.count) {
-			auto i = instructions[current_instruction_index];
+		run_while([&] { return current_instruction_index < bytecode->instructions.count; });
+
+		return val8(Address { .offset = (s64)(stack.end() - 8)});
+	}
+	void run_while(auto predicate) {
+		while (predicate()) {
+			auto i = bytecode->instructions[current_instruction_index];
 			switch (i.kind) {
 #define x(name, fields) case InstructionKind::name: execute(i.v_##name); break;
 				ENUMERATE_BYTECODE_INSTRUCTION_KIND
@@ -5419,14 +5998,18 @@ struct Interpreter : Bytecode {
 			}
 			++current_instruction_index;
 		}
-		return val8(Address { .offset = (s64)(stack.end() - 8)});
 	}
 
-private:
 	umm current_instruction_index = (umm)-1;
 	s64 registers[256] = {};
 	Array<u8, 1*KiB> stack = {};
 	List<u64> debug_stack;
+
+	struct Library {
+		HMODULE module;
+		HashMap<String, void *> functions;
+	};
+	HashMap<String, Library> libraries;
 
 	s64 &reg(Register r) {
 		return registers[to_underlying(r)];
@@ -5596,11 +6179,257 @@ private:
 			case Comparison::unsigned_greater_equals: val8(i.d) = (u64)val8(i.a) >= (u64)val8(i.b); break;
 		}
 	}
+	void execute(Instruction::sex21_t i) { val8(i.d) = (s16)(s8)val8(i.a); }
+	void execute(Instruction::sex41_t i) { val8(i.d) = (s32)(s8)val8(i.a); }
+	void execute(Instruction::sex42_t i) { val8(i.d) = (s32)(s16)val8(i.a); }
+	void execute(Instruction::sex81_t i) { val8(i.d) = (s64)(s8)val8(i.a); }
+	void execute(Instruction::sex82_t i) { val8(i.d) = (s64)(s16)val8(i.a); }
+	void execute(Instruction::sex84_t i) { val8(i.d) = (s64)(s32)val8(i.a); }
+
 	void execute(Instruction::call_t i) {
 		E(push, (s64)current_instruction_index);
 		current_instruction_index = val8(i.d) - 1;
 
 		debug_stack.add(val8(Register::stack));
+	}
+	void execute(Instruction::callext_t i) {
+		auto &lib = libraries.get_or_insert(i.lib);
+		if (!lib.module) {
+			auto lib_name = format("{}.dll\0"s, i.lib);
+			defer { free(lib_name); };
+			lib.module = GetModuleHandleA(lib_name.data);
+			if (!lib.module) {
+				lib.module = LoadLibraryA(lib_name.data);
+			}
+			assert(lib.module, "{}.dll was not found", i.lib);
+		}
+
+		auto &fn = lib.functions.get_or_insert(i.name);
+		if (!fn) {
+			auto fn_name = null_terminate(i.name);
+			defer { free(fn_name); };
+			fn = GetProcAddress(lib.module, (char *)fn_name.data);
+			assert(fn, "{}.dll does not contain {}", i.lib, i.name);
+		}
+
+		s64 parameter_count = i.lambda->head.parameters_block.definition_list.count;
+
+		s64 result = 0;
+
+		#if 0
+		system("cls");
+		println("switch (parameter_count) {");
+		for (int i = 0; i < 16; ++i) {
+			println("    case {}: {{", i);
+			for (int j = 0; j < i; ++j) {
+				println("        s64 arg{} = val8(Address{{.base = Register::stack, .offset = {}}});", j, j*8);
+			}
+			print("        result = ((s64(*)(");
+			for (int j = 0; j < i; ++j) {
+				if (j) print(',');
+				print("s64");
+			}
+			print("))fn)(");
+			for (int j = 0; j < i; ++j) {
+				if (j) print(',');
+				print("arg{}", j);
+			}
+			println(");");
+			println("        break;");
+			println("    }");
+		}
+		println("    default: not_implemented();");
+		println("}");
+		exit(1);
+		#endif
+		switch (parameter_count) {
+			case 0: {
+				result = ((s64(*)())fn)();
+				break;
+			}
+			case 1: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				result = ((s64(*)(s64))fn)(arg0);
+				break;
+			}
+			case 2: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				result = ((s64(*)(s64,s64))fn)(arg0,arg1);
+				break;
+			}
+			case 3: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				result = ((s64(*)(s64,s64,s64))fn)(arg0,arg1,arg2);
+				break;
+			}
+			case 4: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				result = ((s64(*)(s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3);
+				break;
+			}
+			case 5: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				result = ((s64(*)(s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4);
+				break;
+			}
+			case 6: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				s64 arg5 = val8(Address{.base = Register::stack, .offset = 40});
+				result = ((s64(*)(s64,s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4,arg5);
+				break;
+			}
+			case 7: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				s64 arg5 = val8(Address{.base = Register::stack, .offset = 40});
+				s64 arg6 = val8(Address{.base = Register::stack, .offset = 48});
+				result = ((s64(*)(s64,s64,s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4,arg5,arg6);
+				break;
+			}
+			case 8: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				s64 arg5 = val8(Address{.base = Register::stack, .offset = 40});
+				s64 arg6 = val8(Address{.base = Register::stack, .offset = 48});
+				s64 arg7 = val8(Address{.base = Register::stack, .offset = 56});
+				result = ((s64(*)(s64,s64,s64,s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7);
+				break;
+			}
+			case 9: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				s64 arg5 = val8(Address{.base = Register::stack, .offset = 40});
+				s64 arg6 = val8(Address{.base = Register::stack, .offset = 48});
+				s64 arg7 = val8(Address{.base = Register::stack, .offset = 56});
+				s64 arg8 = val8(Address{.base = Register::stack, .offset = 64});
+				result = ((s64(*)(s64,s64,s64,s64,s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8);
+				break;
+			}
+			case 10: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				s64 arg5 = val8(Address{.base = Register::stack, .offset = 40});
+				s64 arg6 = val8(Address{.base = Register::stack, .offset = 48});
+				s64 arg7 = val8(Address{.base = Register::stack, .offset = 56});
+				s64 arg8 = val8(Address{.base = Register::stack, .offset = 64});
+				s64 arg9 = val8(Address{.base = Register::stack, .offset = 72});
+				result = ((s64(*)(s64,s64,s64,s64,s64,s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9);
+				break;
+			}
+			case 11: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				s64 arg5 = val8(Address{.base = Register::stack, .offset = 40});
+				s64 arg6 = val8(Address{.base = Register::stack, .offset = 48});
+				s64 arg7 = val8(Address{.base = Register::stack, .offset = 56});
+				s64 arg8 = val8(Address{.base = Register::stack, .offset = 64});
+				s64 arg9 = val8(Address{.base = Register::stack, .offset = 72});
+				s64 arg10 = val8(Address{.base = Register::stack, .offset = 80});
+				result = ((s64(*)(s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10);
+				break;
+			}
+			case 12: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				s64 arg5 = val8(Address{.base = Register::stack, .offset = 40});
+				s64 arg6 = val8(Address{.base = Register::stack, .offset = 48});
+				s64 arg7 = val8(Address{.base = Register::stack, .offset = 56});
+				s64 arg8 = val8(Address{.base = Register::stack, .offset = 64});
+				s64 arg9 = val8(Address{.base = Register::stack, .offset = 72});
+				s64 arg10 = val8(Address{.base = Register::stack, .offset = 80});
+				s64 arg11 = val8(Address{.base = Register::stack, .offset = 88});
+				result = ((s64(*)(s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10,arg11);
+				break;
+			}
+			case 13: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				s64 arg5 = val8(Address{.base = Register::stack, .offset = 40});
+				s64 arg6 = val8(Address{.base = Register::stack, .offset = 48});
+				s64 arg7 = val8(Address{.base = Register::stack, .offset = 56});
+				s64 arg8 = val8(Address{.base = Register::stack, .offset = 64});
+				s64 arg9 = val8(Address{.base = Register::stack, .offset = 72});
+				s64 arg10 = val8(Address{.base = Register::stack, .offset = 80});
+				s64 arg11 = val8(Address{.base = Register::stack, .offset = 88});
+				s64 arg12 = val8(Address{.base = Register::stack, .offset = 96});
+				result = ((s64(*)(s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10,arg11,arg12);
+				break;
+			}
+			case 14: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				s64 arg5 = val8(Address{.base = Register::stack, .offset = 40});
+				s64 arg6 = val8(Address{.base = Register::stack, .offset = 48});
+				s64 arg7 = val8(Address{.base = Register::stack, .offset = 56});
+				s64 arg8 = val8(Address{.base = Register::stack, .offset = 64});
+				s64 arg9 = val8(Address{.base = Register::stack, .offset = 72});
+				s64 arg10 = val8(Address{.base = Register::stack, .offset = 80});
+				s64 arg11 = val8(Address{.base = Register::stack, .offset = 88});
+				s64 arg12 = val8(Address{.base = Register::stack, .offset = 96});
+				s64 arg13 = val8(Address{.base = Register::stack, .offset = 104});
+				result = ((s64(*)(s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10,arg11,arg12,arg13);
+				break;
+			}
+			case 15: {
+				s64 arg0 = val8(Address{.base = Register::stack, .offset = 0});
+				s64 arg1 = val8(Address{.base = Register::stack, .offset = 8});
+				s64 arg2 = val8(Address{.base = Register::stack, .offset = 16});
+				s64 arg3 = val8(Address{.base = Register::stack, .offset = 24});
+				s64 arg4 = val8(Address{.base = Register::stack, .offset = 32});
+				s64 arg5 = val8(Address{.base = Register::stack, .offset = 40});
+				s64 arg6 = val8(Address{.base = Register::stack, .offset = 48});
+				s64 arg7 = val8(Address{.base = Register::stack, .offset = 56});
+				s64 arg8 = val8(Address{.base = Register::stack, .offset = 64});
+				s64 arg9 = val8(Address{.base = Register::stack, .offset = 72});
+				s64 arg10 = val8(Address{.base = Register::stack, .offset = 80});
+				s64 arg11 = val8(Address{.base = Register::stack, .offset = 88});
+				s64 arg12 = val8(Address{.base = Register::stack, .offset = 96});
+				s64 arg13 = val8(Address{.base = Register::stack, .offset = 104});
+				s64 arg14 = val8(Address{.base = Register::stack, .offset = 112});
+				result = ((s64(*)(s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64,s64))fn)(arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10,arg11,arg12,arg13,arg14);
+				break;
+			}
+			default: not_implemented();
+		}
+		val8(Address{.base = Register::stack, .offset = 8 * parameter_count}) = result;
 	}
 	void execute(Instruction::ret_t i) {
 		{
@@ -5632,11 +6461,37 @@ private:
 				invalid_code_path();
 				break;
 			}
+			case Intrinsic::debug_break: {
+				debug_break();
+				break;
+			}
 		}
+	}
+
+	u64 ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *lambda) {
+		E(sub8, Register::stack, Register::stack, (s64)((lambda->head.parameters_block.definition_list.count + 1) * 8));
+		E(copy, .d = Address{.base = Register::stack, .offset = 8*0}, .s = (s64)arg0, .size = 8);
+		E(copy, .d = Address{.base = Register::stack, .offset = 8*1}, .s = (s64)arg1, .size = 8);
+		E(copy, .d = Address{.base = Register::stack, .offset = 8*2}, .s = (s64)arg2, .size = 8);
+		E(copy, .d = Address{.base = Register::stack, .offset = 8*3}, .s = (s64)arg3, .size = 8);
+		E(call, (s64)lambda->first_instruction_index);
+		
+		++current_instruction_index; // NOTE: `call` does an offset by -1 because the main loop always increments the index, but we are not in a loop yet, so offset the offset.
+		umm target_stack_count = debug_stack.count;
+		run_while([&] { return debug_stack.count >= target_stack_count; });
+		--current_instruction_index;
+
+		E(add8, Register::stack, Register::stack, (s64)((lambda->head.parameters_block.definition_list.count + 1) * 8));
+		
+		return val8(Address{.base = Register::stack, .offset = -8});
 	}
 
 #undef E
 };
+
+u64 ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *lambda) {
+	return Interpreter::current_interpreter->ffi_callback(arg0, arg1, arg2, arg3, lambda);
+}
 
 inline umm append(StringBuilder &builder, Register r) {
 	switch (r) {
@@ -5775,6 +6630,7 @@ CheckResult is_constant_impl(Definition *definition) {
 }
 CheckResult is_constant_impl(IntegerLiteral *literal) { return true; }
 CheckResult is_constant_impl(BooleanLiteral *literal) { return true; }
+CheckResult is_constant_impl(NoneLiteral *literal) { return true; }
 CheckResult is_constant_impl(StringLiteral *literal) { return true; }
 CheckResult is_constant_impl(Lambda *lambda) { return true; }
 CheckResult is_constant_impl(LambdaHead *head) { return true; }
@@ -5861,6 +6717,7 @@ CheckResult is_mutable_impl(Definition *definition) {
 }
 CheckResult is_mutable_impl(IntegerLiteral *literal) { return {false, literal}; }
 CheckResult is_mutable_impl(BooleanLiteral *literal) { return {false, literal}; }
+CheckResult is_mutable_impl(NoneLiteral *literal) { return {false, literal}; }
 CheckResult is_mutable_impl(StringLiteral *literal) { return {false, literal}; }
 CheckResult is_mutable_impl(Lambda *lambda) { return {false, lambda}; }
 CheckResult is_mutable_impl(LambdaHead *head) { return {false, head}; }
@@ -5927,6 +6784,7 @@ Result<Value, Node *> get_constant_value_impl(Definition *node) {
 }
 Result<Value, Node *> get_constant_value_impl(IntegerLiteral *node) { return Value(((IntegerLiteral *)node)->value); }
 Result<Value, Node *> get_constant_value_impl(BooleanLiteral *node) { return Value(((BooleanLiteral *)node)->value); }
+Result<Value, Node *> get_constant_value_impl(NoneLiteral *node) { return Value(ValueKind::none); }
 Result<Value, Node *> get_constant_value_impl(StringLiteral *node) { return Value(((StringLiteral *)node)->value); }
 Result<Value, Node *> get_constant_value_impl(Lambda *lambda) { return Value(lambda); }
 Result<Value, Node *> get_constant_value_impl(LambdaHead *node) { return node; }
@@ -6125,6 +6983,9 @@ struct Copier {
 		COPY(value);
 		COPY(type);
 	} 
+	[[nodiscard]] void deep_copy_impl(NoneLiteral *from, NoneLiteral *to) {
+		COPY(type);
+	} 
 	[[nodiscard]] void deep_copy_impl(StringLiteral *from, StringLiteral *to) {
 		COPY(value);
 		COPY(type);
@@ -6193,7 +7054,7 @@ struct Copier {
 	} 
 	[[nodiscard]] void deep_copy_impl(Return *from, Return *to) {
 		DEEP_COPY(value);
-		LOOKUP_COPY(lambda, copied_lambdas);
+		LOOKUP_COPY(lambda);
 		to->lambda->returns.add(to);
 	}
 	[[nodiscard]] void deep_copy_impl(While *from, While *to) {
@@ -6359,6 +7220,7 @@ inline bool do_all_paths_return(Node *node) {
 		case NodeKind::Name:
 		case NodeKind::IntegerLiteral:
 		case NodeKind::BooleanLiteral:
+		case NodeKind::NoneLiteral:
 		case NodeKind::StringLiteral:
 		case NodeKind::Lambda:
 		case NodeKind::LambdaHead:
@@ -6388,6 +7250,16 @@ BooleanLiteral *make_boolean(bool value, String location, Type type = get_builti
 BooleanLiteral *make_boolean(bool value, Type type = get_builtin_type(BuiltinType::Bool)) {
 	return make_boolean(value, {}, type);
 }
+StringLiteral *make_string(String value, String location) {
+	auto result = StringLiteral::create();
+	result->value = value;
+	result->type = get_builtin_type(BuiltinType::String);
+	result->location = location;
+	return result;
+}
+StringLiteral *make_string(String value) {
+	return make_string(value, {});
+}
 
 ArrayType *make_array_type(Type element_type, u64 count) {
 	auto result = ArrayType::create();
@@ -6395,6 +7267,33 @@ ArrayType *make_array_type(Type element_type, u64 count) {
 	result->count = count;
 	result->type = get_builtin_type(BuiltinType::Type);
 	return result;
+}
+
+Expression *to_node(Value value) {
+	switch (value.kind) {
+		case ValueKind::U8:  return make_integer(value.U8,  get_builtin_type(BuiltinType::U8));
+		case ValueKind::U16: return make_integer(value.U16, get_builtin_type(BuiltinType::U16));
+		case ValueKind::U32: return make_integer(value.U32, get_builtin_type(BuiltinType::U32));
+		case ValueKind::U64: return make_integer(value.U64, get_builtin_type(BuiltinType::U64));
+		case ValueKind::S8:  return make_integer(value.S8,  get_builtin_type(BuiltinType::S8));
+		case ValueKind::S16: return make_integer(value.S16, get_builtin_type(BuiltinType::S16));
+		case ValueKind::S32: return make_integer(value.S32, get_builtin_type(BuiltinType::S32));
+		case ValueKind::S64: return make_integer(value.S64, get_builtin_type(BuiltinType::S64));
+		case ValueKind::Bool: return make_boolean(value.Bool);
+		case ValueKind::String: return make_string(value.String);
+		case ValueKind::Type: return value.Type;
+		default: invalid_code_path();
+	}
+}
+
+Binary *make_cast(Expression *expression, Type type) {
+	auto as = Binary::create();
+	as->operation = BinaryOperation::as;
+	as->left = expression;
+	as->right = type;
+	as->type = type;
+	as->location = expression->location;
+	return as;
 }
 
 enum class FailStrategy {
@@ -6669,6 +7568,31 @@ private:
 			}
 		}
 
+		// None -> pointer
+		if (auto none = as<NoneLiteral>(expression)) {
+			if (auto target_pointer = as_pointer(direct_target_type)) {
+				if (apply) {
+					expression = make_cast(expression, target_type);
+				}
+				return true;
+			}
+		}
+
+		// String -> *U8
+		if (types_match(direct_source_type, BuiltinType::String)) {
+			if (auto target_pointer = as_pointer(direct_target_type)) {
+				if (types_match(target_pointer->expression, BuiltinType::U8)) {
+					if (apply) {
+						expression = make_cast(expression, target_type);
+					}
+					return true;
+				} else {
+					reporter->error(expression->location, "`String` can only be converted to `*U8`, but you provided `{}`", target_type);
+					return false;
+				}
+			}
+		}
+
 		if (reporter) {
 			reporter->error(expression->location, "Expression of type `{}` is not implicitly convertible to `{}`.", source_type, target_type);
 			if (auto match = as<Match>(expression)) {
@@ -6689,7 +7613,7 @@ private:
 				if (auto name = as<Name>(unary->expression)) {
 					auto definition = name->definition();
 					assert(definition);
-					reporter.info(definition->location, "Because {} is a pointer to {}.", name->name, meaning(definition->mutability));
+					reporter.info(definition->location, "Because {} is a pointer to {}.", name->name, Meaning(definition->mutability));
 					if (definition->initial_value) {
 						why_is_this_immutable(definition->initial_value);
 					}
@@ -6704,7 +7628,7 @@ private:
 		} else if (auto name = as<Name>(expr)) {
 			auto definition = name->definition();
 			assert(definition);
-			reporter.info(definition->location, "Because {} is {}.", name->name, meaning(definition->mutability));
+			reporter.info(definition->location, "Because {} is {}.", name->name, Meaning(definition->mutability));
 			why_is_this_immutable(definition->initial_value);
 		}
 	}
@@ -6760,19 +7684,20 @@ private:
 
 	Name *get_bottom_name(Node *node) {
 		while (true) {
-			if (auto name = as<Name>(node)) {
-				return name;
-			}
+			switch (node->kind) {
+				case NodeKind::Name:
+					return (Name *)node;
+				case NodeKind::Block: {
+					auto block = (Block *)node;
+					if (block->children.count == 0) {
+						return 0;
+					}
 
-			if (auto block = as<Block>(node)) {
-				if (block->children.count == 0) {
-					return 0;
+					node = block->children.back();
+					continue;
 				}
-
-				node = block->children.back();
-				continue;
-			} else {
-				return 0;
+				default:
+					return 0;
 			}
 		}
 	}
@@ -7206,6 +8131,13 @@ private:
 				}
 
 				definition->constant_value = execute(definition->initial_value);
+
+				// 
+				//if (auto builtin_type = direct_as<BuiltinTypeName>(definition->type)) {
+				//	switch (builtin_type->type_kind) {
+				//		case BuiltinType::S8: definition->constant_value = Value((s8)definition->constant_value.value().S8); break;
+				//	}
+				//}
 			}
 		} else {
 			if (definition->is_parameter) {
@@ -7234,6 +8166,10 @@ private:
 	}
 	[[nodiscard]] BooleanLiteral *typecheck_impl(BooleanLiteral *literal, bool can_substitute) {
 		literal->type = get_builtin_type(BuiltinType::Bool);
+		return literal;
+	}
+	[[nodiscard]] NoneLiteral *typecheck_impl(NoneLiteral *literal, bool can_substitute) {
+		literal->type = get_builtin_type(BuiltinType::None);
 		return literal;
 	}
 	[[nodiscard]] StringLiteral *typecheck_impl(StringLiteral *literal, bool can_substitute) {
@@ -7480,7 +8416,9 @@ private:
 					}
 
 					if (!yield_while_null(name->location, &definition->type)) {
-						reporter.error(name->location, "Couldn't wait for definition type.");
+						if (print_wait_failures) {
+							reporter.error(name->location, "Couldn't wait for definition type.");
+						}
 						fail();
 					}
 
@@ -7499,7 +8437,13 @@ private:
 								case NodeKind::Struct:
 									break;
 								default:
-									return Copier{}.deep_copy(definition->initial_value);
+									auto result = to_node(definition->constant_value.value());
+									result->location = name->location;
+									if (!types_match(result->type, definition->type)) {
+										immediate_reporter.warning(name->location, "INTERNAL: constant name inlining resulted in a literal with different type, {} instead of {}. TODO FIXME", result->type, definition->type);
+										result->type = definition->type;
+									}
+									return result;
 							}
 						}
 					}
@@ -7544,7 +8488,7 @@ private:
 
 
 						call->callable = binary->right;
-
+						
 						// Attempt passing `this` as follows (return on first successful attempt):
 						//     1. As-is.
 						//     2. By pointer.
@@ -7580,8 +8524,14 @@ private:
 
 						reporter.error(call->location, "Unable to pass `this` argument. Here are attempt results:");
 						reporter.info("Attempt to pass `this` as-is:");
+						for (auto &r : as_is_reporter.reports) {
+							++r.indentation;
+						}
 						reporter.reports.add(as_is_reporter.reports);
 						reporter.info("Attempt to pass `this` by pointer:");
+						for (auto &r : by_pointer_reporter.reports) {
+							++r.indentation;
+						}
 						reporter.reports.add(by_pointer_reporter.reports);
 						fail();
 					}
@@ -7783,21 +8733,71 @@ private:
 			typecheck_or_unwind(&binary->left);
 			typecheck_or_unwind(&binary->right);
 
-			if (binary->operation == BinaryOperation::ass) {
-				auto result = is_mutable(binary->left);
-				if (!result) {
-					reporter.error(binary->left->location, "This expression can not be modified.");
-					assert(result.failed_node);
-					//reporter.info(result.failed_node->location, "Because this is not mutable.");
-					why_is_this_immutable(binary->left);
+			switch (binary->operation) {
+				case BinaryOperation::ass: {
+					auto result = is_mutable(binary->left);
+					if (!result) {
+						reporter.error(binary->left->location, "This expression can not be modified.");
+						assert(result.failed_node);
+						//reporter.info(result.failed_node->location, "Because this is not mutable.");
+						why_is_this_immutable(binary->left);
 
-					fail();
+						fail();
+					}
+					if (!implicitly_cast(&binary->right, binary->left->type, true)) {
+						fail();
+					}
+					binary->type = get_builtin_type(BuiltinType::None);
+					return binary;
 				}
-				if (!implicitly_cast(&binary->right, binary->left->type, true)) {
+				case BinaryOperation::as: {
+					if (implicitly_cast(&binary->left, binary->right, 0, false)) {
+						implicitly_cast(&binary->left, binary->right, &reporter, true);
+						binary->type = binary->right;
+						return binary;
+					}
+
+					auto source_type = direct(binary->left->type);
+					auto target_type = direct(binary->right);
+
+					// From lambda
+					if (auto left_lambda_head = as<LambdaHead>(source_type)) {
+						// To pointer
+						if (auto right_pointer = as_pointer(target_type)) {
+							binary->type = binary->right;
+							return binary;
+						}
+					}
+
+					// From pointer
+					if (auto left_pointer = as_pointer(source_type)) {
+						// To pointer
+						if (auto right_pointer = as_pointer(target_type)) {
+							binary->type = binary->right;
+							return binary;
+						}
+
+						// To integer
+						if (is_concrete_integer(target_type)) {
+							binary->type = binary->right;
+							return binary;
+						}
+					}
+
+					// From integer
+					if (is_concrete_integer(source_type)) {
+						// To integer
+						if (is_concrete_integer(target_type)) {
+							binary->type = binary->right;
+							return binary;
+						}
+					}
+
+
+					reporter.error(binary->location, "No conversion from {} to {} is available.", binary->left->type, binary->right);
 					fail();
+					return 0;
 				}
-				binary->type = get_builtin_type(BuiltinType::None);
-				return binary;
 			}
 
 			auto dleft  = direct(binary->left->type);
@@ -7887,7 +8887,7 @@ private:
 					assert(definition);
 					unary->type = make_pointer(unary->expression->type, definition->mutability);
 				} else {
-					reporter.error(unary->location, "You can only take address of names or blocks that end with a name.");
+					reporter.error(unary->location, "You can only take address of names, or blocks that end with a name.");
 					fail();
 				}
 				break;
@@ -8383,6 +9383,8 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 			} else {
 				immediate_reporter.error("Could not parse number after -t. Defaulting to all threads.");
 			}
+		} else if (args[i] == "-print-tokens") {
+			print_tokens = true;
 		} else if (args[i] == "-print-ast") {
 			result.print_ast = true;
 		} else if (args[i] == "-print-uids") {
@@ -8399,6 +9401,15 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 			result.interpret_mode = InterpretMode::bytecode;
 		} else if (args[i] == "-run-ast") {
 			result.interpret_mode = InterpretMode::ast;
+		} else if (args[i] == "-limit-time") {
+			create_thread([] {
+				int seconds_limit = 1;
+				sleep_milliseconds(seconds_limit * 1000);
+				immediate_reporter.error("Time limit of {} seconds exceeded.", seconds_limit);
+				exit(-1);
+			});
+		} else if (args[i] == "-print-wait-failures") {
+			print_wait_failures = true;
 		} else if (args[i][0] == '-') {
 			immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
 		} else {
@@ -8420,14 +9431,14 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 }
 
 void init_builtin_types() {
-#define x(name, value) \
-	{ \
-		auto type = get_builtin_type(BuiltinType::name); \
-		type->type_kind = BuiltinType::name; \
-		type->type = get_builtin_type(BuiltinType::Type); \
-	}
+	#define x(name) \
+		{ \
+			auto type = get_builtin_type(BuiltinType::name); \
+			type->type_kind = BuiltinType::name; \
+			type->type = get_builtin_type(BuiltinType::Type); \
+		}
 	ENUMERATE_BUILTIN_TYPES(x)
-#undef x
+	#undef x
 }
 
 s32 tl_main(Span<Span<utf8>> args) {
@@ -8455,6 +9466,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 		}
 #endif
 	};
+
+	node_arena = AtomicArenaAllocator::create(1*MiB);
 
 	init_globals();
 	init_builtin_types();
@@ -8519,11 +9532,9 @@ s32 tl_main(Span<Span<utf8>> args) {
 			thread_id_to_fiber.insert(thread_id, worker_fiber);
 		};
 
-		ThreadPool thread_pool;
+		TaskQueueThreadPool thread_pool;
 		thread_pool.init(thread_count - 1, {.worker_initter = init_worker_fiber});
 		defer { thread_pool.deinit(); };
-
-		auto tasks = thread_pool.create_task_list();
 
 		static bool failed = false;
 
@@ -8561,13 +9572,13 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 			for (auto &entry : typecheck_entries) {
 				if (entry.status == TypecheckEntryStatus::unfinished || entry.status == TypecheckEntryStatus::unstarted) {
-					tasks += [&entry] {
+					thread_pool += [&entry] {
 						perform_typechecking(entry);
 					};
 				}
 			}
 
-			tasks.wait_for_completion(WaitForCompletionOption::do_my_task);
+			thread_pool.wait_for_completion(WaitForCompletionOption::do_my_task);
 
 			auto current_progress = get_typechecking_progress();
 			assert(current_progress >= initial_progress);
@@ -8581,14 +9592,14 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 				for (auto &entry : typecheck_entries) {
 					if (entry.status == TypecheckEntryStatus::unfinished) {
-						tasks += [&entry] {
+						thread_pool += [&entry] {
 							perform_typechecking(entry);
 							assert(entry.status != TypecheckEntryStatus::unfinished);
 						};
 					}
 				}
 
-				tasks.wait_for_completion(WaitForCompletionOption::do_my_task);
+				thread_pool.wait_for_completion(WaitForCompletionOption::do_my_task);
 
 				break;
 			}
@@ -8780,7 +9791,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 							dbgln("{}: {}", index, instruction);
 						}
 						dbgln();
-						auto result = Bytecode::Interpreter{}.run(bytecode, builder.entry_point());
+						auto result = Bytecode::Interpreter{}.run(&bytecode, builder.entry_point());
 						println("main returned {}", result);
 						break;
 					}

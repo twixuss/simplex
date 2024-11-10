@@ -86,6 +86,16 @@ RanProcess run_process(String command) {
 	return result;
 }
 
+String current_directory;
+
+String make_relative(String path) {
+	if (starts_with(path, current_directory)) {
+		return path.skip(current_directory.count + 1);
+	} else {
+		return path;
+	}
+}
+
 s32 tl_main(Span<String> arguments) {
 	auto executable_path = get_executable_path();
 	auto executable_directory = parse_path(executable_path).directory;
@@ -95,7 +105,7 @@ s32 tl_main(Span<String> arguments) {
 
 	auto test_directory = format(u8"{}\\..\\tests", executable_directory);
 
-	auto current_directory = get_current_directory();
+	current_directory = get_current_directory();
 
 	StringBuilder extra_options_builder;
 	List<String> test_filenames;
@@ -142,16 +152,14 @@ s32 tl_main(Span<String> arguments) {
 	u32 n_failed = 0;
 	u32 n_succeeded = 0;
 
-	ThreadPool thread_pool;
+	TaskQueueThreadPool thread_pool;
 	thread_pool.init(get_cpu_info().logical_processor_count - 1);
 	defer { thread_pool.deinit(); };
 
 	u32 volatile test_counter = 0;
 
-	auto tasks = thread_pool.create_task_list();
-
 	for (auto test_filename : test_filenames) {
-		tasks += [=, &n_failed, &n_succeeded, &test_counter] {
+		thread_pool += [=, &n_failed, &n_succeeded, &test_counter] {
 			auto test_index = atomic_add(&test_counter, 1);
 
 			bool fail = false;
@@ -160,9 +168,7 @@ s32 tl_main(Span<String> arguments) {
 				atomic_add(&n_succeeded, !fail);
 			};
 
-			auto test_path = format("{}\\{}", test_directory, test_filename);
-
-			with(stdout_lock, print("{}\n", test_filename));
+			auto test_path = format(u8"{}\\{}", test_directory, test_filename);
 
 			auto do_fail = [&](auto fn) {
 				fail = true;
@@ -198,10 +204,13 @@ s32 tl_main(Span<String> arguments) {
 
 			List<String> expected_compiler_output = find_all_params(u8"// COMPILER OUTPUT "s);
 			List<String> not_expected_compiler_output = find_all_params(u8"// NO COMPILER OUTPUT "s);
+			not_expected_compiler_output.add(u8"Time limit of "s); // time limit exceeded
 			String expected_program_output = find_param(u8"// PROGRAM OUTPUT "s);
 			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
 
-			auto compile_command = format(u8"{} -t1 \"{}\" {}"s, compiler_path, test_path, extra_options);
+			auto compile_command = format(u8"{} \"{}\" -limit-time {}"s, make_relative(compiler_path), make_relative(test_path), extra_options);
+			
+			with(stdout_lock, print("{}\n", test_filename));
 
 			if (do_coverage) {
 				auto coverage_command = format(u8"opencppcoverage --sources {}\\src\\ --export_type=binary:codecov\\{}.cov -- {}"s, project_directory, test_index, compile_command);
@@ -228,17 +237,22 @@ s32 tl_main(Span<String> arguments) {
 					if (expected_compiler_output.count) {
 						with(ConsoleColor::cyan, print("Expected:\n"));
 						for (auto expected_string : expected_compiler_output) {
-							print("{}\n", expected_string);
+							println(expected_string);
 						}
 					}
 					if (not_expected_compiler_output.count) {
 						with(ConsoleColor::cyan, print("Not expected:\n"));
 						for (auto not_expected_string : not_expected_compiler_output) {
-							print("{}\n", not_expected_string);
+							println(not_expected_string);
 						}
 					}
 					with(ConsoleColor::cyan, print("Actual:\n"));
-					print("{}\n", actual_compiler.output);
+					umm output_byte_limit = 16*1024;
+					if (actual_compiler.output.count > output_byte_limit) {
+						println("*** MORE THAN {} BYTES PRINTED, OMITTING ***", output_byte_limit);
+					} else {
+						println(actual_compiler.output);
+					}
 				});
 			};
 
@@ -271,7 +285,7 @@ s32 tl_main(Span<String> arguments) {
 			} else {
 				if (actual_compiler.exit_code != 0) {
 					do_fail([&]{
-						with(ConsoleColor::red, println("Compiler should have returned zero exit code (succeeded). Output:"));
+						with(ConsoleColor::red, println("Compiler should have returned zero exit code (succeeded) but got {}. Output:", actual_compiler.exit_code));
 						println(actual_compiler.output);
 					});
 
@@ -334,7 +348,7 @@ s32 tl_main(Span<String> arguments) {
 		};
 	}
 
-	tasks.wait_for_completion();
+	thread_pool.wait_for_completion(WaitForCompletionOption::do_any_task);
 
 	if (do_coverage) {
 		println("Merging coverage results...");
