@@ -290,6 +290,7 @@ ENUMERATE_EXECUTION_VALUE_KIND(x)
 	x(S16) \
 	x(S32) \
 	x(S64) \
+	x(UnsizedInteger) \
 	x(Bool) \
 	x(String) \
 	x(lambda) \

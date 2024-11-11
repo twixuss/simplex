@@ -1,0 +1,13 @@
+.data
+    dummy dq 69
+.code
+mainCRTStartup proc
+    sub rsp, 8
+    mov r10, 0ddddddddddddddddh
+    mov r11, 01111111111111111h
+    mov qword ptr[rsp+32], r10
+    call r11
+    add rsp, 8
+    ret
+mainCRTStartup endp
+end

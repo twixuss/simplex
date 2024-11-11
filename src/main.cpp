@@ -1549,6 +1549,7 @@ inline umm append(StringBuilder &builder, Type type) {
 
 struct StructTag {} struct_tag;
 struct ArrayTag {} array_tag;
+struct UnsizedIntegerTag {} unsized_integer_tag;
 
 struct Value {
 	ValueKind kind = {};
@@ -1561,6 +1562,7 @@ struct Value {
 		s16 S16;
 		s32 S32;
 		s64 S64;
+		s64 UnsizedInteger;
 		bool Bool;
 		String String;
 		Lambda *lambda;
@@ -1609,6 +1611,7 @@ struct Value {
 	explicit Value(Value      *value) : kind(ValueKind::pointer), pointer(value) {}
 	explicit Value(StructTag, Span<Value> value) : kind(ValueKind::struct_), elements(to_list(value)) {}
 	explicit Value(ArrayTag,  Span<Value> value) : kind(ValueKind::array),   elements(to_list(value)) {}
+	explicit Value(UnsizedIntegerTag, s64 value) : kind(ValueKind::UnsizedInteger), UnsizedInteger(value) {}
 	
 	Value copy() {
 		Value result = *this;
@@ -3731,6 +3734,7 @@ struct Parser {
 			case NodeKind::While:
 			case NodeKind::Continue:
 			case NodeKind::Break:
+			case NodeKind::Match:
 				return;
 			case NodeKind::Binary: {
 				auto binary = (Binary *)node;
@@ -3749,12 +3753,12 @@ struct Parser {
 						return;
 				}
 
-				reporter.error(node->location, "{} {} are not allowed in statement context.", node->kind, binary->operation);
+				reporter.error(node->location, "Binary {} is not allowed in statement context.", binary->operation);
 				yield(false);
 			}
 		}
 
-		reporter.error(node->location, "{}s are not allowed in statement context.", node->kind);
+		reporter.error(node->location, "{} is not allowed in statement context.", node->kind);
 		yield(false);
 	}
 	bool next() {
@@ -4145,6 +4149,7 @@ private:
 				case BuiltinType::S16: return Value((s16)literal->value);
 				case BuiltinType::S32: return Value((s32)literal->value);
 				case BuiltinType::S64: return Value((s64)literal->value);
+				case BuiltinType::UnsizedInteger: return Value(unsized_integer_tag, (s64)literal->value);
 			}
 		}
 
@@ -5789,7 +5794,14 @@ struct Builder {
 			{
 				tmpreg(from);
 				output(from, Case.from);
-				I(cmp8, does_match, matchee, from, Comparison::equals);
+				auto size = get_size(match->expression->type);
+				switch (size) {
+					case 1: I(cmp1, does_match, matchee, from, Comparison::equals); break;
+					case 2: I(cmp2, does_match, matchee, from, Comparison::equals); break;
+					case 4: I(cmp4, does_match, matchee, from, Comparison::equals); break;
+					case 8: I(cmp8, does_match, matchee, from, Comparison::equals); break;
+					default: invalid_code_path("`match` only works on sizes 1, 2, 4 or 8, but not {}", size);
+				}
 				prev_case_jump_over_index = output_bytecode.instructions.count;
 				I(jz, does_match, 0);
 			}
@@ -5798,11 +5810,21 @@ struct Builder {
 			I(jmp, 0);
 			output_bytecode.instructions[prev_case_jump_over_index].jz().d = output_bytecode.instructions.count;
 		}
-
+		
 		if (match->default_case) {
 			output(destination, match->default_case->to);
 		} else {
-			I(intrinsic, Intrinsic::panic);
+			if (!types_match(match->type, BuiltinType::None)) {
+				I(sub8, Register::stack, Register::stack, 16);
+				StringLiteral message;
+				message.value = tformat(u8"{}: failed to execute `match` expression with no default case", get_source_location(match->location));
+				message.location = match->location;
+				message.type = get_builtin_type(BuiltinType::String);
+				output(Address{.base = Register::stack}, &message);
+				I(intrinsic, Intrinsic::println_String);
+				I(add8, Register::stack, Register::stack, 16);
+				I(intrinsic, Intrinsic::panic);
+			}
 		}
 
 		for (auto i : jump_to_end_indices) {
@@ -6179,15 +6201,17 @@ struct Interpreter {
 			case Comparison::unsigned_greater_equals: val8(i.d) = (u64)val8(i.a) >= (u64)val8(i.b); break;
 		}
 	}
-	void execute(Instruction::sex21_t i) { val8(i.d) = (s16)(s8)val8(i.a); }
-	void execute(Instruction::sex41_t i) { val8(i.d) = (s32)(s8)val8(i.a); }
-	void execute(Instruction::sex42_t i) { val8(i.d) = (s32)(s16)val8(i.a); }
-	void execute(Instruction::sex81_t i) { val8(i.d) = (s64)(s8)val8(i.a); }
-	void execute(Instruction::sex82_t i) { val8(i.d) = (s64)(s16)val8(i.a); }
-	void execute(Instruction::sex84_t i) { val8(i.d) = (s64)(s32)val8(i.a); }
+	void execute(Instruction::sex21_t i) { val8(i.d) = (s16)(s8)val1(i.a); }
+	void execute(Instruction::sex41_t i) { val8(i.d) = (s32)(s8)val1(i.a); }
+	void execute(Instruction::sex42_t i) { val8(i.d) = (s32)(s16)val2(i.a); }
+	void execute(Instruction::sex81_t i) { val8(i.d) = (s64)(s8)val1(i.a); }
+	void execute(Instruction::sex82_t i) { val8(i.d) = (s64)(s16)val2(i.a); }
+	void execute(Instruction::sex84_t i) { val8(i.d) = (s64)(s32)val4(i.a); }
 
 	void execute(Instruction::call_t i) {
 		E(push, (s64)current_instruction_index);
+
+		// NOTE: offset by -1 because it will be incremented in the main loop
 		current_instruction_index = val8(i.d) - 1;
 
 		debug_stack.add(val8(Register::stack));
@@ -6469,21 +6493,32 @@ struct Interpreter {
 	}
 
 	u64 ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *lambda) {
-		E(sub8, Register::stack, Register::stack, (s64)((lambda->head.parameters_block.definition_list.count + 1) * 8));
-		E(copy, .d = Address{.base = Register::stack, .offset = 8*0}, .s = (s64)arg0, .size = 8);
-		E(copy, .d = Address{.base = Register::stack, .offset = 8*1}, .s = (s64)arg1, .size = 8);
-		E(copy, .d = Address{.base = Register::stack, .offset = 8*2}, .s = (s64)arg2, .size = 8);
-		E(copy, .d = Address{.base = Register::stack, .offset = 8*3}, .s = (s64)arg3, .size = 8);
+		auto ret_size = get_size(lambda->head.return_type);
+		auto arg0_size = get_size(lambda->head.parameters_block.definition_list[0]->type);
+		auto arg1_size = get_size(lambda->head.parameters_block.definition_list[1]->type);
+		auto arg2_size = get_size(lambda->head.parameters_block.definition_list[2]->type);
+		auto arg3_size = get_size(lambda->head.parameters_block.definition_list[3]->type);
+		E(sub8, Register::stack, Register::stack, (s64)(ret_size + arg0_size + arg1_size + arg2_size + arg3_size));
+		E(copy, .d = Address{.base = Register::stack, .offset = 0                                       }, .s = (s64)arg0, .size = arg0_size);
+		E(copy, .d = Address{.base = Register::stack, .offset = (s64)(arg0_size                        )}, .s = (s64)arg1, .size = arg1_size);
+		E(copy, .d = Address{.base = Register::stack, .offset = (s64)(arg0_size + arg1_size            )}, .s = (s64)arg2, .size = arg2_size);
+		E(copy, .d = Address{.base = Register::stack, .offset = (s64)(arg0_size + arg1_size + arg2_size)}, .s = (s64)arg3, .size = arg3_size);
 		E(call, (s64)lambda->first_instruction_index);
 		
-		++current_instruction_index; // NOTE: `call` does an offset by -1 because the main loop always increments the index, but we are not in a loop yet, so offset the offset.
+		// NOTE: `call` does an offset by -1 because the main loop always increments the index, but we are not in a loop yet, so offset the offset.
+		++current_instruction_index;
+
 		umm target_stack_count = debug_stack.count;
 		run_while([&] { return debug_stack.count >= target_stack_count; });
+
+		// NOTE: now current_instruction_index is one past `callext` instruction and will be incremented again at the end of main loop iteration, which will make it
+		// skip one instruction, so offset it here as well.
 		--current_instruction_index;
 
-		E(add8, Register::stack, Register::stack, (s64)((lambda->head.parameters_block.definition_list.count + 1) * 8));
+		E(add8, Register::stack, Register::stack, (s64)(ret_size + arg0_size + arg1_size + arg2_size + arg3_size));
 		
-		return val8(Address{.base = Register::stack, .offset = -8});
+		auto result = val8(Address{.base = Register::stack, .offset = -(s64)ret_size});
+		return result;
 	}
 
 #undef E
@@ -7279,6 +7314,7 @@ Expression *to_node(Value value) {
 		case ValueKind::S16: return make_integer(value.S16, get_builtin_type(BuiltinType::S16));
 		case ValueKind::S32: return make_integer(value.S32, get_builtin_type(BuiltinType::S32));
 		case ValueKind::S64: return make_integer(value.S64, get_builtin_type(BuiltinType::S64));
+		case ValueKind::UnsizedInteger: return make_integer(value.UnsizedInteger, get_builtin_type(BuiltinType::UnsizedInteger));
 		case ValueKind::Bool: return make_boolean(value.Bool);
 		case ValueKind::String: return make_string(value.String);
 		case ValueKind::Type: return value.Type;
@@ -8106,15 +8142,14 @@ private:
 		if (definition->initial_value) {
 			typecheck_or_unwind(&definition->initial_value);
 
-			if (definition->parsed_type) {
-				if (!implicitly_cast(&definition->initial_value, definition->parsed_type, true)) {
-					fail();
-				}
-			} else {
-				make_concrete(definition->initial_value);
-			}
-
 			if (definition->mutability == Mutability::constant) {
+
+				if (definition->parsed_type) {
+					if (!implicitly_cast(&definition->initial_value, definition->parsed_type, true)) {
+						fail();
+					}
+				}
+
 				auto constant_check = is_constant(definition->initial_value);
 				if (!constant_check) {
 					reporter.error(definition->location, "Initial value is not constant.");
@@ -8138,6 +8173,15 @@ private:
 				//		case BuiltinType::S8: definition->constant_value = Value((s8)definition->constant_value.value().S8); break;
 				//	}
 				//}
+			} else {
+				if (definition->parsed_type) {
+					if (!implicitly_cast(&definition->initial_value, definition->parsed_type, true)) {
+						fail();
+					}
+				} else {
+					make_concrete(definition->initial_value);
+				}
+
 			}
 		} else {
 			if (definition->is_parameter) {

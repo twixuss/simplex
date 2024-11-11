@@ -79,6 +79,7 @@
     <ClCompile Include="src\main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\c_parser.h" />
     <ClInclude Include="src\print_ast.h" />
     <ClInclude Include="src\visit.h" />
     <ClInclude Include="x.h" />
