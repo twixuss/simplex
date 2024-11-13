@@ -2961,6 +2961,10 @@ struct Parser {
 							skip_lines();
 							if (token->kind == ',') {
 								next();
+								skip_lines();
+								if (token->kind == ')') {
+									break;
+								}
 								continue;
 							}
 							if (token->kind == ')') {
@@ -3094,6 +3098,9 @@ struct Parser {
 						if (token->kind == ',') {
 							next();
 							skip_lines();
+							if (token->kind == ')') {
+								break;
+							}
 							continue;
 						}
 						if (token->kind == ')') {
@@ -8266,9 +8273,11 @@ private:
 				}
 			}
 
-			if (lambda->body) {
-				if (!implicitly_cast(&lambda->body, lambda->head.return_type, true)) {
-					fail();
+			if (!all_paths_return) {
+				if (lambda->body) {
+					if (!implicitly_cast(&lambda->body, lambda->head.return_type, true)) {
+						fail();
+					}
 				}
 			}
 		} else {
@@ -9485,7 +9494,78 @@ void init_builtin_types() {
 	#undef x
 }
 
+#include "c_parser.h"
+
+struct C2Simplex {
+	List<Span<utf8>> include_directories = to_list({
+		u8"C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared"s,
+		u8"C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\um"s,
+		u8"D:\\Programs\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.40.33807\\include"s,
+	});
+
+
+	Span<utf8> find_in_include_directories(Span<utf8> path) {
+		Span<utf8> full_path;
+		for (auto directory : include_directories) {
+			auto checkpoint = current_temporary_allocator.checkpoint();
+			full_path = tformat(u8"{}\\{}"s, directory, path);
+			if (file_exists(full_path)) {
+				break;
+			}
+			current_temporary_allocator.reset(checkpoint);
+			full_path = {};
+		}
+		return full_path;
+	}
+	void process_c_header(Span<utf8> full_path) {
+		auto source_buffer = read_entire_file(full_path);
+		defer { free(source_buffer); };
+		auto source = as_utf8(source_buffer);
+		auto result = c_parser::preprocess_source(source, c_parser::PreprocessSourceOptions{
+			.on_parsed_define = [&](c_parser::Macro macro) {
+				println("#define \"{}\" \"{}\"", macro.name, macro.value);
+			},
+			.on_parsed_include = [&](Span<utf8> path, c_parser::IncludeForm form) {
+				Span<utf8> full_path_to_include;
+				switch (form) {
+					case c_parser::IncludeForm::angle_bracket: {
+						full_path_to_include = find_in_include_directories(path);
+						break;
+					}
+					case c_parser::IncludeForm::quoted: {
+						auto checkpoint = current_temporary_allocator.checkpoint();
+						full_path_to_include = tformat(u8"{}\\{}", parse_path(full_path).directory, path);
+						if (file_exists(full_path_to_include)) {
+							break;
+						}
+						current_temporary_allocator.reset(checkpoint);
+						full_path_to_include = {};
+						break;
+					}
+				}
+				if (full_path_to_include.count == 0) {
+					println("Could not find file to include: {}", path);
+					exit(1);
+				}
+
+				println("==== Including {} ====", full_path_to_include);
+				process_c_header(full_path_to_include);
+				println("==== End {} ====", full_path_to_include);
+			},
+		});
+
+		println(result);
+	}
+};
+
 s32 tl_main(Span<Span<utf8>> args) {
+	C2Simplex converter;
+	converter.process_c_header(converter.find_in_include_directories(u8"Windows.h"s));
+
+	return 0;
+}
+s32 tl_main1(Span<Span<utf8>> args) {
+
 	debug_init();
 
 	auto main_fiber = fiber_init(0);
