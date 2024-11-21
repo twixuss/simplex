@@ -40,6 +40,9 @@ void print_crash_info();
 #include <tl/debug.h>
 #include <tl/macros.h>
 #include <tl/bits.h>
+#include <tl/block_list.h>
+
+#pragma warning(error: 4996)
 
 #define ENABLE_STRING_HASH_COUNT 0
 #define ENABLE_NOTE_LEAK 0
@@ -97,6 +100,10 @@ struct TimedResult {
 };
 
 List<TimedResult> timed_results;
+
+String compiler_path;
+String compiler_bin_directory;
+String compiler_root_directory;
 
 bool constant_name_inlining = true;
 bool print_uids = false;
@@ -664,61 +671,50 @@ auto chars_as_int(utf8 const *chars) {
 	return result;
 }
 
-using Tokens = GList<Token>;
 
-// TODO: don't make a giant list, cmon
-Optional<Tokens> source_to_tokens(String source, String path) {
-	timed_function();
+void print_token(umm i, Token token) {
+	print("{}) {} ", i, enum_name(token.kind));
 
-	const umm characters_per_token_prediction = 4;
-
-	Tokens tokens;
-	tokens.reserve(source.count / characters_per_token_prediction);
-
-	defer {
-		if (print_tokens) {
-			println("\nTokens of \"{}\":", path);
-			for (umm i = 0; i < tokens.count; ++i) {
-				auto &token = tokens[i];
-
-				print("{}) {} ", i, enum_name(token.kind));
-
-				switch (token.kind) {
-					case Token_number:
-					case Token_name: 
-					case Token_directive: 
-						print("\"{}\"", EscapedString{token.string}); 
-						break;
-					case Token_string: 
-						print("{}", EscapedString{token.string}); 
-						break;
-				}
-
-				println();
-			}
-		}
-	};
-
-	utf8 *cursor = source.data;
-
-	auto print_invalid_character_error = [&] {
-		immediate_reporter.error({cursor, 1}, "Invalid uft8 character.");
-	};
-
-	for (umm i = 0; i < source.count; ++i) {
-		auto c = source.data[i];
-		if (c <= 0x08 || (0x0b <= c && c <= 0x0c) || (0x0e <= c && c <= 0x1f)) {
-			immediate_reporter.error("Invalid character at byte {}: {} (0x{})", i, escape_character(c).span(), FormatInt{.value=(u32)c,.radix=16});
-			return {};
-		}
+	switch (token.kind) {
+		case Token_number:
+		case Token_name: 
+		case Token_directive: 
+			print("\"{}\"", EscapedString{token.string}); 
+			break;
+		case Token_string: 
+			print("{}", EscapedString{token.string}); 
+			break;
 	}
 
-	auto next = [&] {
-		assert(cursor <= source.end());
-		++cursor;
-	};
+	println();
+}
 
-	while (true) {
+struct Lexer {
+	static Lexer create(String source) {
+		Lexer result;
+		result.source = source;
+		result.cursor = source.data;
+		
+		for (umm i = 0; i < source.count; ++i) {
+			auto c = source.data[i];
+			if (c <= 0x08 || (0x0b <= c && c <= 0x0c) || (0x0e <= c && c <= 0x1f)) {
+				immediate_reporter.error("Invalid character at byte {}: {} (0x{})", i, escape_character(c).span(), FormatInt{.value=(u32)c,.radix=16});
+				return {};
+			}
+		}
+
+		return result;
+	}
+	
+	Token next_token() {
+		Token eof;
+		eof.kind = Token_eof;
+		eof.string = {source.end() - 1, source.end()};
+
+	restart:
+		if (cursor >= source.end()) {
+			return eof;
+		}
 
 		while (true) {
 			if (*cursor == ' ' || *cursor == '\t' || *cursor == '\r')
@@ -728,7 +724,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 		}
 
 		if (cursor == source.end())
-			break;
+			return eof;
 
 		Token token;
 		token.string.data = cursor;
@@ -747,8 +743,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 			token.kind = (TokenKind)a;                                \
 			token.string.count = 1;                                   \
 		}                                                             \
-		tokens.add(token);                                            \
-		break;                                                        \
+		return token;                                                 \
 	}
 
 		// ("&", "=")
@@ -772,11 +767,10 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 			default: {                                                    \
 				token.kind = (TokenKind)a;                                \
 				token.string.count = 1;                                   \
-				break;	                                                  \
+				break;                                                    \
 			}                                                             \
 		}                                                                 \
-		tokens.add(token);                                                \
-		break;                                                            \
+		return token;                                                     \
 	}
 		// ("<", "=")
 		// "<"
@@ -784,34 +778,33 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 		// "<<"
 		// "<<="
 #define CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE(a, b)                               \
-	case a: {																	 \
-		next(); 																 \
-		switch (*cursor) {														 \
-			case b:																 \
-				token.kind = (TokenKind)const_string_to_token_kind(a, b); 		 \
-				next();														     \
-				token.string.count = 2; 										 \
-				break; 															 \
-			case a: {															 \
-				next();														     \
-				if (*cursor == b) {												 \
-					next();													     \
+	case a: {                                                                    \
+		next();                                                                  \
+		switch (*cursor) {                                                       \
+			case b:                                                              \
+				token.kind = (TokenKind)const_string_to_token_kind(a, b);        \
+				next();                                                          \
+				token.string.count = 2;                                          \
+				break;                                                           \
+			case a: {                                                            \
+				next();                                                          \
+				if (*cursor == b) {                                              \
+					next();                                                      \
 					token.kind = (TokenKind)const_string_to_token_kind(a, a, b); \
-					token.string.count = 3;										 \
-				} else {														 \
-					token.kind = (TokenKind)const_string_to_token_kind(a, a); 	 \
-					token.string.count = 2; 									 \
-				}																 \
-				break;															 \
-			}																	 \
-			default: {															 \
-				token.kind = (TokenKind)a; 										 \
-				token.string.count = 1;											 \
-				break;															 \
-			}																	 \
-		}																		 \
-		tokens.add(token); 														 \
-		break;																	 \
+					token.string.count = 3;                                      \
+				} else {                                                         \
+					token.kind = (TokenKind)const_string_to_token_kind(a, a);    \
+					token.string.count = 2;                                      \
+				}                                                                \
+				break;                                                           \
+			}                                                                    \
+			default: {                                                           \
+				token.kind = (TokenKind)a;                                       \
+				token.string.count = 1;                                          \
+				break;                                                           \
+			}                                                                    \
+		}                                                                        \
+		return token;                                                            \
 	}
 		switch (*cursor) {
 			case '(': case ')':
@@ -825,9 +818,8 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 			case '\\': case '\n': {
 				token.kind = (TokenKind)*cursor;
 				token.string.count = 1;
-				tokens.add(token);
 				next();
-				break;
+				return token;
 			}
 			CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE('>', '=')
 			CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE('<', '=')
@@ -849,8 +841,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 				token.kind = (TokenKind)(a | or_table[is_equals]);
 				token.string.count = is_equals + 1;
 
-				tokens.add(token);
-				break;
+				return token;
 			}
 
 			CASE_SINGLE_OR_TWO_DOUBLES('=', '>');
@@ -863,6 +854,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 					while (*cursor != '\n' && cursor != source.end()) {
 						next();
 					}
+					goto restart;
 				} else if (*cursor == '*') {
 					while (true) {
 						if (String(cursor, 2) == "*/") {
@@ -875,10 +867,11 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 							return {};
 						}
 					}
+					goto restart;
 				} else {
 					token.kind = (TokenKind)'/';
 					token.string.count = 1;
-					tokens.add(token);
+					return token;
 				}
 				break;
 			}
@@ -899,8 +892,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 				next();
 
 				token.string.set_end(cursor);
-				tokens.add(token);
-				break;
+				return token;
 			}
 			case '#': {
 				token.kind = Token_directive;
@@ -921,8 +913,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 			directive_loop_end:;
 
 				token.string.set_end(cursor);
-				tokens.add(token);
-				break;
+				return token;
 			}
 
 			ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
@@ -959,8 +950,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 			number_loop_end:;
 
 				token.string.set_end(cursor);
-				tokens.add(token);
-				break;
+				return token;
 			}
 			default: {
 				token.kind = Token_name;
@@ -1082,6 +1072,7 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 							case const_string_to_token_kind("typeof"s): { token.kind = Token_typeof; break; }
 							case const_string_to_token_kind("inline"s): { token.kind = Token_inline; break; }
 							case const_string_to_token_kind("struct"s): { token.kind = Token_struct; break; }
+							case const_string_to_token_kind("import"s): { token.kind = Token_import; break; }
 						}
 						break;
 					}
@@ -1180,10 +1171,48 @@ Optional<Tokens> source_to_tokens(String source, String path) {
 					#endif
 				}
 
-				tokens.add(token);
-				break;
+				return token;
 			}
 		} 
+	}
+
+private:
+	String source;
+	utf8 *cursor;
+	
+	void print_invalid_character_error() {
+		immediate_reporter.error({cursor, 1}, "Invalid uft8 character.");
+	}
+	
+	void next() {
+		assert(cursor <= source.end());
+		++cursor;
+	}
+
+};
+
+using Tokens = GList<Token>;
+
+// don't make a giant list, cmon
+Optional<Tokens> source_to_tokens(String source, String path) {
+	timed_function();
+
+	Tokens tokens;
+
+	Lexer lexer = Lexer::create(source);
+
+	while (1) {
+		Token token = lexer.next_token();
+		if (token.kind == Token_eof)
+			break;
+		tokens.add(token);
+	}
+
+	if (print_tokens) {
+		println("\nTokens of \"{}\":", path);
+		for (umm i = 0; i < tokens.count; ++i) {
+			print_token(i, tokens[i]);
+		}
 	}
 
 	// NOTE: add a bunch of 'eof' tokens to the end, so peeking does not go out of bounds.
@@ -1425,9 +1454,10 @@ struct NodeBase {
 };
 
 enum class Mutability : u8 {
-	readonly, // can not be modified by anyone.
-	constant, // known at compile time. can be casted to readonly
-	variable, // can be modified by anyone.
+	readonly,  // can not be modified by anyone.
+	immutable, // can not be modified directly, can be modified by someone else (e.g. other thread)
+	constant,  // known at compile time. can be casted to readonly
+	variable,  // can be modified by anyone.
 };
 
 inline umm append(StringBuilder &builder, Mutability mutability) {
@@ -1786,6 +1816,9 @@ DEFINE_STATEMENT(IfStatement) {
 	Node *true_branch = 0;
 	Node *false_branch = 0; // May be null
 };
+DEFINE_STATEMENT(Import) {
+	String path;
+};
 
 template <class T>
 concept CNode = OneOf<T, Expression, Statement
@@ -1837,6 +1870,7 @@ inline umm append(StringBuilder &builder, Value value) {
 		case ValueKind::S16: return append(builder, value.S16);
 		case ValueKind::S32: return append(builder, value.S32);
 		case ValueKind::S64: return append(builder, value.S64);
+		case ValueKind::UnsizedInteger: return append(builder, value.UnsizedInteger);
 		case ValueKind::Bool: return append(builder, value.Bool);
 		case ValueKind::Type:    return append(builder, value.Type);
 		case ValueKind::lambda:  return append(builder, value.lambda);
@@ -1999,6 +2033,9 @@ ForEachDirective visit_impl(ArrayConstructor **node, auto &&visitor) {
 	for (auto &element : arr->elements) {
 		VISIT(&element);
 	}
+	return ForEach_continue;
+}
+ForEachDirective visit_impl(Import **node, auto &&visitor) {
 	return ForEach_continue;
 }
 
@@ -2675,6 +2712,9 @@ void print_ast_impl(ArrayConstructor *arr) {
 	}
 	print("]");
 }
+void print_ast_impl(Import *import) {
+	print("import \"{}\"", EscapedString{import->path});
+}
 void print_ast(Node *node) {
 	switch (node->kind) {
 #define x(name) case NodeKind::name: return print_ast_impl((##name *)node);
@@ -2769,6 +2809,13 @@ void note_leak(String expression, Node *node, String message = {}, std::source_l
 #endif
 
 Block global_block;
+SpinLock global_block_lock;
+
+struct FileToParse {
+	String location;
+	String path;
+};
+LockProtected<GList<FileToParse>, SpinLock> files_to_parse;
 
 Optional<Mutability> to_mutability(TokenKind token_kind) {
 	switch (token_kind) {
@@ -3632,7 +3679,6 @@ struct Parser {
 				yield(false);
 				break;
 			}
-
 			case Token_if: {
 				auto location = token->string;
 				next();
@@ -3685,6 +3731,23 @@ struct Parser {
 				If->false_branch = false_branch;
 				return If;
 			}
+			case Token_import: {
+				next();
+
+				expect(Token_string);
+				
+				auto import = Import::create();
+				import->path = unescape_string(token->string);
+				
+				next();
+	
+				auto full_path = tformat(u8"{}\\import\\{}.sp", compiler_root_directory, import->path);
+				locked_use(files_to_parse) {
+					files_to_parse.add({.location = import->location, .path = full_path});
+				};
+
+				return import;
+			}
 		}
 
 		auto expression = parse_expression();
@@ -3732,15 +3795,13 @@ struct Parser {
 
 	void ensure_allowed_in_statement_context(Node *node) {
 		switch (node->kind) {
+			#define x(name) case NodeKind::name:
+			ENUMERATE_STATEMENT_KIND(x)
+			#undef x
 			case NodeKind::Definition:
 			case NodeKind::Block:
-			case NodeKind::Return:
 			case NodeKind::Call:
 			case NodeKind::IfExpression:
-			case NodeKind::IfStatement:
-			case NodeKind::While:
-			case NodeKind::Continue:
-			case NodeKind::Break:
 			case NodeKind::Match:
 				return;
 			case NodeKind::Binary: {
@@ -3828,6 +3889,38 @@ Optional<List<Node *>> tokens_to_nodes(Fiber parent_fiber, Span<Token> tokens) {
 		return parser.result_nodes;
 
 	return {};
+}
+
+bool read_file_and_parse_into_global_block(Fiber parent_fiber, String location, String path) {
+	if (!file_exists(path)) {
+		immediate_reporter.error(location, "File {} does not exist", path);
+		return false;
+	}
+
+	// Will be used after function exits, don't free.
+	auto source_buffer = read_entire_file(path, {.extra_space_before = 1, .extra_space_after = 1});
+
+	auto source = (String)source_buffer.subspan(1, source_buffer.count - 2);
+	
+	content_start_to_file_name.get_or_insert(source.data) = path;
+
+	auto tokens = source_to_tokens(source, path);
+	if (!tokens) {
+		immediate_reporter.error(location, "Failed to tokenize this file: {}", path);
+		return false;
+	}
+	defer { free(tokens.value()); };
+	auto nodes = tokens_to_nodes(parent_fiber, tokens.value());
+	if (!nodes) {
+		immediate_reporter.error(location, "Failed to parse this file: {}", path);
+		return false;
+	}
+
+	for (auto &node : nodes.value()) {
+		global_block.add(node);
+	}
+
+	return true;
 }
 
 enum class YieldResult : u8 {
@@ -4133,6 +4226,7 @@ private:
 		return Value(&element_at(arr.pointer->elements, index));
 	}
 	Value load_address_impl(ArrayConstructor *) { invalid_code_path(); }
+	Value load_address_impl(Import *) { invalid_code_path(); }
 
 	Value execute(Node *node) {
 		scoped_replace(debug_current_location, node->location);
@@ -4634,6 +4728,7 @@ private:
 		}
 		return result;
 	}
+	Value execute_impl(Import *import) { invalid_code_path(); }
 };
 
 #undef PERFORM_WITH_BREAKS
@@ -5938,6 +6033,7 @@ struct Builder {
 			output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
 		}
 	} 
+	void output_impl(Import *import) { invalid_code_path(); } 
 
 	void load_address(Site destination, Expression *expression) {
 		switch (expression->kind) {
@@ -6864,6 +6960,7 @@ Result<Value, Node *> get_constant_value_impl(ArrayConstructor *node) {
 	}
 	return result;
 }
+Result<Value, Node *> get_constant_value_impl(Import *node) { return node; }
 Result<Value, Node *> get_constant_value(Node *node) {
 	scoped_replace(debug_current_location, node->location);
 	switch (node->kind) {
@@ -6896,7 +6993,7 @@ struct TypecheckEntry {
 	TypecheckEntry *dependency = 0;
 };
 
-List<TypecheckEntry> typecheck_entries;
+StaticBlockList<TypecheckEntry, 256> typecheck_entries;
 
 LockProtected<List<Report>, SpinLock> deferred_reports;
 
@@ -7116,6 +7213,9 @@ struct Copier {
 	[[nodiscard]] void deep_copy_impl(ArrayConstructor *from, ArrayConstructor *to) {
 		COPY_LIST(elements, DEEP_COPY);
 		COPY(type);
+	}
+	[[nodiscard]] void deep_copy_impl(Import *from, Import *to) {
+		COPY(path);
 	}
 
 #undef LOOKUP_COPY
@@ -7339,6 +7439,20 @@ Binary *make_cast(Expression *expression, Type type) {
 	return as;
 }
 
+struct VectorizedLambdaKey {
+	Lambda *lambda;
+	u64 vector_size;
+	constexpr auto operator<=>(VectorizedLambdaKey const &) const = default;
+};
+
+struct VectorizedLambdaKeyHashTraits : DefaultHashTraits<VectorizedLambdaKey> {
+	inline static constexpr u64 get_hash(VectorizedLambdaKey const &k) {
+		return (u64)k.lambda ^ k.vector_size;
+	}
+};
+
+LockProtected<HashMap<VectorizedLambdaKey, Definition *, VectorizedLambdaKeyHashTraits>, SpinLock> vectorized_lambdas;
+
 enum class FailStrategy {
 	yield,
 	unwind,
@@ -7351,30 +7465,25 @@ struct Typechecker {
 	static Typechecker *create(Node **node) {
 		assert(node);
 
-		auto typechecker = [&] {
-			if (auto typechecker_ = locked_use_it(retired_typecheckers, it.pop())) {
-				auto typechecker = typechecker_.value();
-				// immediate_reporter.info("created cached typechecker {} for node {}", typechecker->uid, node->location);
+		Typechecker *typechecker = 0;
+		
+		if (auto popped = locked_use_it(retired_typecheckers, it.pop())) {
+			typechecker = popped.value();
+			// immediate_reporter.info("created cached typechecker {} for node {}", typechecker->uid, node->location);
 
-				assert(typechecker->debug_stopped);
-				assert(typechecker->yield_result == YieldResult{});
-				assert(typechecker->reporter.reports.count == 0);
-				assert(typechecker->initial_node == 0);
-				assert(typechecker->current_block == 0);
-
-
-				return typechecker;
-			}
-
-			auto typechecker = new Typechecker();
+			assert(typechecker->debug_stopped);
+			assert(typechecker->yield_result == YieldResult{});
+			assert(typechecker->reporter.reports.count == 0);
+			assert(typechecker->initial_node == 0);
+			assert(typechecker->current_block == 0);
+		} else {
+			typechecker = default_allocator.allocate<Typechecker>();
 			typechecker->fiber = fiber_create([](void *param) {
 				((Typechecker *)param)->fiber_main(); 
 			}, typechecker);
 
 			// immediate_reporter.info("created new typechecker {} for node {}", typechecker->uid, node->location);
-
-			return typechecker;
-		}();
+		}
 
 		typechecker->reporter.reports.clear();
 		typechecker->current_block = &global_block;
@@ -7443,20 +7552,6 @@ private:
 	#define with_unwind_strategy(x) ([&]()->decltype(auto){ scoped_replace(fail_strategy, FailStrategy::unwind); return x; }())
 
 	#define typecheck_or_unwind(...) do { if (!typecheck(__VA_ARGS__)) return 0; } while (0)
-
-	struct VectorizedLambdaKey {
-		Lambda *lambda;
-		u64 vector_size;
-		constexpr auto operator<=>(VectorizedLambdaKey const &) const = default;
-	};
-
-	struct VectorizedLambdaKeyHashTraits : DefaultHashTraits<VectorizedLambdaKey> {
-		inline static constexpr u64 get_hash(VectorizedLambdaKey const &k) {
-			return (u64)k.lambda ^ k.vector_size;
-		}
-	};
-
-	HashMap<VectorizedLambdaKey, Definition *, VectorizedLambdaKeyHashTraits> vectorized_lambdas;
 
 	[[nodiscard]]
 	bool yield_while(String location, auto predicate) {
@@ -7768,83 +7863,84 @@ private:
 	}
 
 	Definition *get_vectorized_lambda_definition(Lambda *original_lambda, u64 vector_size) {
-		if (auto found = vectorized_lambdas.find({ original_lambda, vector_size })) {
-			return found->value;
-		}
+		return locked_use(vectorized_lambdas) {
+			if (auto found = vectorized_lambdas.find({ original_lambda, vector_size })) {
+				return found->value;
+			}
 
+			auto original_param = original_lambda->head.parameters_block.definition_list[0];
 
-		auto original_param = original_lambda->head.parameters_block.definition_list[0];
+			auto new_lambda_definition = Definition::create();
+			auto new_lambda = Lambda::create();
+			auto new_lambda_param = Definition::create();
+			auto array = ArrayConstructor::create();
 
-		auto new_lambda_definition = Definition::create();
-		auto new_lambda = Lambda::create();
-		auto new_lambda_param = Definition::create();
-		auto array = ArrayConstructor::create();
+			new_lambda_param->name = original_param->name;
+			new_lambda_param->type = make_array_type(original_param->type, vector_size);
+			new_lambda_param->mutability = original_param->mutability;
+			new_lambda_param->container = new_lambda;
+			new_lambda_param->is_parameter = true;
+			new_lambda_param->location = original_param->location;
 
-		new_lambda_param->name = original_param->name;
-		new_lambda_param->type = make_array_type(original_param->type, vector_size);
-		new_lambda_param->mutability = original_param->mutability;
-		new_lambda_param->container = new_lambda;
-		new_lambda_param->is_parameter = true;
-		new_lambda_param->location = original_param->location;
+			array->location = original_lambda->location;
+			array->elements.reserve(vector_size);
+			for (umm i = 0; i < vector_size; ++i) {
+				auto index = IntegerLiteral::create();
+				index->value = i;
+				index->type = get_builtin_type(BuiltinType::U64);
 
-		array->location = original_lambda->location;
-		array->elements.reserve(vector_size);
-		for (umm i = 0; i < vector_size; ++i) {
-			auto index = IntegerLiteral::create();
-			index->value = i;
-			index->type = get_builtin_type(BuiltinType::U64);
+				auto param_name = Name::create();
+				param_name->location = original_lambda->location;
+				param_name->name = new_lambda_param->name;
+				param_name->possible_definitions.set(new_lambda_param);
+				param_name->type = new_lambda_param->type;
 
-			auto param_name = Name::create();
-			param_name->location = original_lambda->location;
-			param_name->name = new_lambda_param->name;
-			param_name->possible_definitions.set(new_lambda_param);
-			param_name->type = new_lambda_param->type;
+				auto subscript = Subscript::create();
+				subscript->location = original_lambda->location;
+				subscript->subscriptable = param_name;
+				subscript->index = index;
+				subscript->type = original_param->type;
 
-			auto subscript = Subscript::create();
-			subscript->location = original_lambda->location;
-			subscript->subscriptable = param_name;
-			subscript->index = index;
-			subscript->type = original_param->type;
+				auto callable = Name::create();
+				callable->location = original_lambda->location;
+				assert(original_lambda->definition);
+				callable->name = original_lambda->definition->name;
+				callable->possible_definitions.set(original_lambda->definition);
+				callable->type = original_lambda->definition->type;
 
-			auto callable = Name::create();
-			callable->location = original_lambda->location;
-			assert(original_lambda->definition);
-			callable->name = original_lambda->definition->name;
-			callable->possible_definitions.set(original_lambda->definition);
-			callable->type = original_lambda->definition->type;
+				auto call = Call::create();
+				call->location = original_lambda->location;
+				call->callable = callable;
+				call->arguments.set(subscript);
+				call->call_kind = CallKind::lambda;
 
-			auto call = Call::create();
-			call->location = original_lambda->location;
-			call->callable = callable;
-			call->arguments.set(subscript);
-			call->call_kind = CallKind::lambda;
+				array->elements.add(call);
+			}
+			array->type = make_array_type(original_param->type, vector_size);
 
-			array->elements.add(call);
-		}
-		array->type = make_array_type(original_param->type, vector_size);
+			new_lambda->head.parameters_block.add(new_lambda_param);
+			new_lambda->head.return_type = array->type;
+			new_lambda->head.type = get_builtin_type(BuiltinType::Type);
+			new_lambda->definition = new_lambda_definition;
+			new_lambda->location = original_lambda->location;
+			new_lambda->type = &new_lambda->head;
+			new_lambda->body = array;
 
-		new_lambda->head.parameters_block.add(new_lambda_param);
-		new_lambda->head.return_type = array->type;
-		new_lambda->head.type = get_builtin_type(BuiltinType::Type);
-		new_lambda->definition = new_lambda_definition;
-		new_lambda->location = original_lambda->location;
-		new_lambda->type = &new_lambda->head;
-		new_lambda->body = array;
+			new_lambda_definition->initial_value = new_lambda;
+			if (original_lambda->definition) {
+				new_lambda_definition->name = format(u8"__v{}_{}", vector_size, original_lambda->definition->name);
+			} else {
+				new_lambda_definition->name = format(u8"__v{}_{}", vector_size, original_lambda->uid);
+			}
+			new_lambda_definition->location = original_lambda->location;
+			new_lambda_definition->mutability = Mutability::constant;
+			new_lambda_definition->type = new_lambda->type;
 
-		new_lambda_definition->initial_value = new_lambda;
-		if (original_lambda->definition) {
-			new_lambda_definition->name = format(u8"__v{}_{}", vector_size, original_lambda->definition->name);
-		} else {
-			new_lambda_definition->name = format(u8"__v{}_{}", vector_size, original_lambda->uid);
-		}
-		new_lambda_definition->location = original_lambda->location;
-		new_lambda_definition->mutability = Mutability::constant;
-		new_lambda_definition->type = new_lambda->type;
+			global_block.add(new_lambda_definition);
 
-		global_block.add(new_lambda_definition);
-
-		vectorized_lambdas.insert({ original_lambda, vector_size }, new_lambda_definition);
-		return new_lambda_definition;
+			vectorized_lambdas.insert({ original_lambda, vector_size }, new_lambda_definition);
+			return new_lambda_definition;
+		};
 	}
 
 	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply = true) {
@@ -9156,7 +9252,9 @@ private:
 
 		return arr;
 	}
-
+	[[nodiscard]] Import *typecheck_impl(Import *import, bool can_substitute) {
+		return import;
+	}
 
 	u32 debug_thread_id = 0;
 	bool debug_stopped = false;
@@ -9404,6 +9502,7 @@ void init_globals() {
 	construct(global_block);
 	construct(typecheck_entries);
 	construct(deferred_reports);
+	construct(vectorized_lambdas);
 #if ENABLE_NOTE_LEAK
 	construct(leaks);
 #endif
@@ -9494,6 +9593,7 @@ void init_builtin_types() {
 	#undef x
 }
 
+#if 0
 #include "c_parser.h"
 
 struct C2Simplex {
@@ -9521,7 +9621,8 @@ struct C2Simplex {
 		auto source_buffer = read_entire_file(full_path);
 		defer { free(source_buffer); };
 		auto source = as_utf8(source_buffer);
-		auto result = c_parser::preprocess_source(source, c_parser::PreprocessSourceOptions{
+		c_parser::Preprocessor preprocessor;
+		auto result = preprocessor.preprocess_source(source, c_parser::PreprocessSourceOptions{
 			.on_parsed_define = [&](c_parser::Macro macro) {
 				println("#define \"{}\" \"{}\"", macro.name, macro.value);
 			},
@@ -9564,7 +9665,9 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 	return 0;
 }
-s32 tl_main1(Span<Span<utf8>> args) {
+#endif
+
+s32 tl_main(Span<Span<utf8>> args) {
 
 	debug_init();
 
@@ -9599,12 +9702,46 @@ s32 tl_main1(Span<Span<utf8>> args) {
 	
 	timed_function();
 
+	compiler_path = args[0];
+	compiler_bin_directory = parse_path(compiler_path).directory;
+	compiler_root_directory = format(u8"{}\\..", compiler_bin_directory);
+
 	auto maybe_arguments = parse_arguments(args);
 	if (!maybe_arguments) {
 		immediate_reporter.error("Failed to parse arguments.");
 		return 1;
 	}
 	auto arguments = maybe_arguments.value();
+	
+	auto cpu_info = get_cpu_info();
+
+	u32 thread_count;
+	if (arguments.thread_count == 0) {
+		thread_count = cpu_info.logical_processor_count;
+	} else {
+		thread_count = min(arguments.thread_count, cpu_info.logical_processor_count);
+	}
+
+	
+	// NOTE: lock is only needed initially for insertion. There's no modification afterwards so 
+	// no need for LockProtected
+	static SpinLock thread_id_to_fiber_lock;
+	static HashMap<u32, Fiber> thread_id_to_fiber;
+	
+	thread_id_to_fiber.insert(get_current_thread_id(), main_fiber);
+
+	static auto init_worker_fiber = [] {
+		auto worker_fiber = fiber_init(0);
+		auto thread_id = get_current_thread_id();
+
+		scoped(thread_id_to_fiber_lock);
+		thread_id_to_fiber.insert(thread_id, worker_fiber);
+	};
+
+	TaskQueueThreadPool thread_pool;
+	thread_pool.init(thread_count - 1, {.worker_initter = init_worker_fiber});
+	defer { thread_pool.deinit(); };
+
 
 	auto source_contents_buffer = read_entire_file(arguments.source_name, {.extra_space_before = 1, .extra_space_after = 1});
 	if (!source_contents_buffer.data) {
@@ -9613,56 +9750,40 @@ s32 tl_main1(Span<Span<utf8>> args) {
 	}
 	defer { free(source_contents_buffer); };
 
-	auto source_contents = (String)source_contents_buffer.subspan(1, source_contents_buffer.count - 2);
+	files_to_parse.use_unprotected().add({.location = {}, .path = arguments.source_name});
 
-	content_start_to_file_name.get_or_insert(source_contents.data) = arguments.source_name;
+	static bool failed = false;
 
-	auto tokens = source_to_tokens(source_contents, arguments.source_name);
-	if (!tokens) {
-		immediate_reporter.error("Failed to tokenize source code.");
-		return 1;
-	}
+	while (1) {
+		while (1) {
+			auto popped = locked_use(files_to_parse) { return files_to_parse.pop(); };
+			if (!popped) {
+				break;
+			}
+
+			thread_pool += [to_parse = popped.value()] {
+				auto fiber = thread_id_to_fiber.find(get_current_thread_id())->value;
+				bool success = read_file_and_parse_into_global_block(fiber, to_parse.location, to_parse.path);
+				atomic_and(&failed, !success);
+			};
+		}
 	
-	auto global_nodes = tokens_to_nodes(main_fiber, tokens.value());
-	if (!global_nodes) {
-		immediate_reporter.error("Failed to build an ast.");
-		return 1;
+		thread_pool.wait_for_completion(WaitForCompletionOption::do_my_task);
+
+		if (files_to_parse.use_unprotected().count == 0) {
+			break;
+		}
 	}
-	
+
 	{
 		timed_block("typecheck");
-		for (auto node : global_nodes.value())
-			global_block.add(node);
 
-		auto cpu_info = get_cpu_info();
 
-		u32 thread_count;
-		if (arguments.thread_count == 0) {
-			thread_count = cpu_info.logical_processor_count;
-		} else {
-			thread_count = min(arguments.thread_count, cpu_info.logical_processor_count);
+		failed = false;
+
+		for (auto &node : global_block.children) {
+			typecheck_entries.add({.node = &node});
 		}
-
-		static SpinLock thread_id_to_fiber_lock; // needed only for safe insertion
-		static HashMap<u32, Fiber> thread_id_to_fiber;
-	
-		thread_id_to_fiber.insert(get_current_thread_id(), main_fiber);
-
-		static auto init_worker_fiber = [] {
-			auto worker_fiber = fiber_init(0);
-			auto thread_id = get_current_thread_id();
-
-			scoped(thread_id_to_fiber_lock);
-			thread_id_to_fiber.insert(thread_id, worker_fiber);
-		};
-
-		TaskQueueThreadPool thread_pool;
-		thread_pool.init(thread_count - 1, {.worker_initter = init_worker_fiber});
-		defer { thread_pool.deinit(); };
-
-		static bool failed = false;
-
-		typecheck_entries = map(global_nodes.value(), [&](auto &node) { return TypecheckEntry{.node = &node}; });
 
 
 		u32 round_index = 0;
@@ -9742,43 +9863,36 @@ s32 tl_main1(Span<Span<utf8>> args) {
 			};
 			struct Vertex {
 				VertexState state = {};
-				u32 parent = -1;
-				List<u32> pointees;
+				TypecheckEntry *parent = 0;
+				List<TypecheckEntry *> pointees;
 			};
 
-			List<Vertex> vertices;
-			vertices.resize(typecheck_entries.count);
+			HashMap<TypecheckEntry *, Vertex> vertices;
 
-			auto add_edge = [&] (u32 from, u32 to) {
-				vertices[from].pointees.add(to);
+			auto add_edge = [&] (TypecheckEntry *from, TypecheckEntry *to) {
+				vertices.get_or_insert(from).pointees.add(to);
 			};
 
 			for (auto &dependency : typecheck_entries) {
-				auto dependency_index = index_of(typecheck_entries, &dependency);
-				assert(dependency_index < typecheck_entries.count);
-
 				List<TypecheckEntry *> dependants;
 				for (auto &entry : typecheck_entries) {
 					if (entry.dependency == &dependency)
 						dependants.add(&entry);
 				}
 				for (auto &dependant : dependants) {
-					auto dependant_index = index_of(typecheck_entries, dependant);
-					assert(dependant_index < typecheck_entries.count);
-
-					add_edge(dependant_index, dependency_index);
+					add_edge(dependant, &dependency);
 				}
 			}
 
-			List<u32> cycle;
-			List<List<u32>> cycles;
+			List<TypecheckEntry *> cycle;
+			List<List<TypecheckEntry *>> cycles;
 
-			auto dfs = [&](this auto &&self, u32 u) -> void {
-				vertices[u].state = VertexState::visited;
-				for (auto v : vertices[u].pointees) {
-					switch (vertices[v].state) {
+			auto dfs = [&](this auto &&self, TypecheckEntry *u) -> void {
+				vertices.get_or_insert(u).state = VertexState::visited;
+				for (auto v : vertices.get_or_insert(u).pointees) {
+					switch (vertices.get_or_insert(v).state) {
 						case VertexState::none: {
-							vertices[v].parent = u;
+							vertices.get_or_insert(v).parent = u;
 							self(v);
 							break;
 						}
@@ -9788,7 +9902,7 @@ s32 tl_main1(Span<Span<utf8>> args) {
 							cycle.add(v);
 							while (p != v) {
 								cycle.add(p);
-								p = vertices[p].parent;
+								p = vertices.get_or_insert(p).parent;
 							}
 							flip_order(cycle); // reverse to get correct order
 							cycles.add(cycle);
@@ -9797,12 +9911,12 @@ s32 tl_main1(Span<Span<utf8>> args) {
 						}
 					}
 				}
-				vertices[u].state = VertexState::finished;
+				vertices.get_or_insert(u).state = VertexState::finished;
 			};
 
-			for (umm i = 0; i < typecheck_entries.count; i++) {
-				if (vertices[i].state == VertexState::none) {
-					dfs(i);
+			for (auto &entry : typecheck_entries) {
+				if (vertices.get_or_insert(&entry).state == VertexState::none) {
+					dfs(&entry);
 				}
 			}
 
@@ -9819,7 +9933,7 @@ s32 tl_main1(Span<Span<utf8>> args) {
 				bool all_are_lambdas = true;
 				Lambda *lambda_with_no_return_type = 0;
 				for (umm j = 0; j < cycle.count; ++j) {
-					auto &entry = typecheck_entries[cycle[j]];
+					auto &entry = *cycle[j];
 
 					if (auto definition = as<Definition>(*entry.node); definition && definition->initial_value) {
 						if (auto lambda = as<Lambda>(definition->initial_value)) {
@@ -9840,8 +9954,8 @@ s32 tl_main1(Span<Span<utf8>> args) {
 
 
 				for (umm j = 0; j < cycle.count; ++j) {
-					auto &entry = typecheck_entries[cycle[j]];
-					auto &next_entry = typecheck_entries[cycle[(j + 1) % cycle.count]];
+					auto &entry = *cycle[j];
+					auto &next_entry = *cycle[(j + 1) % cycle.count];
 
 					immediate_reporter.info((*entry.node)->location, "{} depends on {}.", (*entry.node)->location, (*next_entry.node)->location);
 				}
@@ -9862,7 +9976,7 @@ s32 tl_main1(Span<Span<utf8>> args) {
 		print_ast(&global_block);
 	}
 
-	for (auto node : global_nodes.value()) {
+	for (auto node : global_block.children) {
 		if (auto definition = as<Definition>(node)) {
 			if (definition->name == u8"main"s) {
 				if (!definition->initial_value) {

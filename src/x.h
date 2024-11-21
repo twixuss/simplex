@@ -137,6 +137,7 @@ ENUMERATE_KEYWORDS(x)
 	x(struct) \
 	x(as) \
 	x(none) \
+	x(import) \
 
 /*
 #define x(name, token, precedence)
@@ -255,6 +256,7 @@ ENUMERATE_STATEMENT_KIND(x)
 	x(While) \
 	x(Continue) \
 	x(Break) \
+	x(Import) \
 
 /*
 #define x(name)

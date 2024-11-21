@@ -23,7 +23,6 @@
       <FloatingPointExceptions>false</FloatingPointExceptions>
       <TreatSpecificWarningsAsErrors>4715; 4834; 6031</TreatSpecificWarningsAsErrors>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <ExceptionHandling>false</ExceptionHandling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
@@ -34,6 +33,7 @@
       <BuildStlModules>false</BuildStlModules>
       <PreprocessToFile>false</PreprocessToFile>
       <UseStandardPreprocessor>true</UseStandardPreprocessor>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup />
