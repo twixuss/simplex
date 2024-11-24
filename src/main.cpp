@@ -21,7 +21,12 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 
 void print_crash_info();
 
-#define ASSERTION_FAILURE(cause_string, expression, ...) (::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCSIG__ __VA_OPT__(,) __VA_ARGS__), print_crash_info(), debugger_attached() ? (debug_break(), 0) : 0, exit(-1))
+#define ASSERTION_FAILURE(cause_string, expression, ...) (\
+	::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCSIG__ __VA_OPT__(,) __VA_ARGS__), \
+	print_crash_info(), \
+	(BUILD_DEBUG || debugger_attached()) ? (debug_break(), 0) : 0, \
+	exit(-1) \
+)
 
 #if !BUILD_DEBUG
 #define assert(...)
@@ -35,7 +40,7 @@ void print_crash_info();
 #include <tl/string.h>
 #include <tl/cpu.h>
 #include <tl/hash_map.h>
-#include <tl/fiber.h>
+#include <tl/reusable_fiber.h>
 #include <tl/time.h>
 #include <tl/debug.h>
 #include <tl/macros.h>
@@ -112,6 +117,17 @@ bool enable_time_log = false;
 bool is_debugging = false;
 bool print_tokens = false;
 bool print_wait_failures = false;
+bool enable_log_error_path = false;
+
+void log_error_path(char const *file, int line, auto &&...args) {
+	with(ConsoleColor::dark_yellow, print("{}:{}: ", file, line));
+	println(args...);
+}
+
+#define LOG_ERROR_PATH(...) \
+	if (enable_log_error_path) { \
+		log_error_path(__FILE__, __LINE__ __VA_OPT__(,) __VA_ARGS__); \
+	}
 
 #define dbgln(...) (is_debugging ? println(__VA_ARGS__) : 0)
 
@@ -2840,12 +2856,31 @@ bool is_substitutable(Block *block) {
 	return block->children.count == 1 && block->breaks.count == 0;
 }
 
+LockProtected<GList<ReusableFiber>, SpinLock> fibers_to_reuse;
+
+ReusableFiber get_new_fiber() {
+	return locked_use_ret(fibers_to_reuse) {
+		if (auto popped = fibers_to_reuse.pop()) {
+			return popped.value();
+		} else {
+			return create_reusable_fiber();
+		}
+	};
+}
+
+void add_fiber_to_reuse(ReusableFiber fiber) {
+	locked_use(fibers_to_reuse) {
+		fibers_to_reuse.add(fiber);
+	};
+}
+
 struct Parser {
 	Token *token = 0;
 	Block *current_block = &global_block;
 	While *current_loop = 0;
 	Expression *current_container = 0;
 	Reporter reporter;
+	ReusableFiber fiber = {};
 	Fiber parent_fiber = {};
 	List<Node *> result_nodes;
 	bool success = false;
@@ -3758,7 +3793,7 @@ struct Parser {
 	void yield(bool result) {
 		if (result)
 			success = true;
-		fiber_yield(parent_fiber);
+		tl::yield_reuse(parent_fiber, fiber);
 	}
 	void main() {
 		scoped_replace(debug_current_location, {});
@@ -3882,8 +3917,12 @@ Optional<List<Node *>> tokens_to_nodes(Fiber parent_fiber, Span<Token> tokens) {
 	parser.token = tokens.data;
 	defer { parser.reporter.print_all(); };
 
-	auto fiber = fiber_create(Parser::fiber_main, &parser);
-	fiber_yield(fiber);
+	parser.fiber = get_new_fiber();
+	set_start(parser.fiber, Parser::fiber_main, &parser);
+	yield(parser.fiber);
+
+	add_fiber_to_reuse(parser.fiber);
+	parser.fiber = {};
 
 	if (parser.success)
 		return parser.result_nodes;
@@ -3906,13 +3945,13 @@ bool read_file_and_parse_into_global_block(Fiber parent_fiber, String location, 
 
 	auto tokens = source_to_tokens(source, path);
 	if (!tokens) {
-		immediate_reporter.error(location, "Failed to tokenize this file: {}", path);
+		LOG_ERROR_PATH("Failed to tokenize this file: {}", path);
 		return false;
 	}
 	defer { free(tokens.value()); };
 	auto nodes = tokens_to_nodes(parent_fiber, tokens.value());
 	if (!nodes) {
-		immediate_reporter.error(location, "Failed to parse this file: {}", path);
+		LOG_ERROR_PATH("Failed to parse this file: {}", path);
 		return false;
 	}
 
@@ -4026,13 +4065,16 @@ struct NodeInterpreter {
 	static NodeInterpreter *create(Fiber parent_fiber, Node *node) {
 		auto context = DefaultAllocator{}.allocate<NodeInterpreter>();
 		context->parent_fiber = parent_fiber;
-		context->fiber = fiber_create([](void *param) { ((NodeInterpreter *)param)->fiber_main(); }, context);
+		context->fiber = get_new_fiber();
+		set_start(context->fiber, [](void *param) { ((NodeInterpreter *)param)->fiber_main(); }, context);
 		context->node_to_execute = node;
 		return context;
 	}
 
 	Result<Value, YieldResult> run() {
-		fiber_yield(fiber);
+		tl::yield(fiber);
+		add_fiber_to_reuse(fiber);
+		fiber = {};
 		if (yield_result == YieldResult::success) {
 			return result_value;
 		}
@@ -4084,7 +4126,7 @@ private:
 	List<Scope> scope_stack;
 	Value return_value;
 
-	Fiber fiber;
+	ReusableFiber fiber;
 	Fiber parent_fiber;
 
 	Node *node_to_execute;
@@ -4104,7 +4146,7 @@ private:
 
 	void yield(YieldResult result) {
 		this->yield_result = result;
-		fiber_yield(parent_fiber);
+		tl::yield_reuse(parent_fiber, fiber);
 	}
 
 #define PERFORM_WITH_BREAKS(name, execute, node)               \
@@ -7478,7 +7520,7 @@ struct Typechecker {
 			assert(typechecker->current_block == 0);
 		} else {
 			typechecker = default_allocator.allocate<Typechecker>();
-			typechecker->fiber = fiber_create([](void *param) {
+			typechecker->fiber = create_fiber([](void *param) {
 				((Typechecker *)param)->fiber_main(); 
 			}, typechecker);
 
@@ -7505,7 +7547,7 @@ struct Typechecker {
 			scoped_replace(this->parent_fiber, parent_fiber);
 			scoped_replace(this->entry, entry);
 
-			fiber_yield(fiber);
+			tl::yield(fiber);
 		}
 
 		if (yield_result != YieldResult::wait) {
@@ -7540,6 +7582,7 @@ private:
 	While *current_loop = 0;
 	List<Node *> node_stack;
 	TypecheckEntry *entry = 0;
+	jmp_buf unwind_point = {};
 
 	FailStrategy fail_strategy = FailStrategy::yield;
 	#define fail()                                      \
@@ -7591,21 +7634,18 @@ private:
 	void yield(YieldResult result) {
 		yield_result = result;
 		scoped_replace(debug_current_location, {});
-		fiber_yield(parent_fiber);
+		tl::yield(parent_fiber);
 		if (result == YieldResult::fail) {
-			throw Unwind{};
+			longjmp(unwind_point, 1);
 		}
 	}
 
 	void fiber_main() {
-		while (true) {
-			try {
-				assert(initial_node);
-				*initial_node = typecheck(*initial_node, true);
-				yield(YieldResult::success);
-			} catch (Unwind) {
-
-			}
+		while (1) {
+			setjmp(unwind_point);
+			assert(initial_node);
+			*initial_node = typecheck(*initial_node, true);
+			yield(YieldResult::success);
 		}
 	}
 
@@ -9562,6 +9602,8 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 			});
 		} else if (args[i] == "-print-wait-failures") {
 			print_wait_failures = true;
+		} else if (args[i] == "-log-error-path") {
+			enable_log_error_path = true;
 		} else if (args[i][0] == '-') {
 			immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
 		} else {
@@ -9671,7 +9713,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 	debug_init();
 
-	auto main_fiber = fiber_init(0);
+	auto main_fiber = init_fiber(0);
 
 	set_console_encoding(Encoding::utf8);
 
@@ -9731,7 +9773,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 	thread_id_to_fiber.insert(get_current_thread_id(), main_fiber);
 
 	static auto init_worker_fiber = [] {
-		auto worker_fiber = fiber_init(0);
+		auto worker_fiber = init_fiber(0);
 		auto thread_id = get_current_thread_id();
 
 		scoped(thread_id_to_fiber_lock);
@@ -9764,7 +9806,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 			thread_pool += [to_parse = popped.value()] {
 				auto fiber = thread_id_to_fiber.find(get_current_thread_id())->value;
 				bool success = read_file_and_parse_into_global_block(fiber, to_parse.location, to_parse.path);
-				atomic_and(&failed, !success);
+				atomic_or(&failed, !success);
 			};
 		}
 	
@@ -9773,6 +9815,11 @@ s32 tl_main(Span<Span<utf8>> args) {
 		if (files_to_parse.use_unprotected().count == 0) {
 			break;
 		}
+	}
+
+	if (failed) {
+		LOG_ERROR_PATH("Parsing failed");
+		return 1;
 	}
 
 	{
@@ -9967,7 +10014,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 		}
 
 		if (failed) {
-			immediate_reporter.error("Typechecking failed.");
+			LOG_ERROR_PATH("Typechecking failed.");
 			return 1;
 		}
 	}

@@ -50,11 +50,11 @@ struct RanProcess {
 
 SpinLock stdout_lock;
 
-bool show_box = false;
+bool show_box = true;
 
 RanProcess run_process(String command) {
 	auto last_error_mode = GetErrorMode();
-	if (show_box)
+	if (!show_box)
 		SetErrorMode(SEM_NOGPFAULTERRORBOX);
 	defer { SetErrorMode(last_error_mode); };
 
@@ -111,11 +111,14 @@ s32 tl_main(Span<String> arguments) {
 	List<String> test_filenames;
 	bool all = true;
 	bool do_coverage = false;
+	bool loop_until_failure = false;
 	for (int i = 1; i < arguments.count; ++i) {
-		if (arguments[i] == u8"box"s) {
-			show_box = true;
+		if (arguments[i] == u8"nobox"s) {
+			show_box = false;
 		} else if (arguments[i] == u8"coverage"s) {
 			do_coverage = true;
+		} else if (arguments[i] == u8"testloop"s) {
+			loop_until_failure = true;
 		} else if (arguments[i][0] == '-') {
 			append_format(extra_options_builder, "{} ", arguments[i]);
 		} else if (arguments[i] != u8"all"s) {
@@ -149,6 +152,7 @@ s32 tl_main(Span<String> arguments) {
 		add_tests_from_directory(test_directory);
 	}
 
+reloop:
 	u32 n_failed = 0;
 	u32 n_succeeded = 0;
 
@@ -230,67 +234,65 @@ s32 tl_main(Span<String> arguments) {
 				return;
 			}
 
-			auto output_mismatch = [&] {
-				do_fail([&] {
-					with(ConsoleColor::red, print("Compiler output mismatch:\n"));
-					print("Expected exit code: {}. Actual exit code: {}\n", compiler_should_error ? "non 0" : "0", actual_compiler.exit_code);
-					if (expected_compiler_output.count) {
-						with(ConsoleColor::cyan, print("Expected:\n"));
-						for (auto expected_string : expected_compiler_output) {
-							println(expected_string);
-						}
-					}
-					if (not_expected_compiler_output.count) {
-						with(ConsoleColor::cyan, print("Not expected:\n"));
-						for (auto not_expected_string : not_expected_compiler_output) {
-							println(not_expected_string);
-						}
-					}
-					with(ConsoleColor::cyan, print("Actual:\n"));
-					umm output_byte_limit = 16*1024;
-					if (actual_compiler.output.count > output_byte_limit) {
-						println("*** MORE THAN {} BYTES PRINTED, OMITTING ***", output_byte_limit);
-					} else {
-						println(actual_compiler.output);
-					}
-				});
-			};
-
+			List<String> expected_but_not_present_strings;
 			if (expected_compiler_output.count) {
 				for (auto expected_string : expected_compiler_output) {
 					if (!find(actual_compiler.output, expected_string)) {
-						output_mismatch();
-						return;
+						expected_but_not_present_strings.add(expected_string);
 					}
 				}
 			}
-
+			
+			List<String> unexpected_but_present_strings;
 			if (not_expected_compiler_output.count) {
 				for (auto not_expected_string : not_expected_compiler_output) {
 					if (find(actual_compiler.output, not_expected_string)) {
-						output_mismatch();
-						return;
+						unexpected_but_present_strings.add(not_expected_string);
 					}
 				}
 			}
 
+			String return_code_message = {};
 			if (compiler_should_error) {
 				if (actual_compiler.exit_code == 0) {
-					do_fail([&]{
-						with(ConsoleColor::red, println("Compiler should have returned non-zero exit code (failed)"));
-					});
+					return_code_message = u8"Compiler should have failed and returned non-zero exit code"s;
 				}
-
-				return;
 			} else {
 				if (actual_compiler.exit_code != 0) {
-					do_fail([&]{
-						with(ConsoleColor::red, println("Compiler should have returned zero exit code (succeeded) but got {}. Output:", actual_compiler.exit_code));
-						println(actual_compiler.output);
-					});
-
-					return;
+					return_code_message = tformat(u8"Compiler should have succeeded and returned zero exit code, but got {}. Output:"s, actual_compiler.exit_code);
 				}
+			}
+
+			if (expected_but_not_present_strings.count || unexpected_but_present_strings.count || return_code_message.count) {
+				do_fail([&] {
+					if (return_code_message.count) {
+						with(ConsoleColor::red, println(return_code_message));
+					}
+					
+					if (expected_but_not_present_strings.count || unexpected_but_present_strings.count) {
+						with(ConsoleColor::red, println("Compiler output mismatch:"));
+						if (expected_but_not_present_strings.count) {
+							with(ConsoleColor::cyan, println("Expected but not present:"));
+							for (auto expected_string : expected_but_not_present_strings) {
+								println(expected_string);
+							}
+						}
+						if (unexpected_but_present_strings.count) {
+							with(ConsoleColor::cyan, println("Not expected but present:"));
+							for (auto not_expected_string : unexpected_but_present_strings) {
+								println(not_expected_string);
+							}
+						}
+						with(ConsoleColor::cyan, println("Actual:"));
+						umm output_byte_limit = 16*1024;
+						if (actual_compiler.output.count > output_byte_limit) {
+							println("*** MORE THAN {} BYTES PRINTED, OMITTING ***", output_byte_limit);
+						} else {
+							println(actual_compiler.output);
+						}
+					}
+				});
+				return;
 			}
 
 
@@ -349,6 +351,13 @@ s32 tl_main(Span<String> arguments) {
 	}
 
 	thread_pool.wait_for_completion(WaitForCompletionOption::do_any_task);
+
+	if (loop_until_failure) {
+		if (!n_failed) {
+			system("cls");
+			goto reloop;
+		}
+	}
 
 	if (do_coverage) {
 		println("Merging coverage results...");
