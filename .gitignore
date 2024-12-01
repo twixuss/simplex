@@ -3,6 +3,7 @@ bin*/
 tmp/
 *.args.json
 a.sp
+b.sp
 *.vcxproj.user
 CoverageReport-*
 codecov/

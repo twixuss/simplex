@@ -5,6 +5,8 @@ const LONG = S32
 const UINT = U32
 const DWORD = U32
 
+const SIZE_T = U64
+
 const WPARAM = U64
 const LPARAM = S64
 const LRESULT = S64
@@ -307,38 +309,84 @@ const WM_APP                          = 0x8000
 const WM_USER                         = 0x0400
 
 
-const WS_OVERLAPPED       : DWORD = 0x00000000
-const WS_POPUP            : DWORD = 0x80000000
-const WS_CHILD            : DWORD = 0x40000000
-const WS_MINIMIZE         : DWORD = 0x20000000
-const WS_VISIBLE          : DWORD = 0x10000000
-const WS_DISABLED         : DWORD = 0x08000000
-const WS_CLIPSIBLINGS     : DWORD = 0x04000000
-const WS_CLIPCHILDREN     : DWORD = 0x02000000
-const WS_MAXIMIZE         : DWORD = 0x01000000
-const WS_BORDER           : DWORD = 0x00800000
-const WS_DLGFRAME         : DWORD = 0x00400000
-const WS_VSCROLL          : DWORD = 0x00200000
-const WS_HSCROLL          : DWORD = 0x00100000
-const WS_SYSMENU          : DWORD = 0x00080000
-const WS_THICKFRAME       : DWORD = 0x00040000
-const WS_GROUP            : DWORD = 0x00020000
-const WS_TABSTOP          : DWORD = 0x00010000
-const WS_MINIMIZEBOX      : DWORD = 0x00020000
-const WS_MAXIMIZEBOX      : DWORD = 0x00010000
-const WS_CAPTION          : DWORD = WS_BORDER | WS_DLGFRAME
-const WS_OVERLAPPEDWINDOW : DWORD = WS_OVERLAPPED     |
+const WS_OVERLAPPED       = 0x00000000
+const WS_POPUP            = 0x80000000
+const WS_CHILD            = 0x40000000
+const WS_MINIMIZE         = 0x20000000
+const WS_VISIBLE          = 0x10000000
+const WS_DISABLED         = 0x08000000
+const WS_CLIPSIBLINGS     = 0x04000000
+const WS_CLIPCHILDREN     = 0x02000000
+const WS_MAXIMIZE         = 0x01000000
+const WS_BORDER           = 0x00800000
+const WS_DLGFRAME         = 0x00400000
+const WS_VSCROLL          = 0x00200000
+const WS_HSCROLL          = 0x00100000
+const WS_SYSMENU          = 0x00080000
+const WS_THICKFRAME       = 0x00040000
+const WS_GROUP            = 0x00020000
+const WS_TABSTOP          = 0x00010000
+const WS_MINIMIZEBOX      = 0x00020000
+const WS_MAXIMIZEBOX      = 0x00010000
+const WS_CAPTION          = WS_BORDER | WS_DLGFRAME
+const WS_OVERLAPPEDWINDOW = WS_OVERLAPPED     |
     WS_CAPTION        |
     WS_SYSMENU        |
     WS_THICKFRAME     |
     WS_MINIMIZEBOX    |
     WS_MAXIMIZEBOX
     
-const CW_USEDEFAULT       : int = 0x80000000
+const CW_USEDEFAULT = 0x80000000
 
 const PM_NOREMOVE         = 0x0000
 const PM_REMOVE           = 0x0001
 const PM_NOYIELD          = 0x0002
+
+
+const PAGE_NOACCESS           = 0x01    
+const PAGE_READONLY           = 0x02    
+const PAGE_READWRITE          = 0x04    
+const PAGE_WRITECOPY          = 0x08    
+const PAGE_EXECUTE            = 0x10    
+const PAGE_EXECUTE_READ       = 0x20    
+const PAGE_EXECUTE_READWRITE  = 0x40    
+const PAGE_EXECUTE_WRITECOPY  = 0x80    
+const PAGE_GUARD             = 0x100    
+const PAGE_NOCACHE           = 0x200    
+const PAGE_WRITECOMBINE      = 0x400    
+const PAGE_GRAPHICS_NOACCESS           = 0x0800    
+const PAGE_GRAPHICS_READONLY           = 0x1000    
+const PAGE_GRAPHICS_READWRITE          = 0x2000    
+const PAGE_GRAPHICS_EXECUTE            = 0x4000    
+const PAGE_GRAPHICS_EXECUTE_READ       = 0x8000    
+const PAGE_GRAPHICS_EXECUTE_READWRITE = 0x10000    
+const PAGE_GRAPHICS_COHERENT          = 0x20000    
+const PAGE_ENCLAVE_THREAD_CONTROL = 0x80000000  
+const PAGE_REVERT_TO_FILE_MAP     = 0x80000000  
+const PAGE_TARGETS_NO_UPDATE      = 0x40000000  
+const PAGE_TARGETS_INVALID        = 0x40000000  
+const PAGE_ENCLAVE_UNVALIDATED    = 0x20000000  
+const PAGE_ENCLAVE_DECOMMIT       = 0x10000000  
+const MEM_COMMIT                      = 0x00001000  
+const MEM_RESERVE                     = 0x00002000  
+const MEM_REPLACE_PLACEHOLDER         = 0x00004000  
+const MEM_RESERVE_PLACEHOLDER         = 0x00040000  
+const MEM_RESET                       = 0x00080000  
+const MEM_TOP_DOWN                    = 0x00100000  
+const MEM_WRITE_WATCH                 = 0x00200000  
+const MEM_PHYSICAL                    = 0x00400000  
+const MEM_ROTATE                      = 0x00800000  
+const MEM_DIFFERENT_IMAGE_BASE_OK     = 0x00800000  
+const MEM_RESET_UNDO                  = 0x01000000  
+const MEM_LARGE_PAGES                 = 0x20000000  
+const MEM_4MB_PAGES                   = 0x80000000  
+const MEM_64K_PAGES                   = MEM_LARGE_PAGES | MEM_PHYSICAL
+const MEM_UNMAP_WITH_TRANSIENT_BOOST  = 0x00000001  
+const MEM_COALESCE_PLACEHOLDERS       = 0x00000001  
+const MEM_PRESERVE_PLACEHOLDER        = 0x00000002  
+const MEM_DECOMMIT                    = 0x00004000  
+const MEM_RELEASE                     = 0x00008000  
+const MEM_FREE                        = 0x00010000  
 
 #extern "user32"
 const RegisterClassExA = (class: *WNDCLASSEXA): *None => #extern
@@ -382,3 +430,10 @@ const DispatchMessageA = (lpMsg: *var MSG): LRESULT => #extern;
 
 #extern "kernel32"
 const GetModuleHandleA = (module_name: LPCSTR): HMODULE => #extern
+
+const VirtualAlloc = (
+    lpAddress: LPVOID,
+    dwSize: SIZE_T,
+    flAllocationType: DWORD,
+    flProtect: DWORD,
+): LPVOID => #extern

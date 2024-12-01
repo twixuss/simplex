@@ -40,6 +40,7 @@ void print_crash_info();
 #include <tl/string.h>
 #include <tl/cpu.h>
 #include <tl/hash_map.h>
+#include <tl/hash_set.h>
 #include <tl/reusable_fiber.h>
 #include <tl/time.h>
 #include <tl/debug.h>
@@ -118,6 +119,19 @@ bool is_debugging = false;
 bool print_tokens = false;
 bool print_wait_failures = false;
 bool enable_log_error_path = false;
+bool break_on_error = false;
+bool run_compiled_code = false;
+bool print_stats = false;
+bool should_print_ast = false;
+
+enum class InterpretMode {
+	bytecode,
+	ast,
+};
+
+String input_source_path;
+u32 requested_thread_count = 0;
+InterpretMode interpret_mode = {};
 
 void log_error_path(char const *file, int line, auto &&...args) {
 	with(ConsoleColor::dark_yellow, print("{}:{}: ", file, line));
@@ -350,6 +364,9 @@ using GList = tl::List<T, DefaultAllocator>;
 template <class Key, class Value, class Traits = DefaultHashTraits<Key>>
 using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, DefaultAllocator>;
 
+template <class Value, class Traits = DefaultHashTraits<Value>>
+using GHashSet = tl::ContiguousHashMap<Value, Empty, Traits, DefaultAllocator>;
+
 #include "x.h"
 
 consteval u64 const_string_to_token_kind(Span<char> string) {
@@ -441,7 +458,7 @@ struct SourceLocation {
 	List<String> lines;
 };
 
-GHashMap<utf8 *, String> content_start_to_file_name;
+LockProtected<GHashMap<utf8 *, String>, SpinLock> content_start_to_file_name;
 
 SourceLocation get_source_location(String location) {
 	SourceLocation result;
@@ -476,7 +493,7 @@ SourceLocation get_source_location(String location) {
 		--cursor;
 	}
 
-	auto found_file_name = content_start_to_file_name.find(cursor + 1);
+	auto found_file_name = locked_use(content_start_to_file_name) { return content_start_to_file_name.find(cursor + 1); };
 	assert(found_file_name);
 	result.file = found_file_name->value;
 
@@ -610,8 +627,6 @@ struct Report {
 	}
 };
 
-bool break_on_error = false;
-
 struct ReporterBase {
 	u32 indentation = 0;
 	void info   (this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::info,    self.indentation, location, args...)); }
@@ -733,14 +748,13 @@ struct Lexer {
 		}
 
 		while (true) {
-			if (*cursor == ' ' || *cursor == '\t' || *cursor == '\r')
-				next();
-			else
+			if (*cursor != ' ' && *cursor != '\t' && *cursor != '\r')
 				break;
+			next();
+			if (cursor == source.end())
+				return eof;
 		}
 
-		if (cursor == source.end())
-			return eof;
 
 		Token token;
 		token.string.data = cursor;
@@ -1208,37 +1222,6 @@ private:
 };
 
 using Tokens = GList<Token>;
-
-// don't make a giant list, cmon
-Optional<Tokens> source_to_tokens(String source, String path) {
-	timed_function();
-
-	Tokens tokens;
-
-	Lexer lexer = Lexer::create(source);
-
-	while (1) {
-		Token token = lexer.next_token();
-		if (token.kind == Token_eof)
-			break;
-		tokens.add(token);
-	}
-
-	if (print_tokens) {
-		println("\nTokens of \"{}\":", path);
-		for (umm i = 0; i < tokens.count; ++i) {
-			print_token(i, tokens[i]);
-		}
-	}
-
-	// NOTE: add a bunch of 'eof' tokens to the end, so peeking does not go out of bounds.
-	Token eof;
-	eof.string = {source.end() - 1, source.end()};
-	for (int i = 0; i < 4; ++i)
-		tokens.add(eof);
-
-	return tokens;
-}
 
 constexpr u32 custom_precedence = 4;
 
@@ -2562,6 +2545,9 @@ void print_ast_impl(LambdaHead *head, bool print_braces = true) {
 		}
 
 		for (auto &group : grouped_parameters) {
+			if (&group != grouped_parameters.begin())
+				print(", ");
+
 			for (auto &parameter : group) {
 				if (&parameter != group.begin())
 					print(", ");
@@ -2807,7 +2793,7 @@ inline umm append(StringBuilder &builder, Node *node) {
 
 #if ENABLE_NOTE_LEAK
 
-List<String> leaks;
+GList<String> leaks;
 
 void note_leak(String expression, Node *node, String message = {}, std::source_location location = std::source_location::current()) {
 	if (message)
@@ -2827,11 +2813,22 @@ void note_leak(String expression, Node *node, String message = {}, std::source_l
 Block global_block;
 SpinLock global_block_lock;
 
-struct FileToParse {
-	String location;
-	String path;
+struct Imports {
+	struct FileToImport {
+		String path;
+		String location;
+	};
+	GList<FileToImport> files_to_import;
+	GHashSet<String> imported_files;
+
+	void add_file(Imports::FileToImport file_to_import) {
+		if (!imported_files.find(file_to_import.path)) {
+			imported_files.insert(file_to_import.path, {});
+			files_to_import.add(file_to_import);
+		}
+	}
 };
-LockProtected<GList<FileToParse>, SpinLock> files_to_parse;
+LockProtected<Imports, SpinLock> imports;
 
 Optional<Mutability> to_mutability(TokenKind token_kind) {
 	switch (token_kind) {
@@ -2857,12 +2854,14 @@ bool is_substitutable(Block *block) {
 }
 
 LockProtected<GList<ReusableFiber>, SpinLock> fibers_to_reuse;
+u32 allocated_fiber_count;
 
 ReusableFiber get_new_fiber() {
 	return locked_use_ret(fibers_to_reuse) {
 		if (auto popped = fibers_to_reuse.pop()) {
 			return popped.value();
 		} else {
+			atomic_increment(&allocated_fiber_count);
 			return create_reusable_fiber();
 		}
 	};
@@ -2875,15 +2874,23 @@ void add_fiber_to_reuse(ReusableFiber fiber) {
 }
 
 struct Parser {
-	Token *token = 0;
+	enum class YieldResult {
+		parsed_node,
+		success,
+		fail,
+	};
+
+	Lexer lexer;
+	Token token;
+	Token previous_token;
 	Block *current_block = &global_block;
 	While *current_loop = 0;
 	Expression *current_container = 0;
 	Reporter reporter;
 	ReusableFiber fiber = {};
 	Fiber parent_fiber = {};
-	List<Node *> result_nodes;
-	bool success = false;
+	Node *result_node;
+	YieldResult last_yield_result = YieldResult::fail;
 	List<utf8> extern_library = {};
 
 	List<utf8> unescape_string(String string) {
@@ -2891,35 +2898,35 @@ struct Parser {
 			return result.string;
 		} else {
 			reporter.error(result.failed_at, "Failed to unespace this string: {}", result.fail_reason);
-			yield(false);
+			yield(YieldResult::fail);
 			return {};
 		}
 	}
 
 	// Parses parse_expression_2 with binary operators and definitions.
 	Expression *parse_expression(bool whitespace_is_skippable_before_binary_operator = false, int right_precedence = 0) {
-		switch (token->kind) {
+		switch (token.kind) {
 			case Token_var:
 			case Token_let:
 			case Token_const: {
 				auto definition = Definition::create();
 				definition->container = current_container;
-				definition->mutability = to_mutability(token->kind).value();
+				definition->mutability = to_mutability(token.kind).value();
 				
 				next();
 				skip_lines();
 
 				expect(Token_name);
 
-				definition->name = token->string;
-				definition->location = token->string;
+				definition->name = token.string;
+				definition->location = token.string;
 
 				next();
 				skip_lines();
 
 				expect({':', '='});
 
-				if (token->kind == ':') {
+				if (token.kind == ':') {
 					next();
 					skip_lines();
 
@@ -2932,11 +2939,11 @@ struct Parser {
 							break;
 						default:
 							reporter.error(definition->parsed_type->location, "{} is not allowed in type context.", definition->parsed_type->kind);
-							yield(false);
+							yield(YieldResult::fail);
 					}
 				}
 
-				if (token->kind == '=') {
+				if (token.kind == '=') {
 					next();
 					skip_lines();
 
@@ -2953,7 +2960,7 @@ struct Parser {
 					//if (definition->mutability != Mutability::variable) {
 					//	reporter.error(definition->location, "Definitions can't be marked as {} and have no initial expression.", definition->mutability);
 					//	reporter.help(definition->location, "You can either change {} to {}, or provide an initial expression.", definition->mutability, Mutability::variable);
-					//	yield(false);
+					//	yield(YieldResult::fail);
 					//}
 
 					expect({Token_eol, Token_eof});
@@ -2976,12 +2983,12 @@ struct Parser {
 
 			constexpr bool enable_custom_infix = false;
 
-			if (enable_custom_infix && token->kind == Token_name) {
+			if (enable_custom_infix && token.kind == Token_name) {
 
 				// Custom binary operator
 
 				if (right_precedence < custom_precedence) {
-					auto location = token->string;
+					auto location = token.string;
 
 					next();
 					skip_lines();
@@ -3000,10 +3007,10 @@ struct Parser {
 					continue;
 				}
 			} else {
-				operation = as_binary_operation(token->kind);
+				operation = as_binary_operation(token.kind);
 				if (operation && right_precedence < get_precedence(operation.value())) {
 					auto binop = Binary::create();
-					binop->location = token->string;
+					binop->location = token.string;
 					binop->left = left;
 					binop->operation = operation.value();
 
@@ -3025,8 +3032,8 @@ struct Parser {
 	Expression *parse_expression_2() {
 		auto node = parse_expression_1();
 
-		while (token->kind == '(' || token->kind == '[') {
-			switch (token->kind) {
+		while (token.kind == '(' || token.kind == '[') {
+			switch (token.kind) {
 				case '(': {
 					auto call = Call::create();
 					call->callable = node;
@@ -3034,31 +3041,31 @@ struct Parser {
 
 					next();
 					skip_lines();
-					if (token->kind != ')') {
+					if (token.kind != ')') {
 						while (true) {
 							auto argument = parse_expression();
 
 							call->arguments.add(argument);
 
 							skip_lines();
-							if (token->kind == ',') {
+							if (token.kind == ',') {
 								next();
 								skip_lines();
-								if (token->kind == ')') {
+								if (token.kind == ')') {
 									break;
 								}
 								continue;
 							}
-							if (token->kind == ')') {
+							if (token.kind == ')') {
 								break;
 							}
 
-							reporter.error(token->string, "Unexpected token `{}` when parsing call argument list. Expected `,` or `)`.", token->string);
-							yield(false);
+							reporter.error(token.string, "Unexpected token `{}` when parsing call argument list. Expected `,` or `)`.", token.string);
+							yield(YieldResult::fail);
 						}
 					}
 
-					call->location = {call->location.begin(), token->string.end()};
+					call->location = {call->location.begin(), token.string.end()};
 
 					next();
 					node = call;
@@ -3077,7 +3084,7 @@ struct Parser {
 					skip_lines();
 					expect(']');
 
-					subscript->location = {subscript->location.begin(), token->string.end()};
+					subscript->location = {subscript->location.begin(), token.string.end()};
 
 					next();
 					node = subscript;
@@ -3091,16 +3098,16 @@ struct Parser {
 	// Parses parse_expression_0 plus member access.
 	Expression *parse_expression_1() {
 		auto expression = parse_expression_0();
-		while (token->kind == '.') {
+		while (token.kind == '.') {
 			auto binary = Binary::create();
-			binary->location = token->string;
+			binary->location = token.string;
 			binary->operation = BinaryOperation::dot;
 			binary->left = expression;
 			next();
 			binary->right = parse_expression_0();
 			if (!as<Name>(binary->right)) {
 				reporter.error(binary->right->location, "Only names can follow a dot.");
-				yield(false);
+				yield(YieldResult::fail);
 			}
 			binary->location = {binary->left->location.begin(), binary->right->location.end()};
 			expression = binary;
@@ -3109,10 +3116,10 @@ struct Parser {
 	}
 	// Parses single-part expressions
 	Expression *parse_expression_0() {
-		switch (token->kind) {
+		switch (token.kind) {
 			case '(': {
 				auto lambda = Lambda::create();
-				lambda->location = token->string;
+				lambda->location = token.string;
 				lambda->head.parameters_block.parent = current_block;
 
 				scoped_replace(current_block, &lambda->head.parameters_block);
@@ -3122,17 +3129,17 @@ struct Parser {
 
 				next();
 				skip_lines();
-				if (token->kind != ')') {
+				if (token.kind != ')') {
 					while (true) {
 						expect({Token_name, Token_var, Token_let, Token_const});
 
 						auto mutability = Mutability::readonly;
 
-						switch (token->kind) {
+						switch (token.kind) {
 							case Token_var:
 							case Token_let:
 							case Token_const:
-								mutability = to_mutability(token->kind).value();
+								mutability = to_mutability(token.kind).value();
 								next();
 								skip_lines();
 								expect(Token_name);
@@ -3143,8 +3150,8 @@ struct Parser {
 
 						auto create_and_add_parameter = [&] {
 							auto parameter = Definition::create();
-							parameter->name = token->string;
-							parameter->location = token->string;
+							parameter->name = token.string;
+							parameter->location = token.string;
 							parameter_group.add(parameter);
 						};
 
@@ -3153,7 +3160,7 @@ struct Parser {
 						next();
 						skip_lines();
 
-						while (token->kind == ',') {
+						while (token.kind == ',') {
 							next();
 							skip_lines();
 							expect(Token_name);
@@ -3177,15 +3184,15 @@ struct Parser {
 						}
 
 						skip_lines();
-						if (token->kind == ',') {
+						if (token.kind == ',') {
 							next();
 							skip_lines();
-							if (token->kind == ')') {
+							if (token.kind == ')') {
 								break;
 							}
 							continue;
 						}
-						if (token->kind == ')') {
+						if (token.kind == ')') {
 							break;
 						}
 					}
@@ -3196,7 +3203,7 @@ struct Parser {
 
 				bool body_required = true;
 
-				if (token->kind == ':') {
+				if (token.kind == ':') {
 					next();
 					skip_lines();
 
@@ -3204,18 +3211,18 @@ struct Parser {
 					body_required = false;
 				}
 				
-				lambda->head.location = lambda->location = { lambda->location.begin(), token[-1].string.end() };
+				lambda->head.location = lambda->location = { lambda->location.begin(), previous_token.string.end() };
 
 				constexpr auto arrow = const_string_to_token_kind("=>"s);
 				if (lambda->head.parsed_return_type) {
-					if (token->kind == arrow) {
+					if (token.kind == arrow) {
 						next();
 						body_required = true;
 					}
 				} else {
-					if (token->kind != arrow) {
-						reporter.error(token->string, "Expected : or => after )");
-						yield(false);
+					if (token.kind != arrow) {
+						reporter.error(token.string, "Expected : or => after )");
+						yield(YieldResult::fail);
 					}
 					next();
 					body_required = true;
@@ -3224,15 +3231,15 @@ struct Parser {
 				if (body_required) {
 					skip_lines();
 
-					while (token->kind == Token_directive) {
-						if (token->string == u8"#intrinsic"s) {
+					while (token.kind == Token_directive) {
+						if (token.string == u8"#intrinsic"s) {
 							lambda->is_intrinsic = true;
-						} else if (token->string == u8"#extern"s) {
+						} else if (token.string == u8"#extern"s) {
 							lambda->is_extern = true;
 							lambda->extern_library = extern_library;
 						} else {
-							reporter.error(token->string, "Unknown lambda directive '{}'.", token->string);
-							yield(false);
+							reporter.error(token.string, "Unknown lambda directive '{}'.", token.string);
+							yield(YieldResult::fail);
 						}
 						next();
 					}
@@ -3251,7 +3258,7 @@ struct Parser {
 			}
 			case '{': {
 				auto block = Block::create();
-				block->location = token->string;
+				block->location = token.string;
 
 				block->parent = current_block;
 				scoped_replace(current_block, block);
@@ -3260,22 +3267,22 @@ struct Parser {
 
 				next();
 
-				if (token->kind == ':') {
+				if (token.kind == ':') {
 					next();
 					expect(Token_name);
 
-					block->tag = token->string;
+					block->tag = token.string;
 					next();
 				}
 
 				while (true) {
 					skip_lines();
-					while (token->kind == ';') {
+					while (token.kind == ';') {
 						next();
 						skip_lines();
 					}
 
-					if (token->kind == '}') {
+					if (token.kind == '}') {
 						break;
 					}
 
@@ -3283,7 +3290,7 @@ struct Parser {
 
 					block->add(child);
 				}
-				block->location = {block->location.begin(), token->string.end()};
+				block->location = {block->location.begin(), token.string.end()};
 				next();
 
 				for (auto child : block->children.skip(-1)) {
@@ -3301,7 +3308,7 @@ struct Parser {
 			}
 			case '[': {
 				auto Array = ArrayType::create();
-				Array->location = token->string;
+				Array->location = token.string;
 				next();
 				Array->count_expression = parse_expression();
 				expect(']');
@@ -3312,7 +3319,7 @@ struct Parser {
 			}
 			case '.': {
 				auto constructor = ArrayConstructor::create();
-				constructor->location = token->string;
+				constructor->location = token.string;
 				next();
 				expect('[');
 				next();
@@ -3323,37 +3330,37 @@ struct Parser {
 
 					expect({',', ']'});
 
-					if (token->kind == ']') {
+					if (token.kind == ']') {
 						break;
 					}
 					next();
 				}
-				constructor->location = {constructor->location.begin(), token->string.end()};
+				constructor->location = {constructor->location.begin(), token.string.end()};
 				next();
 				return constructor;
 			}
 			case Token_none: {
 				auto none = NoneLiteral::create();
-				none->location = token->string;
+				none->location = token.string;
 				next();
 				return none;
 			}
 			case Token_name: {
 				auto name = Name::create();
-				name->location = token->string;
-				name->name = token->string;
+				name->location = token.string;
+				name->name = token.string;
 
 				next();
-				if (token->kind == Token_name) {
-					reporter.error({token[-1].string.begin(), token->string.end()}, "Two consecutive names is invalid syntax.");
-					yield(false);
+				if (token.kind == Token_name) {
+					reporter.error({previous_token.string.begin(), token.string.end()}, "Two consecutive names is invalid syntax.");
+					yield(YieldResult::fail);
 				}
 
 				return name;
 			}
 			case Token_number: {
 				auto literal = IntegerLiteral::create();
-				literal->location = token->string;
+				literal->location = token.string;
 
 				auto hex_digit_to_int = [](utf8 c) -> u8 {
 					u32 u = c;
@@ -3369,17 +3376,17 @@ struct Parser {
 					invalid_code_path();
 				};
 
-				if (token->string.count >= 2 && token->string.data[1] == 'x') {
+				if (token.string.count >= 2 && token.string.data[1] == 'x') {
 					u64 result = 0;
-					for (int i = 2; i < token->string.count; ++i) {
-						result = (result << 4) | hex_digit_to_int(token->string.data[i]);
+					for (int i = 2; i < token.string.count; ++i) {
+						result = (result << 4) | hex_digit_to_int(token.string.data[i]);
 					}
 					literal->value = result;
 				} else {
-					auto parsed = parse_u64(token->string);
+					auto parsed = parse_u64(token.string);
 					if (!parsed) {
-						reporter.error(token->string, "Could not parse number {}", token->string);
-						yield(false);
+						reporter.error(token.string, "Could not parse number {}", token.string);
+						yield(YieldResult::fail);
 					}
 
 					literal->value = parsed.value();
@@ -3392,28 +3399,28 @@ struct Parser {
 			case Token_false:
 			case Token_true: {
 				auto literal = BooleanLiteral::create();
-				literal->location = token->string;
-				literal->value = token->kind == Token_true;
+				literal->location = token.string;
+				literal->value = token.kind == Token_true;
 				next();
 				return literal;
 			}
 			case Token_string: {
 				auto literal = StringLiteral::create();
-				literal->location = token->string;
-				literal->value = unescape_string(token->string);
+				literal->location = token.string;
+				literal->value = unescape_string(token.string);
 				next();
 				return literal;
 			}
 			case Token_if: {
 				auto If = IfExpression::create();
-				If->location = token->string;
+				If->location = token.string;
 				next();
 				skip_lines();
 
 				If->condition = parse_expression();
 
 				skip_lines();
-				if (token->kind == Token_then) {
+				if (token.kind == Token_then) {
 					next();
 					skip_lines();
 				}
@@ -3421,7 +3428,7 @@ struct Parser {
 				If->true_branch = parse_expression();
 
 				skip_lines();
-				if (token->kind == ';') {
+				if (token.kind == ';') {
 					next();
 					skip_lines();
 				}
@@ -3436,7 +3443,7 @@ struct Parser {
 			}
 			case Token_match: {
 				auto match = Match::create();
-				match->location = token->string;
+				match->location = token.string;
 				next();
 				skip_lines();
 
@@ -3450,7 +3457,7 @@ struct Parser {
 
 				while (true) {
 					Expression *from = 0;
-					if (token->kind == Token_else) {
+					if (token.kind == Token_else) {
 						next();
 					} else {
 						from = parse_expression();
@@ -3467,17 +3474,17 @@ struct Parser {
 					if (!from) {
 						if (match->default_case) {
 							reporter.error(to->location, "Match expression can not have multiple default cases.");
-							yield(false);
+							yield(YieldResult::fail);
 						}
 						match->default_case = &Case;
 					}
 
 					skip_lines();
-					while (token->kind == ';') {
+					while (token.kind == ';') {
 						next();
 						skip_lines();
 					}
-					if (token->kind == '}')
+					if (token.kind == '}')
 						break;
 				}
 				next();
@@ -3487,7 +3494,7 @@ struct Parser {
 			case Token_inline:
 			case Token_noinline: {
 				auto inline_token = token;
-				auto status = token->kind == Token_inline ? Inline::always : Inline::never;
+				auto status = token.kind == Token_inline ? Inline::always : Inline::never;
 				next();
 				auto expr = parse_expression_2();
 				if (auto lambda = as<Lambda>(expr)) {
@@ -3498,23 +3505,23 @@ struct Parser {
 					return call;
 				}
 
-				reporter.error(inline_token->string, "{} keyword must precede a lambda or a call, not a {}", inline_token->string, expr->kind);
-				yield(false);
+				reporter.error(inline_token.string, "{} keyword must precede a lambda or a call, not a {}", inline_token.string, expr->kind);
+				yield(YieldResult::fail);
 				return 0;
 			}
 			case Token_struct: {
 				auto Struct = Struct::create();
 				scoped_replace(current_container, Struct);
 
-				Struct->location = token->string;
+				Struct->location = token.string;
 				next();
 				expect('{');
 				next();
 				skip_lines();
 
-				while (token->kind != '}') {
+				while (token.kind != '}') {
 					expect(Token_name);
-					auto name = token->string;
+					auto name = token.string;
 					next();
 
 					expect(':');
@@ -3541,26 +3548,26 @@ struct Parser {
 #undef x
 			{
 				auto type = BuiltinTypeName::create();
-				type->location = token->string;
-				type->type_kind = to_builtin_type_kind(token->kind);
+				type->location = token.string;
+				type->type_kind = to_builtin_type_kind(token.kind);
 				next();
 				return type;
 			}
 
 			default: {
-				if (auto operation = as_unary_operation(token->kind)) {
+				if (auto operation = as_unary_operation(token.kind)) {
 					auto unop = Unary::create();
 					unop->operation = operation.value();
-					unop->location = token->string;
+					unop->location = token.string;
 					next();
 					skip_lines();
 
 					if (operation.value() == UnaryOperation::star) {
-						switch (token->kind) {
+						switch (token.kind) {
 							case Token_var: 
 							case Token_let: 
 							case Token_const: {
-								unop->mutability = to_mutability(token->kind).value();
+								unop->mutability = to_mutability(token.kind).value();
 								next();
 								skip_lines();
 								break;
@@ -3573,22 +3580,22 @@ struct Parser {
 					return unop;
 				}
 
-				reporter.error(token->string, "Unexpected token {} when parsing expression.", token->kind);
-				yield(false);
+				reporter.error(token.string, "Unexpected token {} when parsing expression.", token.kind);
+				yield(YieldResult::fail);
 			}
 		}
 
 		invalid_code_path("node was not returned");
 	}
 	Node *parse_statement() {
-		switch (token->kind) {
+		switch (token.kind) {
 			case Token_return: {
 				auto return_ = Return::create();
-				return_->location = token->string;
+				return_->location = token.string;
 
 				if (!current_container) {
 					reporter.error(return_->location, "Return statement can not appear outside of a lambda.");
-					yield(false);
+					yield(YieldResult::fail);
 				}
 
 				if (auto lambda = as<Lambda>(current_container)) {
@@ -3596,12 +3603,12 @@ struct Parser {
 					lambda->returns.add(return_);
 				} else {
 					reporter.error(return_->location, "Return statement can only appear in a lambda. But current container is {}.", current_container->kind);
-					yield(false);
+					yield(YieldResult::fail);
 				}
 
 				next();
 
-				if (token->kind != '\n') {
+				if (token.kind != '\n') {
 					return_->value = parse_expression();
 				}
 
@@ -3609,7 +3616,7 @@ struct Parser {
 			}
 			case Token_while: {
 				auto While = While::create();
-				While->location = token->string;
+				While->location = token.string;
 				next();
 
 				scoped_replace(current_loop, While);
@@ -3617,7 +3624,7 @@ struct Parser {
 				While->condition = parse_expression();
 
 				skip_lines();
-				if (token->kind == Token_then) {
+				if (token.kind == Token_then) {
 					next();
 					skip_lines();
 				}
@@ -3628,30 +3635,30 @@ struct Parser {
 			}
 			case Token_continue: {
 				if (!current_loop) {
-					reporter.error(token->string, "`continue` must be inside a loop.");
-					yield(false);
+					reporter.error(token.string, "`continue` must be inside a loop.");
+					yield(YieldResult::fail);
 				}
 
 				auto Continue = Continue::create();
-				Continue->location = token->string;
+				Continue->location = token.string;
 				next();
 				return Continue;
 			}
 			case Token_break: {
 				auto Break = Break::create();
-				Break->location = token->string;
+				Break->location = token.string;
 				next();
 
 				if (!current_block) {
 					reporter.error(Break->location, "`break` must be inside a block.");
-					yield(false);
+					yield(YieldResult::fail);
 				}
 
-				if (token->kind == ':') {
+				if (token.kind == ':') {
 					next();
 					expect(Token_name);
 
-					auto tag = token->string;
+					auto tag = token.string;
 					next();
 					Break->value = parse_expression();
 
@@ -3667,7 +3674,7 @@ struct Parser {
 								reporter.error(Break->location, "Block with name {} is outside of current container.", tag);
 								reporter.info(block->location, "Here is the block:");
 								reporter.info(current_container->location, "Here is current container:");
-								yield(false);
+								yield(YieldResult::fail);
 							}
 							break;
 						}
@@ -3681,13 +3688,13 @@ struct Parser {
 
 						if (!block) {
 							reporter.error(Break->location, "Could not find block with name {}.", tag);
-							yield(false);
+							yield(YieldResult::fail);
 						}
 					}
 				} else {
 					if (!current_loop) {
 						reporter.error(Break->location, "Empty `break` must be inside a loop.");
-						yield(false);
+						yield(YieldResult::fail);
 					}
 				}
 
@@ -3695,34 +3702,34 @@ struct Parser {
 				return Break;
 			}
 			case Token_directive: {
-				if (token->string == "#extern") {
-					auto extern_location = token->string;
+				if (token.string == "#extern") {
+					auto extern_location = token.string;
 					next();
 					expect(Token_string);
 					// Don't free extern_library. Lambdas point to it.
-					extern_library = unescape_string(token->string);
+					extern_library = unescape_string(token.string);
 					next();
 					skip_lines();
-					if (token->kind == Token_eof) {
+					if (token.kind == Token_eof) {
 						reporter.error(extern_location, "At least one definition must follow `extern` directive.");
-						yield(false);
+						yield(YieldResult::fail);
 					}
 					return parse_statement();
 				}
 
-				reporter.error(token->string, "Unknown directive.");
-				yield(false);
+				reporter.error(token.string, "Unknown directive.");
+				yield(YieldResult::fail);
 				break;
 			}
 			case Token_if: {
-				auto location = token->string;
+				auto location = token.string;
 				next();
 				skip_lines();
 
 				auto condition = parse_expression();
 
 				skip_lines();
-				if (token->kind == Token_then) {
+				if (token.kind == Token_then) {
 					next();
 					skip_lines();
 				}
@@ -3731,11 +3738,11 @@ struct Parser {
 				Node *false_branch = 0;
 
 				skip_lines();
-				if (token->kind == ';') {
+				if (token.kind == ';') {
 					next();
 					skip_lines();
 				}
-				if (token->kind == Token_else) {
+				if (token.kind == Token_else) {
 					next();
 					skip_lines();
 
@@ -3772,13 +3779,13 @@ struct Parser {
 				expect(Token_string);
 				
 				auto import = Import::create();
-				import->path = unescape_string(token->string);
+				import->path = unescape_string(token.string);
 				
 				next();
 	
-				auto full_path = tformat(u8"{}\\import\\{}.sp", compiler_root_directory, import->path);
-				locked_use(files_to_parse) {
-					files_to_parse.add({.location = import->location, .path = full_path});
+				auto full_path = format(u8"{}\\import\\{}.sp", compiler_root_directory, import->path);
+				locked_use(imports) {
+					imports.add_file({.path = full_path, .location = import->location});
 				};
 
 				return import;
@@ -3790,42 +3797,59 @@ struct Parser {
 		return expression;
 	}
 
-	void yield(bool result) {
-		if (result)
-			success = true;
-		tl::yield_reuse(parent_fiber, fiber);
+	void yield(YieldResult result) {
+		last_yield_result = result;
+		switch (result) {
+			case YieldResult::parsed_node:
+				tl::yield(parent_fiber);
+				break;
+			case YieldResult::success:
+			case YieldResult::fail:
+				tl::yield_reuse(parent_fiber, fiber);
+				break;
+			default:
+				invalid_code_path();
+		}
 	}
 	void main() {
 		scoped_replace(debug_current_location, {});
+	
+		token = lexer.next_token();
 
 		while (true) {
-			auto saved = token;
 			skip_lines();
-			while (token->kind == ';') {
+			while (token.kind == ';') {
 				next();
 				skip_lines();
 			}
 
-			if (token->kind == Token_eof) {
+			if (token.kind == Token_eof) {
 				break;
 			}
 
 			auto child = parse_statement();
 
 			switch (child->kind) {
-				case NodeKind::Block: reporter.error(child->location, "Blocks are not allowed in global scope."); yield(false); return;
+				case NodeKind::Block: {
+					reporter.error(child->location, "Blocks are not allowed in global scope.");
+					yield(YieldResult::fail);
+					return;
+				}
 			}
 
 			ensure_allowed_in_statement_context(child);
 
-			result_nodes.add(child);
+			result_node = child;
+			yield(YieldResult::parsed_node);
 		}
 
-		yield(true);
+		yield(YieldResult::success);
 	}
-	static void fiber_main(void *param) {
-		auto parser = (Parser *)param;
-		parser->main();
+
+	Node *parse_next_node() {
+		result_node = 0;
+		tl::yield(fiber);
+		return result_node;
 	}
 
 	void ensure_allowed_in_statement_context(Node *node) {
@@ -3857,33 +3881,34 @@ struct Parser {
 				}
 
 				reporter.error(node->location, "Binary {} is not allowed in statement context.", binary->operation);
-				yield(false);
+				yield(YieldResult::fail);
 			}
 		}
 
 		reporter.error(node->location, "{} is not allowed in statement context.", node->kind);
-		yield(false);
+		yield(YieldResult::fail);
 	}
 	bool next() {
-		++token;
-		debug_current_location = token->string;
-		return token->kind != Token_eof;
+		previous_token = token;
+		token = lexer.next_token();
+		debug_current_location = token.string;
+		return token.kind != Token_eof;
 	}
 	void expect(std::underlying_type_t<TokenKind> expected_kind) {
-		if (token->kind != expected_kind) {
-			reporter.error(token->string, "Expected {}, but got {}", (TokenKind)expected_kind, *token);
-			yield(false);
+		if (token.kind != expected_kind) {
+			reporter.error(token.string, "Expected {}, but got {}", (TokenKind)expected_kind, token);
+			yield(YieldResult::fail);
 		}
 	}
 	void expect_not(std::underlying_type_t<TokenKind> unexpected_kind) {
-		if (token->kind == unexpected_kind) {
-			reporter.error(token->string, "Unexpected {}", (TokenKind)unexpected_kind);
-			yield(false);
+		if (token.kind == unexpected_kind) {
+			reporter.error(token.string, "Unexpected {}", (TokenKind)unexpected_kind);
+			yield(YieldResult::fail);
 		}
 	}
 	void expect(std::initializer_list<std::underlying_type_t<TokenKind>> expected_kinds) {
 		for (auto expected_kind : expected_kinds) {
-			if (token->kind == expected_kind) {
+			if (token.kind == expected_kind) {
 				return;
 			}
 		}
@@ -3893,9 +3918,9 @@ struct Parser {
 		for (auto expected_kind : expected_kinds) {
 			append_format(builder, "{} or ", (TokenKind)expected_kind);
 		}
-		append_format(builder, "but got {}.\0"s, *token);
-		reporter.error(token->string, (char *)to_string(builder).data);
-		yield(false);
+		append_format(builder, "but got {}.\0"s, token);
+		reporter.error(token.string, (char *)to_string(builder).data);
+		yield(YieldResult::fail);
 	}
 	void expect_not(std::initializer_list<std::underlying_type_t<TokenKind>> unexpected_kinds) {
 		for (auto unexpected_kind : unexpected_kinds) {
@@ -3903,34 +3928,31 @@ struct Parser {
 		}
 	}
 	void skip_lines() {
-		while (token->kind == '\n')
-			++token;
-		debug_current_location = token->string;
+		while (token.kind == '\n') {
+			previous_token = token;
+			token = lexer.next_token();
+		}
+		debug_current_location = token.string;
+	}
+
+	void init(Fiber parent_fiber, String source) {
+		this->parent_fiber = parent_fiber;
+		lexer = Lexer::create(source);
+		fiber = get_new_fiber();
+		set_start(fiber, [] (void *param) {
+			((Parser *)param)->main();
+		}, this);
+	}
+
+	void free() {
+		add_fiber_to_reuse(fiber);
+		fiber = {};
 	}
 };
 
-Optional<List<Node *>> tokens_to_nodes(Fiber parent_fiber, Span<Token> tokens) {
+bool read_file_and_parse_into_global_block(Fiber parent_fiber, String location, String path) {
 	timed_function();
 
-	Parser parser = {};
-	parser.parent_fiber = parent_fiber;
-	parser.token = tokens.data;
-	defer { parser.reporter.print_all(); };
-
-	parser.fiber = get_new_fiber();
-	set_start(parser.fiber, Parser::fiber_main, &parser);
-	yield(parser.fiber);
-
-	add_fiber_to_reuse(parser.fiber);
-	parser.fiber = {};
-
-	if (parser.success)
-		return parser.result_nodes;
-
-	return {};
-}
-
-bool read_file_and_parse_into_global_block(Fiber parent_fiber, String location, String path) {
 	if (!file_exists(path)) {
 		immediate_reporter.error(location, "File {} does not exist", path);
 		return false;
@@ -3939,24 +3961,30 @@ bool read_file_and_parse_into_global_block(Fiber parent_fiber, String location, 
 	// Will be used after function exits, don't free.
 	auto source_buffer = read_entire_file(path, {.extra_space_before = 1, .extra_space_after = 1});
 
+	// Null-terminate from both sides.
+	// At the end to
 	auto source = (String)source_buffer.subspan(1, source_buffer.count - 2);
 	
-	content_start_to_file_name.get_or_insert(source.data) = path;
+	locked_use(content_start_to_file_name) {
+		content_start_to_file_name.get_or_insert(source.data) = path;
+	};
 
-	auto tokens = source_to_tokens(source, path);
-	if (!tokens) {
-		LOG_ERROR_PATH("Failed to tokenize this file: {}", path);
-		return false;
+	Parser parser = {};
+	parser.init(parent_fiber, source);
+	defer { 
+		parser.reporter.print_all(); 
+		parser.free();
+	};
+
+	Node *node = 0;
+	while (node = parser.parse_next_node()) {
+		scoped(global_block_lock);
+		global_block.add(node);
 	}
-	defer { free(tokens.value()); };
-	auto nodes = tokens_to_nodes(parent_fiber, tokens.value());
-	if (!nodes) {
+
+	if (parser.last_yield_result != Parser::YieldResult::success) {
 		LOG_ERROR_PATH("Failed to parse this file: {}", path);
 		return false;
-	}
-
-	for (auto &node : nodes.value()) {
-		global_block.add(node);
 	}
 
 	return true;
@@ -7500,6 +7528,11 @@ enum class FailStrategy {
 	unwind,
 };
 
+// NOTE: jmp_buf is an array alias, which forces to use memcpy. Put it in a struct to avoid that.
+struct CopyableJmpBuf {
+	jmp_buf buf;
+};
+
 struct Typechecker {
 	const u32 uid = atomic_add(&typechecker_uid_counter, 1);
 	u32 progress = 0;
@@ -7520,6 +7553,7 @@ struct Typechecker {
 			assert(typechecker->current_block == 0);
 		} else {
 			typechecker = default_allocator.allocate<Typechecker>();
+			++allocated_fiber_count;
 			typechecker->fiber = create_fiber([](void *param) {
 				((Typechecker *)param)->fiber_main(); 
 			}, typechecker);
@@ -7582,19 +7616,46 @@ private:
 	While *current_loop = 0;
 	List<Node *> node_stack;
 	TypecheckEntry *entry = 0;
-	jmp_buf unwind_point = {};
+	CopyableJmpBuf main_loop_unwind_point = {};
+	CopyableJmpBuf current_unwind_point = {};
+	bool allow_overloaded_names = false;
+
+	static constexpr int fail_unwind_tag = 42;
 
 	FailStrategy fail_strategy = FailStrategy::yield;
-	#define fail()                                      \
-		do {                                            \
-			if (fail_strategy == FailStrategy::yield) { \
-				yield(YieldResult::fail);               \
-			}                                           \
-			return 0;                                   \
-		} while (0)
-	#define with_unwind_strategy(x) ([&]()->decltype(auto){ scoped_replace(fail_strategy, FailStrategy::unwind); return x; }())
 
-	#define typecheck_or_unwind(...) do { if (!typecheck(__VA_ARGS__)) return 0; } while (0)
+	void fail_impl() {
+		if (fail_strategy == FailStrategy::yield) {
+			yield(YieldResult::fail);
+		} else {
+			jmp_buf zero = {};
+			if (memcmp(&zero, &current_unwind_point, sizeof(jmp_buf)) == 0) {
+				immediate_reporter.error(debug_current_location, "INTERNAL ERROR: current_unwind_point is zero");
+				invalid_code_path();
+			}
+			longjmp(current_unwind_point.buf, fail_unwind_tag);
+		}
+	}
+
+	#define fail()       \
+		do {             \
+			fail_impl(); \
+			return 0;    \
+		} while (0)
+
+	auto with_unwind_strategy(auto &&fn) -> decltype(fn()) {
+		scoped_replace(fail_strategy, FailStrategy::unwind);
+		auto saved_unwind_point = current_unwind_point;
+		defer { 
+			current_unwind_point = saved_unwind_point;
+		};
+		if (setjmp(current_unwind_point.buf) == fail_unwind_tag) {
+			return decltype(fn()){};
+		}
+		return fn();
+	}
+
+	#define typecheck_or_unwind(...) typecheck(__VA_ARGS__)
 
 	[[nodiscard]]
 	bool yield_while(String location, auto predicate) {
@@ -7636,13 +7697,13 @@ private:
 		scoped_replace(debug_current_location, {});
 		tl::yield(parent_fiber);
 		if (result == YieldResult::fail) {
-			longjmp(unwind_point, 1);
+			longjmp(main_loop_unwind_point.buf, 1);
 		}
 	}
 
 	void fiber_main() {
 		while (1) {
-			setjmp(unwind_point);
+			setjmp(main_loop_unwind_point.buf);
 			assert(initial_node);
 			*initial_node = typecheck(*initial_node, true);
 			yield(YieldResult::success);
@@ -8116,15 +8177,34 @@ private:
 		return true;
 	}
 
+	bool ensure_not_overloaded(Name *name) {
+		if (name->possible_definitions.count > 1) {
+			reporter.error(name->location, "`{}` was declared multiple times and is ambiguous.", name->name);
+			for (umm i = 0; i < name->possible_definitions.count; ++i) {
+				auto definition = name->possible_definitions[i];
+				reporter.info(definition->location, "Definition #{}:", i);
+			}
+			fail();
+		}
+		return true;
+	}
+	
+	bool ensure_not_overloaded(Expression *expression) {
+		if (auto name = as<Name>(expression)) {
+			return ensure_not_overloaded(name);
+		}
+		return true;
+	}
+
 	//
 	// These `typecheck` overloads automatically substitute old node with new one.
 	//
-	[[nodiscard]] bool typecheck(Node **node) {
+	bool typecheck(Node **node) {
 		*node = typecheck(*node, true);
 		return *node != 0;
 	}
 	template <CNode T>
-	[[nodiscard]] bool typecheck(T **node) { 
+	bool typecheck(T **node) { 
 		auto new_node = typecheck(*node, true);
 		if (new_node) {
 			*node = as<T>(new_node);
@@ -8137,7 +8217,7 @@ private:
 	// This `typecheck` overload doesn't substitute the node
 	//
 	template <CNode T>
-	[[nodiscard]] bool typecheck(T &node) {
+	bool typecheck(T &node) {
 		return typecheck(&node, false) != 0;
 	}
 
@@ -8186,6 +8266,7 @@ private:
 	[[nodiscard]] Expression *typecheck_impl(Block *block, bool can_substitute) {
 		scoped_replace(current_block, block);
 		for (auto &old_child : block->children) {
+			scoped_replace(allow_overloaded_names, &old_child == &block->children.back() ? allow_overloaded_names : false);
 			auto new_child = typecheck(old_child, true);
 
 			// A child was substituted with a different node. Update `children` with new node.
@@ -8637,6 +8718,9 @@ private:
 						}
 					}
 				} else {
+					if (!allow_overloaded_names) {
+						ensure_not_overloaded(name);
+					}
 					name->type = get_builtin_type(BuiltinType::Overload);
 				}
 
@@ -8652,7 +8736,7 @@ private:
 			if (binary->operation == BinaryOperation::dot) {
 				if (auto lambda_name = as<Name>(binary->right)) {
 					Reporter reporter2;
-					if (with_unwind_strategy(typecheck_binary_dot(binary, reporter2))) {
+					if (with_unwind_strategy([&] { return typecheck_binary_dot(binary, reporter2); })) {
 						goto typecheck_dot_succeeded;
 					} else {
 						Definition *lambda_definition = 0;
@@ -8687,7 +8771,7 @@ private:
 						Reporter as_is_reporter;
 						{
 							scoped_exchange(reporter, as_is_reporter);
-							auto result = with_unwind_strategy(typecheck_impl(call, can_substitute));
+							auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
 							if (result) {
 								as_is_reporter.reports.add(reporter.reports);
 								return result;
@@ -8704,7 +8788,7 @@ private:
 							first_argument_address->operation = UnaryOperation::addr;
 							call->arguments[0] = first_argument_address;
 
-							auto result = with_unwind_strategy(typecheck_impl(call, can_substitute));
+							auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
 							if (result) {
 								by_pointer_reporter.reports.add(reporter.reports);
 								return result;
@@ -8729,7 +8813,10 @@ private:
 		}
 
 
-		typecheck_or_unwind(&call->callable);
+		{
+			scoped_replace(allow_overloaded_names, true);
+			typecheck_or_unwind(&call->callable);
+		}
 
 	typecheck_dot_succeeded:
 		auto &arguments = call->arguments;
@@ -8791,11 +8878,12 @@ private:
 			List<Overload *, TemporaryAllocator> matching_overloads;
 
 			for (auto &overload : overloads) {
-				scoped_replace(fail_strategy, FailStrategy::unwind);
-				scoped_exchange(reporter, overload.reporter);
-				if (typecheck_lambda_call(call, overload.lambda, overload.lambda_head, false)) {
-					matching_overloads.add(&overload);
-				}
+				with_unwind_strategy([&] {
+					scoped_exchange(reporter, overload.reporter);
+					if (typecheck_lambda_call(call, overload.lambda, overload.lambda_head, false)) {
+						matching_overloads.add(&overload);
+					}
+				});
 			}
 
 			if (matching_overloads.count == 1) {
@@ -8914,7 +9002,7 @@ private:
 	}
 	[[nodiscard]] Expression *typecheck_impl(Binary *binary, bool can_substitute) {
 		if (binary->operation == BinaryOperation::dot) {
-			if (!with_unwind_strategy(typecheck_binary_dot(binary, reporter))) {
+			if (!with_unwind_strategy([&] { return typecheck_binary_dot(binary, reporter); })) {
 				fail();
 			}
 			return binary;
@@ -9189,6 +9277,10 @@ private:
 		s64 struct_size = 0;
 		for (auto &member : Struct->members) {
 			typecheck_or_unwind(&member);
+			if (!is_type(member->type) || !is_concrete(member->type)) {
+				reporter.error(member->location, "Struct members must have concrete type. This type is `{}` which is not concrete.", member->type);
+				fail();
+			}
 			member->offset = struct_size;
 			struct_size += get_size(member->type);
 		}
@@ -9543,42 +9635,26 @@ void init_globals() {
 	construct(typecheck_entries);
 	construct(deferred_reports);
 	construct(vectorized_lambdas);
-#if ENABLE_NOTE_LEAK
-	construct(leaks);
-#endif
 
 	//GlobalAllocator::init();
 }
 
-enum class InterpretMode {
-	bytecode,
-	ast,
-};
-
-struct ParsedArguments {
-	String source_name;
-	u32 thread_count = 0;
-	bool print_ast = false;
-	InterpretMode interpret_mode = {};
-};
-
-Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
-	ParsedArguments result;
-
+bool parse_arguments(Span<Span<utf8>> args) {
 	for (umm i = 1; i < args.count; ++i) {
 
 		if (starts_with(args[i], u8"-t"s)) {
 			auto n = args[i];
 			n.set_begin(n.begin() + 2);
 			if (auto number = parse_u64(n)) {
-				result.thread_count = (u32)number.value();
+				requested_thread_count = (u32)number.value();
 			} else {
 				immediate_reporter.error("Could not parse number after -t. Defaulting to all threads.");
+				goto t_arg_fail;
 			}
-		} else if (args[i] == "-print-tokens") {
+		} else t_arg_fail: if (args[i] == "-print-tokens") {
 			print_tokens = true;
 		} else if (args[i] == "-print-ast") {
-			result.print_ast = true;
+			should_print_ast = true;
 		} else if (args[i] == "-print-uids") {
 			print_uids = true;
 		} else if (args[i] == "-no-constant-name-inlining") {
@@ -9590,9 +9666,9 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 		} else if (args[i] == "-debug") {
 			is_debugging = true;
 		} else if (args[i] == "-run-bytecode") {
-			result.interpret_mode = InterpretMode::bytecode;
+			interpret_mode = InterpretMode::bytecode;
 		} else if (args[i] == "-run-ast") {
-			result.interpret_mode = InterpretMode::ast;
+			interpret_mode = InterpretMode::ast;
 		} else if (args[i] == "-limit-time") {
 			create_thread([] {
 				int seconds_limit = 1;
@@ -9604,24 +9680,28 @@ Optional<ParsedArguments> parse_arguments(Span<Span<utf8>> args) {
 			print_wait_failures = true;
 		} else if (args[i] == "-log-error-path") {
 			enable_log_error_path = true;
+		} else if (args[i] == "-run") {
+			run_compiled_code = true;
+		} else if (args[i] == "-stats") {
+			print_stats = true;
 		} else if (args[i][0] == '-') {
 			immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
 		} else {
-			if (result.source_name.count) {
+			if (input_source_path.count) {
 				with(ConsoleColor::red, println("No multiple input files allowed"));
 				return {};
 			} else {
-				result.source_name = args[i];
+				input_source_path = args[i];
 			}
 		}
 	}
 
-	if (!result.source_name.count) {
+	if (!input_source_path.count) {
 		with(ConsoleColor::red, println("No input file was specified"));
-		return {};
+		return false;
 	} 
 
-	return result;
+	return true;
 }
 
 void init_builtin_types() {
@@ -9709,6 +9789,86 @@ s32 tl_main(Span<Span<utf8>> args) {
 }
 #endif
 
+bool find_main_and_run() {
+	for (auto node : global_block.children) {
+		if (auto definition = as<Definition>(node)) {
+			if (definition->name == u8"main"s) {
+				if (!definition->initial_value) {
+					immediate_reporter.error(definition->location, "main must be a lambda");
+					return false;
+				}
+
+				if (definition->mutability != Mutability::constant) {
+					immediate_reporter.error(definition->location, "main must be constant");
+					return false;
+				}
+
+				auto lambda = as<Lambda>(definition->initial_value);
+				if (!lambda) {
+					immediate_reporter.error(definition->location, "main must be a lambda");
+					return false;
+				}
+
+				if (!types_match(lambda->head.return_type, get_builtin_type(BuiltinType::None)) &&
+					!::is_concrete_integer(lambda->head.return_type)) 
+				{
+					immediate_reporter.error(definition->location, "main must return integer or None, not {}.", lambda->head.return_type);
+					return false;
+				}
+
+				if (run_compiled_code) {
+					timed_block("executing main");
+
+					auto call = Call::create();
+					call->callable = lambda;
+					call->type = lambda->head.return_type;
+					call->call_kind = CallKind::lambda;
+					switch (interpret_mode) {
+						case InterpretMode::bytecode: {
+							dbgln("\nBytecode:\n");
+							Bytecode::Builder builder;
+							for (auto definition : global_block.definition_list) {
+								builder.append_global_definition(definition);
+							}
+							visit(&global_block, Combine {
+								[&] (auto) {},
+								[&] (Lambda *lambda) {
+									if (lambda->body) {
+										builder.append_lambda(lambda);
+									}
+								},
+							});
+							auto bytecode = builder.build(call);
+							dbgln("\nFinal instructions:\n");
+							for (auto [index, instruction] : enumerate(bytecode.instructions)) {
+								dbgln("{}: {}", index, instruction);
+							}
+							dbgln();
+							auto result = Bytecode::Interpreter{}.run(&bytecode, builder.entry_point());
+							println("main returned {}", result);
+							break;
+						}
+						case InterpretMode::ast: {
+							auto context = NodeInterpreter::create(get_current_fiber(), call);
+							auto result = context->run();
+							if (result.is_value()) {
+								println("main returned {}", result.value());
+							} else {
+								with(ConsoleColor::red, println("main failed to execute"));
+							}
+							break;
+						}
+					}
+				}
+				return true;
+			}
+		}
+	}
+
+	immediate_reporter.error("main lambda not found");
+	return false;
+}
+
 s32 tl_main(Span<Span<utf8>> args) {
 
 	debug_init();
@@ -9722,6 +9882,10 @@ s32 tl_main(Span<Span<utf8>> args) {
 			for (auto time : timed_results) {
 				println("{} took {} ms", time.name, time.seconds * 1000);
 			}
+		}
+
+		if (print_stats) {
+			println("Fiber allocations: {}", allocated_fiber_count);
 		}
 
 #if ENABLE_STRING_HASH_COUNT
@@ -9748,20 +9912,18 @@ s32 tl_main(Span<Span<utf8>> args) {
 	compiler_bin_directory = parse_path(compiler_path).directory;
 	compiler_root_directory = format(u8"{}\\..", compiler_bin_directory);
 
-	auto maybe_arguments = parse_arguments(args);
-	if (!maybe_arguments) {
+	if (!parse_arguments(args)) {
 		immediate_reporter.error("Failed to parse arguments.");
 		return 1;
 	}
-	auto arguments = maybe_arguments.value();
 	
 	auto cpu_info = get_cpu_info();
 
 	u32 thread_count;
-	if (arguments.thread_count == 0) {
+	if (requested_thread_count == 0) {
 		thread_count = cpu_info.logical_processor_count;
 	} else {
-		thread_count = min(arguments.thread_count, cpu_info.logical_processor_count);
+		thread_count = min(requested_thread_count, cpu_info.logical_processor_count);
 	}
 
 	
@@ -9784,21 +9946,14 @@ s32 tl_main(Span<Span<utf8>> args) {
 	thread_pool.init(thread_count - 1, {.worker_initter = init_worker_fiber});
 	defer { thread_pool.deinit(); };
 
-
-	auto source_contents_buffer = read_entire_file(arguments.source_name, {.extra_space_before = 1, .extra_space_after = 1});
-	if (!source_contents_buffer.data) {
-		immediate_reporter.error("Could not read input file '{}'", arguments.source_name);
-		return 1;
-	}
-	defer { free(source_contents_buffer); };
-
-	files_to_parse.use_unprotected().add({.location = {}, .path = arguments.source_name});
+	imports.use_unprotected().add_file({.path = input_source_path, .location = {}});
+	imports.use_unprotected().add_file({.path = format(u8"{}\\import\\base.sp", compiler_root_directory), .location = {}});
 
 	static bool failed = false;
 
 	while (1) {
 		while (1) {
-			auto popped = locked_use(files_to_parse) { return files_to_parse.pop(); };
+			auto popped = locked_use(imports) { return imports.files_to_import.pop(); };
 			if (!popped) {
 				break;
 			}
@@ -9812,7 +9967,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 	
 		thread_pool.wait_for_completion(WaitForCompletionOption::do_my_task);
 
-		if (files_to_parse.use_unprotected().count == 0) {
+		if (imports.use_unprotected().files_to_import.count == 0) {
 			break;
 		}
 	}
@@ -10019,80 +10174,12 @@ s32 tl_main(Span<Span<utf8>> args) {
 		}
 	}
 
-	if (arguments.print_ast) {
+	if (should_print_ast) {
 		print_ast(&global_block);
 	}
 
-	for (auto node : global_block.children) {
-		if (auto definition = as<Definition>(node)) {
-			if (definition->name == u8"main"s) {
-				if (!definition->initial_value) {
-					immediate_reporter.error(definition->location, "main must be a lambda");
-					return 1;
-				}
-
-				if (definition->mutability != Mutability::constant) {
-					immediate_reporter.error(definition->location, "main must be constant");
-					return 1;
-				}
-
-				auto lambda = as<Lambda>(definition->initial_value);
-				if (!lambda) {
-					immediate_reporter.error(definition->location, "main must be a lambda");
-					return 1;
-				}
-
-				if (!types_match(lambda->head.return_type, get_builtin_type(BuiltinType::None)) &&
-					!::is_concrete_integer(lambda->head.return_type)) 
-				{
-					immediate_reporter.error(definition->location, "main must return integer or None, not {}.", lambda->head.return_type);
-					return 1;
-				}
-
-				timed_block("executing main");
-
-				auto call = Call::create();
-				call->callable = lambda;
-				call->type = lambda->head.return_type;
-				call->call_kind = CallKind::lambda;
-				switch (arguments.interpret_mode) {
-					case InterpretMode::bytecode: {
-						dbgln("\nBytecode:\n");
-						Bytecode::Builder builder;
-						for (auto definition : global_block.definition_list) {
-							builder.append_global_definition(definition);
-						}
-						visit(&global_block, Combine {
-							[&] (auto) {},
-							[&] (Lambda *lambda) {
-								if (lambda->body) {
-									builder.append_lambda(lambda);
-								}
-							},
-						});
-						auto bytecode = builder.build(call);
-						dbgln("\nFinal instructions:\n");
-						for (auto [index, instruction] : enumerate(bytecode.instructions)) {
-							dbgln("{}: {}", index, instruction);
-						}
-						dbgln();
-						auto result = Bytecode::Interpreter{}.run(&bytecode, builder.entry_point());
-						println("main returned {}", result);
-						break;
-					}
-					case InterpretMode::ast: {
-						auto context = NodeInterpreter::create(main_fiber, call);
-						auto result = context->run();
-						if (result.is_value()) {
-							println("main returned {}", result.value());
-						} else {
-							with(ConsoleColor::red, println("main failed to execute"));
-						}
-						break;
-					}
-				}
-			}
-		}
+	if (!find_main_and_run()) {
+		return 1;
 	}
 
 	with(ConsoleColor::green, println("Build success"));

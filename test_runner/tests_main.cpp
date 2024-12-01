@@ -211,8 +211,12 @@ reloop:
 			not_expected_compiler_output.add(u8"Time limit of "s); // time limit exceeded
 			String expected_program_output = find_param(u8"// PROGRAM OUTPUT "s);
 			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
+			bool no_run = find(test_source, u8"// NO RUN"s);
 
 			auto compile_command = format(u8"{} \"{}\" -limit-time {}"s, make_relative(compiler_path), make_relative(test_path), extra_options);
+			if (!no_run) {
+				compile_command.add(u8" -run"s);
+			}
 			
 			with(stdout_lock, print("{}\n", test_filename));
 
@@ -283,13 +287,13 @@ reloop:
 								println(not_expected_string);
 							}
 						}
-						with(ConsoleColor::cyan, println("Actual:"));
-						umm output_byte_limit = 16*1024;
-						if (actual_compiler.output.count > output_byte_limit) {
-							println("*** MORE THAN {} BYTES PRINTED, OMITTING ***", output_byte_limit);
-						} else {
-							println(actual_compiler.output);
-						}
+					}
+					with(ConsoleColor::cyan, println("Actual output:"));
+					umm output_byte_limit = 16*1024;
+					if (actual_compiler.output.count > output_byte_limit) {
+						println("*** MORE THAN {} BYTES PRINTED, OMITTING ***", output_byte_limit);
+					} else {
+						println(actual_compiler.output);
 					}
 				});
 				return;
