@@ -101,14 +101,20 @@ s32 tl_main(Span<String> arguments) {
 	auto executable_directory = parse_path(executable_path).directory;
 	auto compiler_path = format(u8"{}\\simplex.exe", executable_directory);
 
-	auto project_directory = normalize_path(format(u8"{}\\..", executable_directory));
+	auto root_directory = normalize_path(format(u8"{}\\..", executable_directory));
 
-	auto test_directory = format(u8"{}\\..\\tests", executable_directory);
+	auto test_directory = format(u8"{}\\tests", root_directory);
+	auto examples_directory = format(u8"{}\\examples", root_directory);
 
 	current_directory = get_current_directory();
 
+	struct TestToRun {
+		String path;
+		bool run;
+	};
+
 	StringBuilder extra_options_builder;
-	List<String> test_filenames;
+	List<TestToRun> tests_to_run;
 	bool all = true;
 	bool do_coverage = false;
 	bool loop_until_failure = false;
@@ -123,33 +129,29 @@ s32 tl_main(Span<String> arguments) {
 			append_format(extra_options_builder, "{} ", arguments[i]);
 		} else if (arguments[i] != u8"all"s) {
 			all = false;
-			test_filenames.add(arguments[i]);
+			tests_to_run.add({.path = arguments[i]});
 		}
 	}
 	auto extra_options = to_string(extra_options_builder);
 
 	if (all) {
-		auto add_tests_from_directory = [&] (this auto &&self, String directory, String dirname = {}) -> void {
+		bool run = false;
+		auto add_tests_from_directory = [&] (this auto &&self, String directory) -> void {
 			for (auto item : get_items_in_directory(directory)) {
 				if (item.kind == FileItem_file) {
 					if (ends_with(item.name, u8".sp"s)) {
-						if (dirname.count) {
-							test_filenames.add(format(u8"{}\\{}"s, dirname, item.name));
-						} else {
-							test_filenames.add(item.name);
-						}
+						tests_to_run.add({.path = format(u8"{}\\{}"s, directory, item.name), .run = run});
 					}
 				} else if (item.kind == FileItem_directory) {
-					if (dirname.count) {
-						self(format(u8"{}\\{}"s, directory, item.name), format(u8"{}\\{}"s, dirname, item.name));
-					} else {
-						self(format(u8"{}\\{}"s, directory, item.name), item.name);
-					}
+					self(format(u8"{}\\{}"s, directory, item.name));
 				}
 			}
 		};
 
+		run = true;
 		add_tests_from_directory(test_directory);
+		run = false;
+		add_tests_from_directory(examples_directory);
 	}
 
 reloop:
@@ -162,7 +164,7 @@ reloop:
 
 	u32 volatile test_counter = 0;
 
-	for (auto test_filename : test_filenames) {
+	for (auto test : tests_to_run) {
 		thread_pool += [=, &n_failed, &n_succeeded, &test_counter] {
 			auto test_index = atomic_add(&test_counter, 1);
 
@@ -172,7 +174,7 @@ reloop:
 				atomic_add(&n_succeeded, !fail);
 			};
 
-			auto test_path = format(u8"{}\\{}", test_directory, test_filename);
+			auto test_filename = parse_path(test.path).name_and_extension();
 
 			auto do_fail = [&](auto fn) {
 				fail = true;
@@ -182,7 +184,7 @@ reloop:
 				};
 			};
 
-			auto test_source_buffer = read_entire_file(test_path);
+			auto test_source_buffer = read_entire_file(test.path);
 			defer { free(test_source_buffer); };
 
 			auto test_source = (String)test_source_buffer;
@@ -213,15 +215,16 @@ reloop:
 			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
 			bool no_run = find(test_source, u8"// NO RUN"s);
 
-			auto compile_command = format(u8"{} \"{}\" -limit-time {}"s, make_relative(compiler_path), make_relative(test_path), extra_options);
+			auto compile_command = format(u8"{} \"{}\" -limit-time {}"s, compiler_path, test.path, extra_options);
 			if (!no_run) {
 				compile_command.add(u8" -run"s);
 			}
 			
-			with(stdout_lock, print("{}\n", test_filename));
+			with(stdout_lock, println(test.path));
+			//with(stdout_lock, println(compile_command));
 
 			if (do_coverage) {
-				auto coverage_command = format(u8"opencppcoverage --sources {}\\src\\ --export_type=binary:codecov\\{}.cov -- {}"s, project_directory, test_index, compile_command);
+				auto coverage_command = format(u8"opencppcoverage --sources {}\\src\\ --export_type=binary:codecov\\{}.cov -- {}"s, root_directory, test_index, compile_command);
 				auto result = run_process(coverage_command);
 				withs(stdout_lock) {
 					println(result.output);
@@ -366,7 +369,7 @@ reloop:
 	if (do_coverage) {
 		println("Merging coverage results...");
 		StringBuilder builder;
-		append_format(builder, "opencppcoverage --sources {}\\src\\", project_directory);
+		append_format(builder, "opencppcoverage --sources {}\\src\\", root_directory);
 		auto test_count = test_counter;
 		for (u32 i = 0; i < test_count; ++i) {
 			append_format(builder, " --input_coverage=codecov\\{}.cov", i);
@@ -376,10 +379,10 @@ reloop:
 	}
 
 	if (n_failed) {
-		with(ConsoleColor::red,   print("{}/{} tests failed.\n", n_failed, test_filenames.count));
+		with(ConsoleColor::red,   print("{}/{} tests failed.\n", n_failed, tests_to_run.count));
 		return 1;
 	} else {
-		with(ConsoleColor::green, print("All {} tests succeeded.\n", test_filenames.count));
+		with(ConsoleColor::green, print("All {} tests succeeded.\n", tests_to_run.count));
 		return 0;
 	}
 }

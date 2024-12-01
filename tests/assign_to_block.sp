@@ -6,5 +6,3 @@ const main = () => {
     {println(42);x} = 1337
     println(x)
 }
-
-const println = (value: S64) => #intrinsic

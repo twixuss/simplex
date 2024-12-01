@@ -5,5 +5,3 @@ const main = () => {
     var b = &{println(64); a}
     return *b
 }
-
-const println = (value: S64) => #intrinsic

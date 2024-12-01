@@ -4,5 +4,3 @@
 const main = () => {
     println("Hello)
 }
-
-const println = (value: String) => #intrinsic

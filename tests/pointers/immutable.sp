@@ -10,5 +10,3 @@ const main = () => {
     *p = b
     println(a)
 }
-
-const println = (value: S64): None => #intrinsic

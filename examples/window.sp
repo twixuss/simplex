@@ -1,7 +1,5 @@
 // NO RUN
 import "windows"
-const println = (value: S64) => #intrinsic
-const println = (value: String) => #intrinsic
 
 const wnd_proc = (hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM): LRESULT => {
     match msg {

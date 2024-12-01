@@ -30,5 +30,3 @@ const main = () => {
     var a = foo(2)
     println(a)
 }
-
-const println = (value: S64) => #intrinsic

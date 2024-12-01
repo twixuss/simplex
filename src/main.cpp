@@ -8878,8 +8878,8 @@ private:
 			List<Overload *, TemporaryAllocator> matching_overloads;
 
 			for (auto &overload : overloads) {
+				scoped_exchange(reporter, overload.reporter);
 				with_unwind_strategy([&] {
-					scoped_exchange(reporter, overload.reporter);
 					if (typecheck_lambda_call(call, overload.lambda, overload.lambda_head, false)) {
 						matching_overloads.add(&overload);
 					}

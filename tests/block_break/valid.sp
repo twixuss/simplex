@@ -11,4 +11,3 @@ const main = () => {
     }
     println(a)
 }
-const println = (value: S64) => #intrinsic
