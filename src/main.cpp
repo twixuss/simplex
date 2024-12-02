@@ -1743,6 +1743,8 @@ DEFINE_EXPRESSION(Name) {
 	String name;
 	List<Definition *> possible_definitions;
 
+	bool allow_overload : 1 = false;
+
 	Definition *definition() {
 		if (possible_definitions.count == 1)
 			return possible_definitions[0];
@@ -7616,7 +7618,6 @@ private:
 	TypecheckEntry *entry = 0;
 	CopyableJmpBuf main_loop_unwind_point = {};
 	CopyableJmpBuf current_unwind_point = {};
-	bool allow_overloaded_names = false;
 
 	static constexpr int fail_unwind_tag = 42;
 
@@ -8264,7 +8265,6 @@ private:
 	[[nodiscard]] Expression *typecheck_impl(Block *block, bool can_substitute) {
 		scoped_replace(current_block, block);
 		for (auto &old_child : block->children) {
-			scoped_replace(allow_overloaded_names, &old_child == &block->children.back() ? allow_overloaded_names : false);
 			auto new_child = typecheck(old_child, true);
 
 			// A child was substituted with a different node. Update `children` with new node.
@@ -8716,7 +8716,7 @@ private:
 						}
 					}
 				} else {
-					if (!allow_overloaded_names) {
+					if (!name->allow_overload) {
 						ensure_not_overloaded(name);
 					}
 					name->type = get_builtin_type(BuiltinType::Overload);
@@ -8811,10 +8811,10 @@ private:
 		}
 
 
-		{
-			scoped_replace(allow_overloaded_names, true);
-			typecheck_or_unwind(&call->callable);
+		if (auto name = as<Name>(call->callable)) {
+			name->allow_overload = true;
 		}
+		typecheck_or_unwind(&call->callable);
 
 	typecheck_dot_succeeded:
 		auto &arguments = call->arguments;
