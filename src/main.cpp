@@ -3935,8 +3935,8 @@ struct Parser {
 		debug_current_location = token.string;
 	}
 
-	void init(Fiber parent_fiber, String source) {
-		this->parent_fiber = parent_fiber;
+	void init(String source) {
+		this->parent_fiber = init_or_get_current_fiber();
 		lexer = Lexer::create(source);
 		fiber = get_new_fiber();
 		set_start(fiber, [] (void *param) {
@@ -3950,7 +3950,7 @@ struct Parser {
 	}
 };
 
-bool read_file_and_parse_into_global_block(Fiber parent_fiber, String location, String path) {
+bool read_file_and_parse_into_global_block(String location, String path) {
 	timed_function();
 
 	if (!file_exists(path)) {
@@ -3970,7 +3970,7 @@ bool read_file_and_parse_into_global_block(Fiber parent_fiber, String location, 
 	};
 
 	Parser parser = {};
-	parser.init(parent_fiber, source);
+	parser.init(source);
 	defer { 
 		parser.reporter.print_all(); 
 		parser.free();
@@ -4090,9 +4090,9 @@ struct NodeInterpreter {
 		BucketHashMap<Definition *, Value> variables;
 	};
 
-	static NodeInterpreter *create(Fiber parent_fiber, Node *node) {
+	static NodeInterpreter *create(Node *node) {
 		auto context = DefaultAllocator{}.allocate<NodeInterpreter>();
-		context->parent_fiber = parent_fiber;
+		context->parent_fiber = init_or_get_current_fiber();
 		context->fiber = get_new_fiber();
 		set_start(context->fiber, [](void *param) { ((NodeInterpreter *)param)->fiber_main(); }, context);
 		context->node_to_execute = node;
@@ -7568,9 +7568,7 @@ struct Typechecker {
 		return typechecker;
 	}
 
-	YieldResult continue_typechecking(Fiber parent_fiber, TypecheckEntry *entry) {
-		assert(parent_fiber.handle);
-
+	YieldResult continue_typechecking(TypecheckEntry *entry) {
 		assert(debug_thread_id == 0);
 		debug_thread_id = get_current_thread_id();
 		defer { debug_thread_id = 0; };
@@ -7578,7 +7576,7 @@ struct Typechecker {
 		debug_start();
 
 		{
-			scoped_replace(this->parent_fiber, parent_fiber);
+			scoped_replace(this->parent_fiber, init_or_get_current_fiber());
 			scoped_replace(this->entry, entry);
 
 			tl::yield(fiber);
@@ -7942,7 +7940,7 @@ private:
 	}
 
 	Value execute(Node *node) {
-		auto context = NodeInterpreter::create(fiber, node);
+		auto context = NodeInterpreter::create(node);
 		while (true) {
 			auto result = context->run();
 			if (result.is_value()) {
@@ -9849,7 +9847,7 @@ bool find_main_and_run() {
 							break;
 						}
 						case InterpretMode::ast: {
-							auto context = NodeInterpreter::create(get_current_fiber(), call);
+							auto context = NodeInterpreter::create(call);
 							auto result = context->run();
 							if (result.is_value()) {
 								println("main returned {}", result.value());
@@ -9872,8 +9870,6 @@ bool find_main_and_run() {
 s32 tl_main(Span<Span<utf8>> args) {
 
 	debug_init();
-
-	auto main_fiber = init_fiber(0);
 
 	set_console_encoding(Encoding::utf8);
 
@@ -9927,23 +9923,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 	}
 
 	
-	// NOTE: lock is only needed initially for insertion. There's no modification afterwards so 
-	// no need for LockProtected
-	static SpinLock thread_id_to_fiber_lock;
-	static HashMap<u32, Fiber> thread_id_to_fiber;
-	
-	thread_id_to_fiber.insert(get_current_thread_id(), main_fiber);
-
-	static auto init_worker_fiber = [] {
-		auto worker_fiber = init_fiber(0);
-		auto thread_id = get_current_thread_id();
-
-		scoped(thread_id_to_fiber_lock);
-		thread_id_to_fiber.insert(thread_id, worker_fiber);
-	};
-
 	TaskQueueThreadPool thread_pool;
-	thread_pool.init(thread_count - 1, {.worker_initter = init_worker_fiber});
+	thread_pool.init(thread_count - 1);
 	defer { thread_pool.deinit(); };
 
 	imports.use_unprotected().add_file({.path = input_source_path, .location = {}});
@@ -9959,8 +9940,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 			}
 
 			thread_pool += [to_parse = popped.value()] {
-				auto fiber = thread_id_to_fiber.find(get_current_thread_id())->value;
-				bool success = read_file_and_parse_into_global_block(fiber, to_parse.location, to_parse.path);
+				bool success = read_file_and_parse_into_global_block(to_parse.location, to_parse.path);
 				atomic_or(&failed, !success);
 			};
 		}
@@ -9999,9 +9979,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 					entry.typechecker = Typechecker::create(entry.node);
 				}
 
-				auto worker_fiber = thread_id_to_fiber.find(get_current_thread_id())->value;
-
-				auto result = entry.typechecker->continue_typechecking(worker_fiber, &entry);
+				auto result = entry.typechecker->continue_typechecking(&entry);
 
 				entry.typechecker->stop();
 
