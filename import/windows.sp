@@ -437,3 +437,9 @@ const VirtualAlloc = (
     flAllocationType: DWORD,
     flProtect: DWORD,
 ): LPVOID => #extern
+
+const VirtualFree = (
+    lpAddress: LPVOID,
+    dwSize: SIZE_T,
+    dwFreeType: DWORD,
+): BOOL => #extern

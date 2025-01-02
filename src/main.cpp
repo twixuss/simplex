@@ -1,5 +1,4 @@
 #include <type_traits>
-#include <xtr1common>
 #include <concepts>
 
 #undef assert
@@ -21,12 +20,21 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 
 void print_crash_info();
 
+#if OS_WINDOWS
 #define ASSERTION_FAILURE(cause_string, expression, ...) (\
 	::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCSIG__ __VA_OPT__(,) __VA_ARGS__), \
 	print_crash_info(), \
 	(BUILD_DEBUG || debugger_attached()) ? (debug_break(), 0) : 0, \
 	exit(-1) \
 )
+#else
+#define ASSERTION_FAILURE(cause_string, expression, ...) (\
+	::assertion_failure(cause_string, expression, __FILE__, __LINE__, __FUNCTION__ __VA_OPT__(,) __VA_ARGS__), \
+	print_crash_info(), \
+	(BUILD_DEBUG || debugger_attached()) ? (debug_break(), 0) : 0, \
+	exit(-1) \
+)
+#endif
 
 #define ENABLE_ASSERTIONS BUILD_DEBUG
 
@@ -49,6 +57,12 @@ void print_crash_info();
 #include <tl/macros.h>
 #include <tl/bits.h>
 #include <tl/block_list.h>
+#include <tl/dynamic_lib.h>
+
+#if OS_LINUX
+#include <sys/mman.h>
+#include <errno.h>
+#endif
 
 #pragma warning(error: 4996)
 
@@ -57,7 +71,7 @@ void print_crash_info();
 
 using namespace tl;
 
-constexpr u64 read_u64(utf8 *data) {
+forceinline constexpr u64 read_u64(utf8 *data) {
 	if (std::is_constant_evaluated()) {
 		return 
 			((u64)data[0] << (0*8)) | 
@@ -1341,7 +1355,7 @@ struct NodeTypeToKind;
 #define x(name) \
 	template <> \
 	struct NodeTypeToKind<struct name> { \
-		inline static constexpr NodeKind kind = NodeKind::##name; \
+		inline static constexpr NodeKind kind = NodeKind::name; \
 	};
 ENUMERATE_NODE_KIND(x)
 #undef x
@@ -1396,7 +1410,7 @@ struct AtomicArenaAllocator : AllocatorBase<AtomicArenaAllocator> {
 
 		u8 *target = 0;
 
-		atomic_update(&cursor, [=, &target](u8 *cursor) {
+		atomic_update(&cursor, [=, this, &target](u8 *cursor) {
 			target = ceil(cursor, alignment);
 			cursor = target + size;
 			assert(cursor <= base + buffer_size, "Out of arena memory");
@@ -1618,14 +1632,14 @@ struct Value {
 		memset(this, 0, sizeof(*this));
 	}
 	Value(const Value &that) {
-		memcpy(this, &that, sizeof Value);
+		memcpy(this, &that, sizeof(Value));
 	}
 	Value(Value &&that) { 
-		memcpy(this, &that, sizeof Value);
-		memset(&that, 0, sizeof Value);
+		memcpy(this, &that, sizeof(Value));
+		memset(&that, 0, sizeof(Value));
 	}
 	~Value() {
-		memset(this, 0, sizeof Value);
+		memset(this, 0, sizeof(Value));
 	}
 	Value &operator=(const Value &that) { return this->~Value(), *new(this) Value(that); }
 	Value &operator=(Value &&that) { return this->~Value(), *new(this) Value(std::move(that)); }
@@ -2754,7 +2768,7 @@ void print_ast_impl(Import *import) {
 }
 void print_ast(Node *node) {
 	switch (node->kind) {
-#define x(name) case NodeKind::name: return print_ast_impl((##name *)node);
+#define x(name) case NodeKind::name: return print_ast_impl((name *)node);
 		ENUMERATE_NODE_KIND(x)
 #undef x
 	}
@@ -4210,7 +4224,7 @@ private:
 	Value result_value;
 	YieldResult yield_result;
 
-	HashMap<String, HMODULE> loaded_extern_libraries;
+	HashMap<String, Dll> loaded_extern_libraries;
 
 	void fiber_main() {
 		yield_result = YieldResult::fail;
@@ -4257,7 +4271,7 @@ private:
 		Value result = {};
 
 		switch (expression->kind) {
-#define x(name) case NodeKind::name: result = load_address_impl((##name *)expression); break;
+#define x(name) case NodeKind::name: result = load_address_impl((name *)expression); break;
 			ENUMERATE_EXPRESSION_KIND(x)
 #undef x
 			default:
@@ -4352,7 +4366,7 @@ private:
 		scoped_replace(current_node, node);
 
 		switch (node->kind) {
-#define x(name) case NodeKind::name: return execute_impl((##name *)node);
+#define x(name) case NodeKind::name: return execute_impl((name *)node);
 			ENUMERATE_NODE_KIND(x)
 #undef x
 		}
@@ -4526,23 +4540,23 @@ private:
 
 			} else if (lambda->is_extern) {
 
-				HMODULE module = 0;
+				Dll dll = {};
 				if (auto found = loaded_extern_libraries.find(lambda->extern_library)) {
-					module = found->value;
+					dll = found->value;
 				} else {
-					module = LoadLibraryA((char *)null_terminate(lambda->extern_library).data);
-					if (!module) {
+					dll = load_dll(lambda->extern_library);
+					if (!dll) {
 						immediate_reporter.error(call->location, "Failed to load extern library {}", lambda->extern_library);
 						immediate_reporter.info(lambda->location, "Here is the definition:");
 						yield(YieldResult::fail);
 					}
 
-					loaded_extern_libraries.insert(lambda->extern_library, module);
+					loaded_extern_libraries.insert(lambda->extern_library, dll);
 				}
 
 				assert(lambda->definition);
 
-				auto func = (u64(*)(u64,u64,u64,u64,u64,u64,u64,u64))GetProcAddress(module, (char *)null_terminate(lambda->definition->name).data);
+				auto func = (u64(*)(u64,u64,u64,u64,u64,u64,u64,u64))get_symbol(dll, lambda->definition->name);
 				if (!func) {
 					immediate_reporter.error(call->location, "Failed to load function {} from extern library {}", lambda->definition->name, lambda->extern_library);
 					immediate_reporter.info(lambda->location, "Here is the definition:");
@@ -4967,7 +4981,7 @@ private:
 };
 
 struct InputValue {
-	InputValue() { memset(this, 0, sizeof *this); }
+	InputValue() { memset(this, 0, sizeof(*this)); }
 	InputValue(Register r) : kind(Kind::Register), r(r) {}
 	InputValue(Address a) : kind(Kind::Address), a(a) {}
 	InputValue(s64 c) : kind(Kind::Constant), c(c) {}
@@ -5025,10 +5039,6 @@ inline umm append(StringBuilder &builder, Intrinsic i) {
 	}
 	return append_format(builder, "(unknown Intrinsic {})", (u64)i);
 }
-
-#define xor xor_
-#define and and_
-#define or or_
 
 /*
 #define y(type, name)
@@ -5203,16 +5213,26 @@ Callback generate_callback(Lambda *lambda) {
 	bytes.add({0xc3});
 
 
+	#if OS_WINDOWS
 	void *page = VirtualAlloc(0, bytes.count, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+	#elif OS_LINUX
+	void *page = mmap(NULL, bytes.count, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	#endif
 
 	memcpy(page, bytes.data, bytes.count);
 	memset((char *)page + bytes.count, 0xcc, ceil(bytes.count, (umm)4096) - bytes.count);
 
+	#if OS_WINDOWS
 	DWORD old_protect;
 	if (!VirtualProtect(page, bytes.count, PAGE_EXECUTE_READ, &old_protect)) {
 		immediate_reporter.error(lambda->location, "FATAL: VirtualProtect failed: {}", win32_error());
 		exit(-1);
 	}
+	#elif OS_LINUX
+    if (mprotect(page, bytes.count, PROT_READ | PROT_EXEC) == -1) {
+		immediate_reporter.error(lambda->location, "FATAL: mprotect failed: {}", strerror(errno));
+    }
+	#endif
 
 	return {page};
 }
@@ -5545,8 +5565,13 @@ struct Builder {
 		if (definition->initial_value) {
 			output(address, definition->initial_value);
 		} else {
-			if (direct_as<Struct>(definition->type)) {
-				immediate_reporter.warning(definition->location, "default struct values not implemented. initializing with zero");
+			if (auto struct_ = direct_as<Struct>(definition->type)) {
+				for (auto member : struct_->members) {
+					if (member->initial_value) {
+						immediate_reporter.warning(definition->location, "default struct values with custom initializers are not implemented. initializing with zero");
+						break;
+					}
+				}
 			}
 			I(set, .d = address, .value = 0, .size = definition_size);
 		}
@@ -6257,7 +6282,7 @@ struct Interpreter {
 	List<u64> debug_stack;
 
 	struct Library {
-		HMODULE module;
+		Dll dll;
 		HashMap<String, void *> functions;
 	};
 	HashMap<String, Library> libraries;
@@ -6447,21 +6472,15 @@ struct Interpreter {
 	}
 	void execute(Instruction::callext_t i) {
 		auto &lib = libraries.get_or_insert(i.lib);
-		if (!lib.module) {
-			auto lib_name = format("{}.dll\0"s, i.lib);
-			defer { free(lib_name); };
-			lib.module = GetModuleHandleA(lib_name.data);
-			if (!lib.module) {
-				lib.module = LoadLibraryA(lib_name.data);
-			}
-			assert(lib.module, "{}.dll was not found", i.lib);
+		if (!lib.dll) {
+			auto lib_name = tformat(u8"{}{}"s, i.lib, dll_extension);
+			lib.dll = load_dll(lib_name);
+			assert(lib.dll);
 		}
 
 		auto &fn = lib.functions.get_or_insert(i.name);
 		if (!fn) {
-			auto fn_name = null_terminate(i.name);
-			defer { free(fn_name); };
-			fn = GetProcAddress(lib.module, (char *)fn_name.data);
+			fn = get_symbol(lib.dll, i.name);
 			assert(fn, "{}.dll does not contain {}", i.lib, i.name);
 		}
 
@@ -6951,7 +6970,7 @@ CheckResult is_constant_impl(ArrayConstructor *node) {
 CheckResult is_constant(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
-#define x(name) case NodeKind::name: return is_constant_impl((##name *)expression);
+#define x(name) case NodeKind::name: return is_constant_impl((name *)expression);
 		ENUMERATE_EXPRESSION_KIND(x)
 #undef x
 	}
@@ -7024,7 +7043,7 @@ CheckResult is_mutable_impl(ArrayConstructor *Array) { return {false, Array}; }
 CheckResult is_mutable(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
-#define x(name) case NodeKind::name: return is_mutable_impl((##name *)expression);
+#define x(name) case NodeKind::name: return is_mutable_impl((name *)expression);
 		ENUMERATE_EXPRESSION_KIND(x)
 #undef x
 	}
@@ -7221,7 +7240,7 @@ struct Copier {
 		invalid_code_path();
 	}
 
-	[[nodiscard]] void deep_copy_impl(Block *from, Block *to) {
+	void deep_copy_impl(Block *from, Block *to) {
 		for (auto from_child : from->children) {
 			auto to_child = deep_copy(from_child);
 			to->add(to_child);
@@ -7236,14 +7255,14 @@ struct Copier {
 		if (!to->type)
 			to->type = get_builtin_type(BuiltinType::None);
 	} 
-	[[nodiscard]] void deep_copy_impl(Call *from, Call *to) {
+	void deep_copy_impl(Call *from, Call *to) {
 		DEEP_COPY(callable);
 		COPY_LIST(arguments, DEEP_COPY);
 		COPY(inline_status);
 		COPY(call_kind);
 		LOOKUP_COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(Definition *from, Definition *to) {
+	void deep_copy_impl(Definition *from, Definition *to) {
 		COPY(name);
 		if (from->parsed_type)
 			DEEP_COPY(parsed_type);
@@ -7261,22 +7280,22 @@ struct Copier {
 			to->type = to->initial_value->type;
 		}
 	} 
-	[[nodiscard]] void deep_copy_impl(IntegerLiteral *from, IntegerLiteral *to) {
+	void deep_copy_impl(IntegerLiteral *from, IntegerLiteral *to) {
 		COPY(value);
 		COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(BooleanLiteral *from, BooleanLiteral *to) {
+	void deep_copy_impl(BooleanLiteral *from, BooleanLiteral *to) {
 		COPY(value);
 		COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(NoneLiteral *from, NoneLiteral *to) {
+	void deep_copy_impl(NoneLiteral *from, NoneLiteral *to) {
 		COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(StringLiteral *from, StringLiteral *to) {
+	void deep_copy_impl(StringLiteral *from, StringLiteral *to) {
 		COPY(value);
 		COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(Lambda *from, Lambda *to) {
+	void deep_copy_impl(Lambda *from, Lambda *to) {
 		COPY(inline_status);
 		COPY(is_intrinsic);
 		DEEP_COPY_INPLACE(head);
@@ -7287,7 +7306,7 @@ struct Copier {
 		
 		LOOKUP_COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(LambdaHead *from, LambdaHead *to) {
+	void deep_copy_impl(LambdaHead *from, LambdaHead *to) {
 		DEEP_COPY_INPLACE(parameters_block);
 		if (from->parsed_return_type) {
 			DEEP_COPY(parsed_return_type);
@@ -7295,34 +7314,34 @@ struct Copier {
 		LOOKUP_COPY(return_type);
 		COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(Name *from, Name *to) {
+	void deep_copy_impl(Name *from, Name *to) {
 		COPY(name);
 		COPY_LIST(possible_definitions, LOOKUP_COPY);
 		LOOKUP_COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(IfStatement *from, IfStatement *to) {
+	void deep_copy_impl(IfStatement *from, IfStatement *to) {
 		DEEP_COPY(condition);
 		DEEP_COPY(true_branch);
 		if (from->false_branch)
 			DEEP_COPY(false_branch);
 	} 
-	[[nodiscard]] void deep_copy_impl(IfExpression *from, IfExpression *to) {
+	void deep_copy_impl(IfExpression *from, IfExpression *to) {
 		DEEP_COPY(condition);
 		DEEP_COPY(true_branch);
 		DEEP_COPY(false_branch);
 		COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(BuiltinTypeName *from, BuiltinTypeName *to) {
+	void deep_copy_impl(BuiltinTypeName *from, BuiltinTypeName *to) {
 		COPY(type_kind);
 		to->type = get_builtin_type(BuiltinType::Type);
 	} 
-	[[nodiscard]] void deep_copy_impl(Binary *from, Binary *to) {
+	void deep_copy_impl(Binary *from, Binary *to) {
 		DEEP_COPY(left);
 		DEEP_COPY(right);
 		COPY(operation);
 		COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(Match *from, Match *to) {
+	void deep_copy_impl(Match *from, Match *to) {
 		DEEP_COPY(expression);
 		to->cases.resize(from->cases.count);
 		for (umm i = 0; i < to->cases.count; ++i) {
@@ -7332,36 +7351,36 @@ struct Copier {
 		}
 		COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(Unary *from, Unary *to) {
+	void deep_copy_impl(Unary *from, Unary *to) {
 		DEEP_COPY(expression);
 		COPY(operation);
 		COPY(mutability);
 		COPY(type);
 	} 
-	[[nodiscard]] void deep_copy_impl(Return *from, Return *to) {
+	void deep_copy_impl(Return *from, Return *to) {
 		DEEP_COPY(value);
 		LOOKUP_COPY(lambda);
 		to->lambda->returns.add(to);
 	}
-	[[nodiscard]] void deep_copy_impl(While *from, While *to) {
+	void deep_copy_impl(While *from, While *to) {
 		DEEP_COPY(condition);
 		DEEP_COPY(body);
 	} 
-	[[nodiscard]] void deep_copy_impl(Continue *from, Continue *to) {
+	void deep_copy_impl(Continue *from, Continue *to) {
 		LOOKUP_COPY(loop);
 	} 
-	[[nodiscard]] void deep_copy_impl(Break *from, Break *to) {
+	void deep_copy_impl(Break *from, Break *to) {
 		LOOKUP_COPY(tag_block);
 		LOOKUP_COPY(loop);
 	}
-	[[nodiscard]] void deep_copy_impl(Struct *from, Struct *to) { not_implemented(); }
-	[[nodiscard]] void deep_copy_impl(ArrayType *from, ArrayType *to) { not_implemented(); }
-	[[nodiscard]] void deep_copy_impl(Subscript *from, Subscript *to) { not_implemented(); }
-	[[nodiscard]] void deep_copy_impl(ArrayConstructor *from, ArrayConstructor *to) {
+	void deep_copy_impl(Struct *from, Struct *to) { not_implemented(); }
+	void deep_copy_impl(ArrayType *from, ArrayType *to) { not_implemented(); }
+	void deep_copy_impl(Subscript *from, Subscript *to) { not_implemented(); }
+	void deep_copy_impl(ArrayConstructor *from, ArrayConstructor *to) {
 		COPY_LIST(elements, DEEP_COPY);
 		COPY(type);
 	}
-	[[nodiscard]] void deep_copy_impl(Import *from, Import *to) {
+	void deep_copy_impl(Import *from, Import *to) {
 		COPY(path);
 	}
 
@@ -8345,7 +8364,7 @@ private:
 		Node *new_node = 0;
 
 		switch (node->kind) {
-#define x(name) case NodeKind::name: new_node = typecheck_impl((##name *)node, can_substitute); break;
+#define x(name) case NodeKind::name: new_node = typecheck_impl((name *)node, can_substitute); break;
 			ENUMERATE_NODE_KIND(x)
 #undef x
 			default:
@@ -9012,7 +9031,7 @@ private:
 			fail();
 		}
 
-		reporter.error(call->callable->location, "Only lambdas / structs can be called for now");
+		reporter.error(call->callable->location, "Only lambdas / structs can be called for now, not {}", call->callable->type);
 		fail();
 		return 0;
 	}
@@ -10012,39 +10031,42 @@ bool find_main_and_run() {
 					return false;
 				}
 
-				if (run_compiled_code) {
-					timed_block("executing main");
 
-					auto call = Call::create();
-					call->callable = lambda;
-					call->type = lambda->head.return_type;
-					call->call_kind = CallKind::lambda;
-					switch (interpret_mode) {
-						case InterpretMode::bytecode: {
-							dbgln("\nBytecode:\n");
-							Bytecode::Builder builder;
-							for (auto definition : global_block.definition_list) {
-								builder.append_global_definition(definition);
-							}
-							visit(&global_block, Combine {
-								[&] (auto) {},
-								[&] (Lambda *lambda) {
-									if (lambda->body) {
-										builder.append_lambda(lambda);
-									}
-								},
-							});
-							auto bytecode = builder.build(call);
-							dbgln("\nFinal instructions:\n");
-							for (auto [index, instruction] : enumerate(bytecode.instructions)) {
-								dbgln("{}: {}", index, instruction);
-							}
-							dbgln();
+				auto call = Call::create();
+				call->callable = lambda;
+				call->type = lambda->head.return_type;
+				call->call_kind = CallKind::lambda;
+				switch (interpret_mode) {
+					case InterpretMode::bytecode: {
+						dbgln("\nBytecode:\n");
+						Bytecode::Builder builder;
+						for (auto definition : global_block.definition_list) {
+							builder.append_global_definition(definition);
+						}
+						visit(&global_block, Combine {
+							[&] (auto) {},
+							[&] (Lambda *lambda) {
+								if (lambda->body) {
+									builder.append_lambda(lambda);
+								}
+							},
+						});
+						auto bytecode = builder.build(call);
+						dbgln("\nFinal instructions:\n");
+						for (auto [index, instruction] : enumerate(bytecode.instructions)) {
+							dbgln("{}: {}", index, instruction);
+						}
+						dbgln();
+							
+						if (run_compiled_code) {
+							timed_block("executing main");
 							auto result = Bytecode::Interpreter{}.run(&bytecode, builder.entry_point());
 							println("main returned {}", result);
-							break;
 						}
-						case InterpretMode::ast: {
+						break;
+					}
+					case InterpretMode::ast: {
+						if (run_compiled_code) {
 							auto context = NodeInterpreter::create(call);
 							auto result = context->run();
 							if (result.is_value()) {
