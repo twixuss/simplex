@@ -9,3 +9,4 @@ CoverageReport-*
 codecov/
 LastCoverageResults.log
 TODO.md
+generated/

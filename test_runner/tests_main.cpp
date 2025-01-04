@@ -179,7 +179,7 @@ reloop:
 			auto do_fail = [&](auto fn) {
 				fail = true;
 				withs(stdout_lock) {
-					with(ConsoleColor::yellow, print("    Test {} failed:\n", test_filename));
+					with(ConsoleColor::yellow, print("    Test {} failed:\n", test.path));
 					fn();
 				};
 			};

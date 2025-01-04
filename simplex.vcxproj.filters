@@ -8,5 +8,7 @@
     <ClInclude Include="src\print_ast.h" />
     <ClInclude Include="src\visit.h" />
     <ClInclude Include="src\c_parser.h" />
+    <ClInclude Include="src\meaning.h" />
+    <ClInclude Include="src\mutability.h" />
   </ItemGroup>
 </Project>

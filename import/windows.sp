@@ -19,7 +19,7 @@ const HINSTANCE = *None
 const HCURSOR = *None
 const HICON = *None
 const HBRUSH = *None
-const LPVOID = *None
+const LPVOID = *var None
 const WNDPROC = *None
 
 const WNDCLASSEXA = struct {
