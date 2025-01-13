@@ -11,19 +11,6 @@ using namespace tl;
 
 using String = Span<utf8>;
 
-List<utf8> normalize_path(String path) {
-	auto dotdot = find(path, u8".."s);
-	if (!dotdot || dotdot == path.begin())
-		return to_list(path);
-
-	auto X = find_last(Span(path.begin(), dotdot-1), u8'\\');
-
-	List<utf8> result;
-	result.add(String{(utf8 *)path.begin(), X});
-	result.add(String{dotdot + 2, (utf8 *)path.end()});
-	return result;
-}
-
 List<utf8> unescape_string(Span<utf8> string) {
 	List<utf8> result;
 	for (umm i = 0; i < string.count; ++i) {

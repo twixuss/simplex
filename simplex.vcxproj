@@ -79,9 +79,16 @@
     <ClCompile Include="src\main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\bytecode\builder.h" />
+    <ClInclude Include="src\bytecode\bytecode.h" />
+    <ClInclude Include="src\bytecode\interpreter.h" />
+    <ClInclude Include="src\common.h" />
     <ClInclude Include="src\c_parser.h" />
+    <ClInclude Include="src\lexer.h" />
     <ClInclude Include="src\meaning.h" />
     <ClInclude Include="src\mutability.h" />
+    <ClInclude Include="src\node_interpreter.h" />
+    <ClInclude Include="src\parser.h" />
     <ClInclude Include="src\print_ast.h" />
     <ClInclude Include="src\visit.h" />
     <ClInclude Include="x.h" />
