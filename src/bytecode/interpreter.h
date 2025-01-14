@@ -11,6 +11,22 @@ struct Interpreter {
 	Bytecode *bytecode = 0;
 	bool interactive = false;
 
+	struct DebugWindow {
+		static constexpr int source    = 0x1;
+		static constexpr int arguments = 0x2;
+		static constexpr int locals    = 0x4;
+		static constexpr int bytecode  = 0x8;
+		static constexpr int registers = 0x10;
+		static constexpr int stack     = 0x20;
+	};
+
+	int enabled_windows = ~0;
+
+	struct Commands {
+		static constexpr char next_instruction = 'n';
+		static constexpr char redraw_window = 'r';
+	};
+
 	Optional<u64> run(Bytecode *bytecode, umm entry_index, bool interactive) {
 		scoped_replace(current_interpreter, this);
 		this->bytecode = bytecode;
@@ -66,71 +82,147 @@ struct Interpreter {
 			auto i = bytecode->instructions[current_instruction_index];
 
 			if (interactive) {
+			redraw:
 				clear_console();
+				auto column2 = []() {
+					for (int i = 0; i < 80; ++i)
+						print(' ');
+				};
 				
-				with(ConsoleColor::gray, println("==== Bytecode ===="));
+				auto header = [&](char const *name, int flag) {
+					with(((enabled_windows & flag) ? ConsoleColor::cyan : ConsoleColor::gray), println("==== {} {} ====", log2(flag), name));
+					return enabled_windows & flag;
+				};
 
-				for (s64 o = -5; o <= 5; ++o) {
-					scoped_if(ConsoleColor::yellow, o == 0);
+				column2();
+				if (header("Bytecode", DebugWindow::bytecode)) {
+					for (s64 o = -5; o <= 5; ++o) {
+						scoped_if(ConsoleColor::yellow, o == 0);
 
-					u64 instruction_index = current_instruction_index + o;
-					if (instruction_index >= bytecode->instructions.count) {
-						println("...");
-					} else {
-						print_instruction(instruction_index, bytecode->instructions[instruction_index]);
+						u64 instruction_index = current_instruction_index + o;
+						if (instruction_index >= bytecode->instructions.count) {
+							column2(); println("...");
+						} else {
+							column2(); print_instruction(instruction_index, bytecode->instructions[instruction_index]);
+						}
 					}
 				}
+				column2();
+				if (header("Registers", DebugWindow::registers)) {
+					auto print_register = [&] (Register r) {
+						print("0x{}", FormatInt{.value = reg(r), .radix = 16, .leading_zero_count = 16});
+					};
 
-				println();
-				with(ConsoleColor::gray, println("==== Source ===="));
-
-				if (i.source_location.count) {
-					auto location = get_source_location(i.source_location);
-
-					print_source_chunk(location, 0, ConsoleColor::yellow);
-				} else {
-					println("unknown source");
+					column2(); print("base: "); print_register(Register::base); println();
+					column2(); print("stack: "); print_register(Register::stack); println();
+					for (int i = 0; i < 8; ++i) {
+						column2(); print("r{}: ", i); print_register((Register)i); println();
+					}
 				}
 				
 
-				u64 max_lambda_first_instruction = 0;
 				Lambda *lambda = 0;
-				if (current_instruction_index < bytecode->instructions.count - 3) { // Ignore initial instructions that don't belong to any lambda
-					for (auto [first_instruction, some_lambda] : bytecode->first_instruction_to_lambda) {
-						if (current_instruction_index >= first_instruction) {
-							if (first_instruction > max_lambda_first_instruction) {
-								max_lambda_first_instruction = first_instruction;
-								lambda = some_lambda;
+				if (enabled_windows & (DebugWindow::locals | DebugWindow::arguments | DebugWindow::stack)) {
+					u64 max_lambda_first_instruction = 0;
+					if (current_instruction_index < bytecode->instructions.count - 3) { // Ignore initial instructions that don't belong to any lambda
+						for (auto [first_instruction, some_lambda] : bytecode->first_instruction_to_lambda) {
+							if (current_instruction_index >= first_instruction) {
+								if (first_instruction > max_lambda_first_instruction) {
+									max_lambda_first_instruction = first_instruction;
+									lambda = some_lambda;
+								}
 							}
 						}
 					}
 				}
-				if (lambda) {
-					with(ConsoleColor::gray, println("==== Arguments ===="));
-					for (auto parameter : lambda->head.parameters_block.definition_list) {
-						print("{}: ", parameter->name);
-						Address address = {
-							.base = Register::base,
-							.offset = (s64)(16 + parameter->offset),
-						};
-						print_value(address, parameter->type);
-						println();
+				
+				column2();
+				if (header("Stack", DebugWindow::stack)) {
+					if (lambda) {
+						for (s64 i = lambda->stack_frame_size - 8; i >= 0; i -= 8) {
+							s64 addr = reg(Register::stack) + i;
+							column2(); 
+							print("0x{}: ", format_hex(addr));
+							print_value(Address{.offset = addr}, get_builtin_type(BuiltinType::U64), {.hex = true});
+							if (i == 0)
+								print(" <- stack");
+							if (i == lambda->space_for_call_arguments && lambda->temporary_size)
+								print(" <- temporary");
+							if (i == lambda->space_for_call_arguments + lambda->temporary_size && lambda->locals_size)
+								print(" <- locals");
+							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size)
+								print(" <- base");
+							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 8)
+								print(" <- return address");
+							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 16 && lambda->head.total_parameters_size)
+								print(" <- arguments");
+							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 16 + lambda->head.total_parameters_size && get_size(lambda->head.return_type))
+								print(" <- return value");
+							println();
+						}
 					}
-					
-					with(ConsoleColor::gray, println("==== Locals ===="));
-					for (auto local : lambda->locals) {
-						print("{}: ", local->name);
-						Address address = {
-							.base = Register::base,
-							.offset = (s64)(-lambda->locals_size + local->offset),
-						};
-						print_value(address, local->type);
-						println();
+				}
+				
+				SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), {0, 0});
+
+				if (header("Source", DebugWindow::source)) {
+					if (i.source_location.count) {
+						auto location = get_source_location(i.source_location);
+
+						print_source_chunk(location, 0, ConsoleColor::yellow);
+					} else {
+						println("unknown source");
+					}
+				}
+				if (header("Arguments", DebugWindow::arguments)) {
+					if (lambda) {
+						for (auto parameter : lambda->head.parameters_block.definition_list) {
+							print("{}: ", parameter->name);
+							Address address = {
+								.base = Register::base,
+								.offset = (s64)(16 + parameter->offset),
+							};
+							print_value(address, parameter->type);
+							println();
+						}
+					}
+				}
+				if (header("Locals", DebugWindow::locals)) {
+					if (lambda) {
+						for (auto local : lambda->locals) {
+							print("{}: ", local->name);
+							Address address = {
+								.base = Register::base,
+								.offset = (s64)(-lambda->locals_size + local->offset),
+							};
+							print_value(address, local->type);
+							println();
+						}
 					}
 				}
 
+				println();
+				println();
+				println("{} - next instruction", Commands::next_instruction);
+				println("{} - redraw window", Commands::redraw_window);
 
+			retry_char:
 				int pressed_key = _getch();
+				switch (pressed_key) {
+					ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
+						(int &)enabled_windows ^= 1 << (pressed_key - '0');
+						goto redraw;
+					}
+					case Commands::next_instruction: {
+						break;
+					}
+					case Commands::redraw_window: {
+						goto redraw;
+					}
+					default: {
+						goto retry_char;
+					}
+				}
 			}
 
 			switch (i.kind) {
@@ -142,18 +234,38 @@ struct Interpreter {
 		}
 	}
 	
-	int print_value(Address address, Type type) {
+	struct PrintValueOptions {
+		bool hex = false;
+	};
+
+	int print_value(Address address, Type type, PrintValueOptions options = {}) {
 		__try {
+			auto print_int = [&]<class T>(auto address) {
+				auto val = [&](Address address) {
+					if constexpr (sizeof(T) == 1) return val1(address);
+					if constexpr (sizeof(T) == 2) return val2(address);
+					if constexpr (sizeof(T) == 4) return val4(address);
+					if constexpr (sizeof(T) == 8) return val8(address);
+				};
+
+				auto v = FormatInt{(T)val(address)};
+				if (options.hex) {
+					v = format_hex(v.value); 
+					print("0x");
+				}
+				return print(v);
+			};
+
 			if (types_match(type, BuiltinType::None)) return print("none");
 			if (types_match(type, BuiltinType::Bool)) return print((bool)val1(address));
-			if (types_match(type, BuiltinType::U8)) return print((u8)val1(address));
-			if (types_match(type, BuiltinType::U16)) return print((u16)val2(address));
-			if (types_match(type, BuiltinType::U32)) return print((u32)val4(address));
-			if (types_match(type, BuiltinType::U64)) return print((u64)val8(address));
-			if (types_match(type, BuiltinType::S8)) return print((s8)val1(address));
-			if (types_match(type, BuiltinType::S16)) return print((s16)val2(address));
-			if (types_match(type, BuiltinType::S32)) return print((s32)val4(address));
-			if (types_match(type, BuiltinType::S64)) return print((s64)val8(address));
+			if (types_match(type, BuiltinType::U8 )) { return print_int.operator()<u8 >(address); }
+			if (types_match(type, BuiltinType::U16)) { return print_int.operator()<u16>(address); }
+			if (types_match(type, BuiltinType::U32)) { return print_int.operator()<u32>(address); }
+			if (types_match(type, BuiltinType::U64)) { return print_int.operator()<u64>(address); }
+			if (types_match(type, BuiltinType::S8 )) { return print_int.operator()<s8 >(address); }
+			if (types_match(type, BuiltinType::S16)) { return print_int.operator()<s16>(address); }
+			if (types_match(type, BuiltinType::S32)) { return print_int.operator()<s32>(address); }
+			if (types_match(type, BuiltinType::S64)) { return print_int.operator()<s64>(address); }
 
 			if (auto array = as<ArrayType>(type)) {
 				print("[");

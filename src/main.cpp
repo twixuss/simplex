@@ -1200,7 +1200,10 @@ DEFINE_EXPRESSION(Lambda) {
 	String extern_library = {};
 
 	GList<Definition *> locals = {};
+	u64 space_for_call_arguments = 0;
+	u64 temporary_size = 0;
 	u64 locals_size = 0;
+	u64 stack_frame_size = 0;
 
 	bool is_intrinsic : 1 = false;
 	bool is_extern    : 1 = false;

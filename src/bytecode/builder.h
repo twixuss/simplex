@@ -187,6 +187,9 @@ struct Builder {
 		}
 
 		lambda->locals_size = locals_size;
+		lambda->temporary_size = max_temporary_size;
+		lambda->space_for_call_arguments = max_size_reserved_for_arguments;
+		lambda->stack_frame_size = max_size_reserved_for_arguments + max_temporary_size + locals_size + 16 + lambda->head.total_parameters_size + return_value_size;
 
 		for (auto &i : lambda_instructions) {
 			i.visit_addresses([&] (Address &a) {
@@ -974,11 +977,15 @@ struct Builder {
 		I(jmp, 0);
 	} 
 	void output_impl(While *While) {
-		tmpreg(cr);
-		auto condition_index = output_bytecode.instructions.count;
-		output(cr, While->condition);
-		auto jz_index = output_bytecode.instructions.count;
-		I(jz, cr, 0);
+		umm condition_index;
+		umm jz_index;
+		{
+			tmpreg(cr);
+			condition_index = output_bytecode.instructions.count;
+			output(cr, While->condition);
+			jz_index = output_bytecode.instructions.count;
+			I(jz, cr, 0);
+		}
 		output_discard(While->body);
 		I(jmp, (s64)condition_index);
 		output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
