@@ -621,10 +621,13 @@ struct Builder {
 		I(copy, .d = destination, .s = get_definition_address(definition), .size = get_size(name->type));
 	} 
 	void output_impl(Site destination, IfExpression *If) {
-		tmpreg(cr);
-		output(cr, If->condition);
-		auto jz_index = output_bytecode.instructions.count;
-		I(jz, cr, 0);
+		umm jz_index;
+		{
+			tmpreg(cr);
+			output(cr, If->condition);
+			jz_index = output_bytecode.instructions.count;
+			I(jz, cr, 0);
+		}
 		output(destination, If->true_branch);
 		auto jmp_index = output_bytecode.instructions.count;
 		I(jmp, 0);
@@ -865,8 +868,6 @@ struct Builder {
 		tmpreg(matchee);
 		output(matchee, match->expression);
 
-		tmpreg(does_match);
-
 		List<umm> jump_to_end_indices;
 
 		for (auto &Case : match->cases) {
@@ -879,14 +880,14 @@ struct Builder {
 				output(from, Case.from);
 				auto size = get_size(match->expression->type);
 				switch (size) {
-					case 1: I(cmp1, does_match, matchee, from, Comparison::equals); break;
-					case 2: I(cmp2, does_match, matchee, from, Comparison::equals); break;
-					case 4: I(cmp4, does_match, matchee, from, Comparison::equals); break;
-					case 8: I(cmp8, does_match, matchee, from, Comparison::equals); break;
+					case 1: I(cmp1, from, matchee, from, Comparison::equals); break;
+					case 2: I(cmp2, from, matchee, from, Comparison::equals); break;
+					case 4: I(cmp4, from, matchee, from, Comparison::equals); break;
+					case 8: I(cmp8, from, matchee, from, Comparison::equals); break;
 					default: invalid_code_path("`match` only works on sizes 1, 2, 4 or 8, but not {}", size);
 				}
 				prev_case_jump_over_index = output_bytecode.instructions.count;
-				I(jz, does_match, 0);
+				I(jz, from, 0);
 			}
 			output(destination, Case.to);
 			jump_to_end_indices.add(output_bytecode.instructions.count);
@@ -1013,10 +1014,13 @@ struct Builder {
 		}
 	}
 	void output_impl(IfStatement *If) {
-		tmpreg(cr);
-		output(cr, If->condition);
-		auto jz_index = output_bytecode.instructions.count;
-		I(jz, cr, 0);
+		umm jz_index;
+		{
+			tmpreg(cr);
+			output(cr, If->condition);
+			jz_index = output_bytecode.instructions.count;
+			I(jz, cr, 0);
+		}
 		output_discard(If->true_branch);
 		if (If->false_branch) {
 			auto jmp_index = output_bytecode.instructions.count;
@@ -1096,6 +1100,7 @@ struct Builder {
 #undef MI
 #undef I
 #undef tmpreg
+#undef tmpaddr
 #undef tmpval
 };
 }
