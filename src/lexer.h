@@ -338,6 +338,7 @@ struct Lexer {
 							case const_string_to_token_kind("S8"s): { token.kind = Token_S8; break; }
 							case const_string_to_token_kind("if"s): { token.kind = Token_if; break; }
 							case const_string_to_token_kind("as"s): { token.kind = Token_as; break; }
+							case const_string_to_token_kind("fn"s): { token.kind = Token_fn; break; }
 						}
 						break;
 					}

@@ -3,7 +3,7 @@
 // COMPILER OUTPUT Because p is a pointer to read-only
 // COMPILER OUTPUT Because a is marked as let. Mark it with `var` instead to make it mutable
 
-const main = () => {
+const main = fn () => {
     let a = 42
     let b = 1337
     let p = &a

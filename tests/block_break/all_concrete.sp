@@ -1,5 +1,5 @@
 // COMPILER OUTPUT 111
-const main = () => {
+const main = fn () => {
     var a = {:a
         break :a true
         break :a false

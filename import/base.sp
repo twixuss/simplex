@@ -1,19 +1,19 @@
 const Int = S64
 const UInt = U64
 
-const debug_break = () => #intrinsic
-const panic = () => #intrinsic
-const println = (value: S64) => #intrinsic
-const println = (value: String) => #intrinsic
+const debug_break = fn () => #intrinsic
+const panic = fn () => #intrinsic
+const println = fn (value: S64) => #intrinsic
+const println = fn (value: String) => #intrinsic
 
-const floor = (a: U64, b: U64) => {
+const floor = fn (a: U64, b: U64) => {
     return a / b * b
 }
-const ceil = (a: U64, b: U64) => {
+const ceil = fn (a: U64, b: U64) => {
     return {a + b - 1} / b * b
 }
 
-const memcpy = (dst: *var None  src: *let None size: U64): *var None => {
+const memcpy = fn (dst: *var None  src: *let None size: U64): *var None => {
     var d = dst as *var U8
     var s = src as *let U8
     var e = {{d as U64} + size} as *var U8
@@ -24,3 +24,5 @@ const memcpy = (dst: *var None  src: *let None size: U64): *var None => {
     }
     return dst
 }
+
+const assert = fn (x: Bool) => { if !x then panic() }

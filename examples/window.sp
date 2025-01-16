@@ -1,7 +1,7 @@
 // NO RUN
 import "windows"
 
-const wnd_proc = (hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM): LRESULT => {
+const wnd_proc = fn (hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM): LRESULT => {
     match msg {
         WM_DESTROY => {
             PostQuitMessage(0)
@@ -10,7 +10,7 @@ const wnd_proc = (hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM): LRESULT => {
     return DefWindowProcA(hwnd, msg, wp, lp)
 }
 
-const main = () => {
+const main = fn () => {
     var class_name ="my_class"
 
     var class: WNDCLASSEXA

@@ -1,6 +1,6 @@
 // COMPILER OUTPUT 1337
 
-const main = () => {
+const main = fn () => {
     var a = 42
     let b = 1337
     let p = &a

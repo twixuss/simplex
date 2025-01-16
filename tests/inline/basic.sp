@@ -1,8 +1,8 @@
 // COMPILER OUTPUT 111\n222\n42
 
-var bar = () => 69
+var bar = fn () => 69
 
-const foo = inline (param: S64) => {
+const foo = inline fn (param: S64) => {
     {
         println(111);
         println(222);
@@ -20,13 +20,13 @@ const foo = inline (param: S64) => {
         match a {
             0 => 1
             1 => 2
-            2 => {() => 4}()
+            2 => {fn () => 4}()
         }
     }
 
     return a
 }
-const main = () => {
+const main = fn () => {
     var a = foo(2)
     println(a)
 }

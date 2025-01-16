@@ -3786,7 +3786,7 @@ private:
 				}
 
 				StringBuilder source_builder;
-				append_format(source_builder, "\0const {} = ("s, lambda_name);
+				append_format(source_builder, "\0const {} = fn ("s, lambda_name);
 				for (auto [i, parameter] : enumerate(original_lambda->head.parameters_block.definition_list)) {
 					if (i) {
 						append(source_builder, ", ");
@@ -5043,7 +5043,7 @@ private:
 								} else {
 									auto lambda_name = format(u8"__v_{}_{}_{}_{}"s, Nameable(binary->operation), element_count, Nameable(dleft_element), Nameable(dright_element));
 									auto source_list = format(u8"\0" R"(
-const {} = (a: {}, b: {}) => {{
+const {} = fn (a: {}, b: {}) => {{
 	var i: S64
 	var c: {}
 	while i < {} {{

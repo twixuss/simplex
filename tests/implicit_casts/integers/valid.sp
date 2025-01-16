@@ -1,4 +1,4 @@
-const main = () => {
+const main = fn () => {
     var s8:  S8  = 1
     var s16: S16 = 2
     var s32: S32 = 3

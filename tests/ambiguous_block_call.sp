@@ -3,8 +3,8 @@
 
 // Call expression is allowed to be overloaded.
 // This test makes sure that stuff _inside_ the callable is properly reported as ambiguous
-const main = () => {
-    {() => {
+const main = fn () => {
+    {fn () => {
         const x = 1;
         const x = 2;
         return x;

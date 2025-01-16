@@ -4,7 +4,7 @@ const Vec2 = struct {
     y: S32
 }
 
-const main = () => {
+const main = fn () => {
     var v = Vec2(111, 222)
     return v.x + v.y
 }

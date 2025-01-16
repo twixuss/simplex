@@ -1,6 +1,6 @@
 // COMPILER ERROR
 // COMPILER OUTPUT Unclosed string literal
 
-const main = () => {
+const main = fn () => {
     println("Hello)
 }

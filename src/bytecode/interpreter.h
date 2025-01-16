@@ -760,6 +760,7 @@ struct Interpreter {
 
 	u64 ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *lambda) {
 		auto ret_size = get_size(lambda->head.return_type);
+		assert(lambda->head.parameters_block.definition_list.count == 4, "Expected exactly 4 arguments. TODO: implement others");
 		auto arg0_size = get_size(lambda->head.parameters_block.definition_list[0]->type);
 		auto arg1_size = get_size(lambda->head.parameters_block.definition_list[1]->type);
 		auto arg2_size = get_size(lambda->head.parameters_block.definition_list[2]->type);

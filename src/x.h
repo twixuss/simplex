@@ -138,6 +138,7 @@ ENUMERATE_KEYWORDS(x)
 	x(as) \
 	x(none) \
 	x(import) \
+	x(fn) \
 
 /*
 #define x(name, token, precedence)

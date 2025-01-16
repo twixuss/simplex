@@ -5,6 +5,6 @@
 // COMPILER OUTPUT foo depends on bar
 // COMPILER OUTPUT bar depends on main
 
-const main = () => foo()
-const foo = () => bar()
-const bar = () => main()
+const main = fn () => foo()
+const foo = fn () => bar()
+const bar = fn () => main()

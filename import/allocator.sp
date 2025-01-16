@@ -27,9 +27,7 @@ const PAGE_SIZE = 4096
 const PageAllocator = struct {}
 let page_allocator = PageAllocator()
 
-const assert = (x: Bool) => { if !x then panic() }
-
-const allocate = (allocator: PageAllocator, new: Allocation): Allocation => {
+const allocate = fn (allocator: PageAllocator, new: Allocation): Allocation => {
     // assert(8 <= new.alignment && new.alignment <= PAGE_SIZE)
     // assert(is_power_of_2(new.alignment))
     var result: Allocation
@@ -38,7 +36,7 @@ const allocate = (allocator: PageAllocator, new: Allocation): Allocation => {
     result.alignment = PAGE_SIZE
     result
 }
-const reallocate = (allocator: PageAllocator, old: Allocation, new: Allocation): Allocation => {
+const reallocate = fn (allocator: PageAllocator, old: Allocation, new: Allocation): Allocation => {
     // assert(8 <= new.alignment && new.alignment <= PAGE_SIZE)
     // assert(is_power_of_2(new.alignment))
     var result = old
@@ -53,6 +51,6 @@ const reallocate = (allocator: PageAllocator, old: Allocation, new: Allocation):
     result
 }
 
-const deallocate = (allocator: PageAllocator, old: Allocation): None => {
+const deallocate = fn (allocator: PageAllocator, old: Allocation): None => {
     VirtualFree(old.data, 0, MEM_RELEASE)
 }

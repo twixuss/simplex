@@ -1,5 +1,5 @@
 // COMPILER OUTPUT 11111111
-const foo = () => {
+const foo = fn () => {
     if
     {3 +  2} == 5 &&
     {3 -  2} == 1 &&
@@ -22,7 +22,7 @@ const foo = () => {
     else
     2222
 }
-const bar = () => {
+const bar = fn () => {
     let _0 = 0;
     let _1 = 1;
     let _2 = 2;
@@ -54,4 +54,4 @@ const bar = () => {
     2222
 }
 
-const main = () => foo() * 10000 + bar()
+const main = fn () => foo() * 10000 + bar()

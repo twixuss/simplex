@@ -1,4 +1,4 @@
 import "base"
-const main = () => {
+const main = fn () => {
     println("Hello world!")
 }

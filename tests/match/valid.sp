@@ -1,5 +1,5 @@
 // COMPILER OUTPUT 222
-const main = () => {
+const main = fn () => {
     var a = 2;
     match a {
         1 => 111

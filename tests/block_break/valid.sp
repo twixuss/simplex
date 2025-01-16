@@ -1,7 +1,7 @@
 // COMPILER OUTPUT 123
 // NO COMPILER OUTPUT 456
 // NO COMPILER OUTPUT 789
-const main = () => {
+const main = fn () => {
     var a = {:a
         if true {
             break :a 123

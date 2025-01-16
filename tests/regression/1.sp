@@ -1,6 +1,6 @@
 // COMPILER OUTPUT 6666
-const foo = () => {
+const foo = fn () => {
     2222
 }
 
-const main = () => foo() * 2 + foo()
+const main = fn () => foo() * 2 + foo()

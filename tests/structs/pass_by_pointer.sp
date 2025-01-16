@@ -4,11 +4,11 @@ const Vec2 = struct {
     y: S32
 }
 
-const foo = (v: *var Vec2) => {
+const foo = fn (v: *var Vec2) => {
     v.x = 333
 }
 
-const main = () => {
+const main = fn () => {
     var v = Vec2(111, 222)
     v.foo()
     return v.x + v.y

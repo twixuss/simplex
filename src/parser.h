@@ -271,7 +271,7 @@ struct Parser {
 	// Parses single-part expressions
 	Expression *parse_expression_0() {
 		switch (token.kind) {
-			case '(': {
+			case Token_fn: {
 				auto lambda = Lambda::create();
 				lambda->location = token.string;
 				lambda->head.parameters_block.parent = current_block;
@@ -283,6 +283,12 @@ struct Parser {
 
 				next();
 				skip_lines();
+
+				expect('(');
+
+				next();
+				skip_lines();
+
 				if (token.kind != ')') {
 					while (true) {
 						expect({Token_name, Token_var, Token_let, Token_const});
