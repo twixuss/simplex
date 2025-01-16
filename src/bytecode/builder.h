@@ -621,17 +621,17 @@ struct Builder {
 		I(copy, .d = destination, .s = get_definition_address(definition), .size = get_size(name->type));
 	} 
 	void output_impl(Site destination, IfExpression *If) {
-		umm jz_index;
+		umm jf_index;
 		{
 			tmpreg(cr);
 			output(cr, If->condition);
-			jz_index = output_bytecode.instructions.count;
-			I(jz, cr, 0);
+			jf_index = output_bytecode.instructions.count;
+			I(jf, cr, 0);
 		}
 		output(destination, If->true_branch);
 		auto jmp_index = output_bytecode.instructions.count;
 		I(jmp, 0);
-		output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
+		output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
 		output(destination, If->false_branch);
 		output_bytecode.instructions[jmp_index].jmp().d = output_bytecode.instructions.count;
 	} 
@@ -759,18 +759,18 @@ struct Builder {
 			}
 			case BinaryOperation::lan: {
 				output(destination, binary->left);
-				auto jz_index = output_bytecode.instructions.count;
-				I(jz, destination, 0);
+				auto jf_index = output_bytecode.instructions.count;
+				I(jf, destination, 0);
 				output(destination, binary->right);
-				output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
+				output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
 				break;
 			}
 			case BinaryOperation::lor: {
 				output(destination, binary->left);
-				auto jnz_index = output_bytecode.instructions.count;
-				I(jnz, destination, 0);
+				auto jt_index = output_bytecode.instructions.count;
+				I(jt, destination, 0);
 				output(destination, binary->right);
-				output_bytecode.instructions[jnz_index].jnz().d = output_bytecode.instructions.count;
+				output_bytecode.instructions[jt_index].jt().d = output_bytecode.instructions.count;
 				break;
 			}
 			case BinaryOperation::as: {
@@ -887,12 +887,12 @@ struct Builder {
 					default: invalid_code_path("`match` only works on sizes 1, 2, 4 or 8, but not {}", size);
 				}
 				prev_case_jump_over_index = output_bytecode.instructions.count;
-				I(jz, from, 0);
+				I(jf, from, 0);
 			}
 			output(destination, Case.to);
 			jump_to_end_indices.add(output_bytecode.instructions.count);
 			I(jmp, 0);
-			output_bytecode.instructions[prev_case_jump_over_index].jz().d = output_bytecode.instructions.count;
+			output_bytecode.instructions[prev_case_jump_over_index].jf().d = output_bytecode.instructions.count;
 		}
 		
 		if (match->default_case) {
@@ -979,17 +979,17 @@ struct Builder {
 	} 
 	void output_impl(While *While) {
 		umm condition_index;
-		umm jz_index;
+		umm jf_index;
 		{
 			tmpreg(cr);
 			condition_index = output_bytecode.instructions.count;
 			output(cr, While->condition);
-			jz_index = output_bytecode.instructions.count;
-			I(jz, cr, 0);
+			jf_index = output_bytecode.instructions.count;
+			I(jf, cr, 0);
 		}
 		output_discard(While->body);
 		I(jmp, (s64)condition_index);
-		output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
+		output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
 		for (auto i : continue_jump_indices.get_or_insert(While)) {
 			output_bytecode.instructions[i].jmp().d = condition_index;
 		}
@@ -1014,22 +1014,22 @@ struct Builder {
 		}
 	}
 	void output_impl(IfStatement *If) {
-		umm jz_index;
+		umm jf_index;
 		{
 			tmpreg(cr);
 			output(cr, If->condition);
-			jz_index = output_bytecode.instructions.count;
-			I(jz, cr, 0);
+			jf_index = output_bytecode.instructions.count;
+			I(jf, cr, 0);
 		}
 		output_discard(If->true_branch);
 		if (If->false_branch) {
 			auto jmp_index = output_bytecode.instructions.count;
 			I(jmp, 0);
-			output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
+			output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
 			output_discard(If->false_branch);
 			output_bytecode.instructions[jmp_index].jmp().d = output_bytecode.instructions.count;
 		} else {
-			output_bytecode.instructions[jz_index].jz().d = output_bytecode.instructions.count;
+			output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
 		}
 	} 
 	void output_impl(Import *import) { invalid_code_path(); } 

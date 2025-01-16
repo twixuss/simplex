@@ -186,8 +186,8 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(callext, (y(Lambda *, lambda) y(String, lib) y(String, name))) \
 	x(ret,  ()) \
 	x(jmp,  (y(InputValue, d))) \
-	x(jz,   (y(Site, s) y(InputValue, d))) \
-	x(jnz,  (y(Site, s) y(InputValue, d))) \
+	x(jf,   (y(Site, s) y(InputValue, d))) \
+	x(jt,   (y(Site, s) y(InputValue, d))) \
 	x(intrinsic, (y(Intrinsic, i))) \
 
 enum class InstructionKind : u8 {

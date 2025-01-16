@@ -404,16 +404,16 @@ struct Interpreter {
 	void execute(Instruction::sra2_t i) { val2(i.d) = (s16)val2(i.a) >> (s16)val2(i.b); }
 	void execute(Instruction::cmp2_t i) {
 		switch (i.cmp) {
-			case Comparison::equals:                  val2(i.d) =      val2(i.a) ==      val2(i.b); break;
-			case Comparison::not_equals:              val2(i.d) =      val2(i.a) !=      val2(i.b); break;
-			case Comparison::signed_less:             val2(i.d) = (s16)val2(i.a) <  (s16)val2(i.b); break;
-			case Comparison::signed_greater:          val2(i.d) = (s16)val2(i.a) >  (s16)val2(i.b); break;
-			case Comparison::signed_less_equals:      val2(i.d) = (s16)val2(i.a) <= (s16)val2(i.b); break;
-			case Comparison::signed_greater_equals:   val2(i.d) = (s16)val2(i.a) >= (s16)val2(i.b); break;
-			case Comparison::unsigned_less:           val2(i.d) = (u16)val2(i.a) <  (u16)val2(i.b); break;
-			case Comparison::unsigned_greater:        val2(i.d) = (u16)val2(i.a) >  (u16)val2(i.b); break;
-			case Comparison::unsigned_less_equals:    val2(i.d) = (u16)val2(i.a) <= (u16)val2(i.b); break;
-			case Comparison::unsigned_greater_equals: val2(i.d) = (u16)val2(i.a) >= (u16)val2(i.b); break;
+			case Comparison::equals:                  val1(i.d) =      val2(i.a) ==      val2(i.b); break;
+			case Comparison::not_equals:              val1(i.d) =      val2(i.a) !=      val2(i.b); break;
+			case Comparison::signed_less:             val1(i.d) = (s16)val2(i.a) <  (s16)val2(i.b); break;
+			case Comparison::signed_greater:          val1(i.d) = (s16)val2(i.a) >  (s16)val2(i.b); break;
+			case Comparison::signed_less_equals:      val1(i.d) = (s16)val2(i.a) <= (s16)val2(i.b); break;
+			case Comparison::signed_greater_equals:   val1(i.d) = (s16)val2(i.a) >= (s16)val2(i.b); break;
+			case Comparison::unsigned_less:           val1(i.d) = (u16)val2(i.a) <  (u16)val2(i.b); break;
+			case Comparison::unsigned_greater:        val1(i.d) = (u16)val2(i.a) >  (u16)val2(i.b); break;
+			case Comparison::unsigned_less_equals:    val1(i.d) = (u16)val2(i.a) <= (u16)val2(i.b); break;
+			case Comparison::unsigned_greater_equals: val1(i.d) = (u16)val2(i.a) >= (u16)val2(i.b); break;
 		}
 	}
 	void execute(Instruction::add4_t i) { val4(i.d) = val4(i.a) + val4(i.b); }
@@ -429,16 +429,16 @@ struct Interpreter {
 	void execute(Instruction::sra4_t i) { val4(i.d) = (s32)val4(i.a) >> (s32)val4(i.b); }
 	void execute(Instruction::cmp4_t i) {
 		switch (i.cmp) {
-			case Comparison::equals:                  val4(i.d) =      val4(i.a) ==      val4(i.b); break;
-			case Comparison::not_equals:              val4(i.d) =      val4(i.a) !=      val4(i.b); break;
-			case Comparison::signed_less:             val4(i.d) = (s32)val4(i.a) <  (s32)val4(i.b); break;
-			case Comparison::signed_greater:          val4(i.d) = (s32)val4(i.a) >  (s32)val4(i.b); break;
-			case Comparison::signed_less_equals:      val4(i.d) = (s32)val4(i.a) <= (s32)val4(i.b); break;
-			case Comparison::signed_greater_equals:   val4(i.d) = (s32)val4(i.a) >= (s32)val4(i.b); break;
-			case Comparison::unsigned_less:           val4(i.d) = (u32)val4(i.a) <  (u32)val4(i.b); break;
-			case Comparison::unsigned_greater:        val4(i.d) = (u32)val4(i.a) >  (u32)val4(i.b); break;
-			case Comparison::unsigned_less_equals:    val4(i.d) = (u32)val4(i.a) <= (u32)val4(i.b); break;
-			case Comparison::unsigned_greater_equals: val4(i.d) = (u32)val4(i.a) >= (u32)val4(i.b); break;
+			case Comparison::equals:                  val1(i.d) =      val4(i.a) ==      val4(i.b); break;
+			case Comparison::not_equals:              val1(i.d) =      val4(i.a) !=      val4(i.b); break;
+			case Comparison::signed_less:             val1(i.d) = (s32)val4(i.a) <  (s32)val4(i.b); break;
+			case Comparison::signed_greater:          val1(i.d) = (s32)val4(i.a) >  (s32)val4(i.b); break;
+			case Comparison::signed_less_equals:      val1(i.d) = (s32)val4(i.a) <= (s32)val4(i.b); break;
+			case Comparison::signed_greater_equals:   val1(i.d) = (s32)val4(i.a) >= (s32)val4(i.b); break;
+			case Comparison::unsigned_less:           val1(i.d) = (u32)val4(i.a) <  (u32)val4(i.b); break;
+			case Comparison::unsigned_greater:        val1(i.d) = (u32)val4(i.a) >  (u32)val4(i.b); break;
+			case Comparison::unsigned_less_equals:    val1(i.d) = (u32)val4(i.a) <= (u32)val4(i.b); break;
+			case Comparison::unsigned_greater_equals: val1(i.d) = (u32)val4(i.a) >= (u32)val4(i.b); break;
 		}
 	}
 	void execute(Instruction::add8_t i) { val8(i.d) = val8(i.a) + val8(i.b); }
@@ -454,16 +454,16 @@ struct Interpreter {
 	void execute(Instruction::sra8_t i) { val8(i.d) = (s64)val8(i.a) >> (s64)val8(i.b); }
 	void execute(Instruction::cmp8_t i) {
 		switch (i.cmp) {
-			case Comparison::equals:                  val8(i.d) =      val8(i.a) ==      val8(i.b); break;
-			case Comparison::not_equals:              val8(i.d) =      val8(i.a) !=      val8(i.b); break;
-			case Comparison::signed_less:             val8(i.d) = (s64)val8(i.a) <  (s64)val8(i.b); break;
-			case Comparison::signed_greater:          val8(i.d) = (s64)val8(i.a) >  (s64)val8(i.b); break;
-			case Comparison::signed_less_equals:      val8(i.d) = (s64)val8(i.a) <= (s64)val8(i.b); break;
-			case Comparison::signed_greater_equals:   val8(i.d) = (s64)val8(i.a) >= (s64)val8(i.b); break;
-			case Comparison::unsigned_less:           val8(i.d) = (u64)val8(i.a) <  (u64)val8(i.b); break;
-			case Comparison::unsigned_greater:        val8(i.d) = (u64)val8(i.a) >  (u64)val8(i.b); break;
-			case Comparison::unsigned_less_equals:    val8(i.d) = (u64)val8(i.a) <= (u64)val8(i.b); break;
-			case Comparison::unsigned_greater_equals: val8(i.d) = (u64)val8(i.a) >= (u64)val8(i.b); break;
+			case Comparison::equals:                  val1(i.d) =      val8(i.a) ==      val8(i.b); break;
+			case Comparison::not_equals:              val1(i.d) =      val8(i.a) !=      val8(i.b); break;
+			case Comparison::signed_less:             val1(i.d) = (s64)val8(i.a) <  (s64)val8(i.b); break;
+			case Comparison::signed_greater:          val1(i.d) = (s64)val8(i.a) >  (s64)val8(i.b); break;
+			case Comparison::signed_less_equals:      val1(i.d) = (s64)val8(i.a) <= (s64)val8(i.b); break;
+			case Comparison::signed_greater_equals:   val1(i.d) = (s64)val8(i.a) >= (s64)val8(i.b); break;
+			case Comparison::unsigned_less:           val1(i.d) = (u64)val8(i.a) <  (u64)val8(i.b); break;
+			case Comparison::unsigned_greater:        val1(i.d) = (u64)val8(i.a) >  (u64)val8(i.b); break;
+			case Comparison::unsigned_less_equals:    val1(i.d) = (u64)val8(i.a) <= (u64)val8(i.b); break;
+			case Comparison::unsigned_greater_equals: val1(i.d) = (u64)val8(i.a) >= (u64)val8(i.b); break;
 		}
 	}
 	void execute(Instruction::sex21_t i) { val8(i.d) = (s16)(s8)val1(i.a); }
@@ -732,8 +732,8 @@ struct Interpreter {
 		E(add8, .d = Register::stack, .a = Register::stack, .b = 8);
 	}
 	void execute(Instruction::jmp_t i) { current_instruction_index = val8(i.d) - 1; }
-	void execute(Instruction::jz_t  i) { if (val8(i.s) == 0) current_instruction_index = val8(i.d) - 1; }
-	void execute(Instruction::jnz_t i) { if (val8(i.s) != 0) current_instruction_index = val8(i.d) - 1; }
+	void execute(Instruction::jf_t i) { if (val1(i.s) == 0) current_instruction_index = val8(i.d) - 1; }
+	void execute(Instruction::jt_t i) { if (val1(i.s) != 0) current_instruction_index = val8(i.d) - 1; }
 	void execute(Instruction::intrinsic_t i) {
 		switch (i.i) {
 			case Intrinsic::println_S64: {
