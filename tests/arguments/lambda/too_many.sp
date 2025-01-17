@@ -1,10 +1,10 @@
 // COMPILER ERROR
-// COMPILER OUTPUT Argument "b" was already assigned
+// COMPILER OUTPUT Too many arguments. Expected 2, but got 3
 const foo = fn (a: Int, b: Int) => {
     a - b
 }
 
 const main = fn (): None => {
-    var c = foo(b = 10, b = 50)
+    var c = foo(1, 2, 3)
     println(c)
 }
