@@ -1147,6 +1147,7 @@ DEFINE_EXPRESSION(Block) {
 };
 DEFINE_EXPRESSION(Call) {
 	struct Argument {
+		String name = {};
 		Expression *expression = 0;
 		Definition *parameter = 0;
 	};
@@ -1181,6 +1182,8 @@ DEFINE_EXPRESSION(LambdaHead) {
 	LambdaHead() {
 		parameters_block.container = this;
 	}
+	// Definitions in this block must have unique names.
+	// Assume .definition_map[...].count == 1
 	Block parameters_block;
 	Expression *parsed_return_type = 0;
 	Expression *return_type = 0;
@@ -1250,7 +1253,7 @@ DEFINE_EXPRESSION(Unary) {
 };
 DEFINE_EXPRESSION(Struct) {
 	Definition *definition = 0;
-	List<Definition *> members;
+	GList<Definition *> members;
 	s64 size = -1;
 };
 DEFINE_EXPRESSION(ArrayType) {
@@ -3952,6 +3955,57 @@ private:
 		};
 	}
 
+	struct SortArgumentsResult {
+		enum class Kind {
+			success,
+			no_such_name,
+			already_assigned,
+		};
+
+		Kind kind;
+		Call::Argument failed_argument;
+		Call::Argument existing_argument;
+	};
+
+	SortArgumentsResult sort_arguments(GList<Call::Argument> &arguments, GList<Definition *> &parameters) {
+		scoped(temporary_storage_checkpoint);
+		List<Call::Argument, TemporaryAllocator> sorted_arguments;
+		sorted_arguments.resize(parameters.count);
+
+		for (umm i = 0; i < arguments.count; ++i) {
+			auto &argument = arguments[i];
+			if (argument.name.count) {
+				auto parameter_index = find_index_of_if(parameters, [&](Definition *parameter) { return parameter->name == argument.name; });
+				if (parameter_index >= parameters.count) {
+					return {
+						.kind = SortArgumentsResult::Kind::no_such_name,
+						.failed_argument = argument,
+					};
+				}
+
+				auto parameter = parameters[parameter_index];
+				argument.parameter = parameter;
+
+				if (sorted_arguments[parameter_index].expression) {
+					return {
+						.kind = SortArgumentsResult::Kind::already_assigned,
+						.failed_argument = argument,
+						.existing_argument = sorted_arguments[parameter_index],
+					};
+				}
+				sorted_arguments[parameter_index] = argument;
+			} else {
+				auto found_index = find_index_of_if(sorted_arguments, [&](Call::Argument arg) { return arg.expression == 0; });
+				assert(found_index < sorted_arguments.count);
+				argument.parameter = parameters[found_index];
+				sorted_arguments[found_index] = argument;
+			}
+		}
+
+		arguments.set(sorted_arguments);
+		return {SortArgumentsResult::Kind::success};
+	}
+
 	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply = true) {
 
 		auto &arguments = call->arguments;
@@ -3993,6 +4047,23 @@ private:
 			}
 		}
 
+		auto sort_result = sort_arguments(arguments, parameters);
+		switch (sort_result.kind) {
+			case SortArgumentsResult::Kind::no_such_name: {
+				if (lambda->definition) {
+					reporter.error(sort_result.failed_argument.name, "Lambda \"{}\" does not have parameter named {}", lambda->definition->name, sort_result.failed_argument.name);
+				} else {
+					reporter.error(sort_result.failed_argument.name, "Lambda does not have parameter named {}", sort_result.failed_argument.name);
+				}
+				reporter.info(head->location, "Here's the parameter list:");
+				fail();
+			}
+			case SortArgumentsResult::Kind::already_assigned: {
+				reporter.error(sort_result.failed_argument.name, "Argument \"{}\" was already assigned", sort_result.failed_argument.name);
+				reporter.info(sort_result.existing_argument.name, "Here is first assignment:");
+				fail();
+			}
+		}
 
 
 		for (umm i = 0; i < arguments.count; ++i) {
@@ -4046,6 +4117,24 @@ private:
 		if (arguments.count != members.count) {
 			reporter.error(call->location, "Too {} arguments. Expected {}, but got {}.", arguments.count > members.count ? "many"s : "few"s, members.count, arguments.count);
 			fail();
+		}
+		
+		auto sort_result = sort_arguments(arguments, members);
+		switch (sort_result.kind) {
+			case SortArgumentsResult::Kind::no_such_name: {
+				if (Struct->definition) {
+					reporter.error(sort_result.failed_argument.name, "Struct \"{}\" does not have member named {}", Struct->definition->name, sort_result.failed_argument.name);
+				} else {
+					reporter.error(sort_result.failed_argument.name, "Struct does not have member named {}", sort_result.failed_argument.name);
+				}
+				reporter.info(Struct->location, "Here's the struct:");
+				fail();
+			}
+			case SortArgumentsResult::Kind::already_assigned: {
+				reporter.error(sort_result.failed_argument.name, "Member \"{}\" was already assigned", sort_result.failed_argument.name);
+				reporter.info(sort_result.existing_argument.name, "Here is first assignment:");
+				fail();
+			}
 		}
 
 		for (umm i = 0; i < arguments.count; ++i) {
@@ -4693,7 +4782,7 @@ private:
 						//     1. As-is.
 						//     2. By pointer.
 
-						call->arguments.insert_at({binary->left}, 0);
+						call->arguments.insert_at({.expression = binary->left}, 0);
 
 						Reporter as_is_reporter;
 						{

@@ -155,7 +155,7 @@ struct Parser {
 					auto call = Call::create();
 					call->location = {left->location.begin(), right->location.end()};
 					call->callable = name;
-					call->arguments.add({{left}, {right}});
+					call->arguments.add({{.expression = left}, {.expression = right}});
 					left = call;
 					continue;
 				}
@@ -198,8 +198,21 @@ struct Parser {
 					if (token.kind != ')') {
 						while (true) {
 							auto argument = parse_expression();
+							String argument_name = {};
 
-							call->arguments.add({argument});
+							if (auto binary = as<Binary>(argument)) {
+								if (binary->operation == BinaryOperation::ass) {
+									if (auto name = as<Name>(binary->left)) {
+										argument_name = name->name;
+										argument = binary->right;
+									}
+								}
+							}
+							
+							call->arguments.add({
+								.name = argument_name,
+								.expression = argument,
+							});
 
 							skip_lines();
 							if (token.kind == ',') {
@@ -344,6 +357,13 @@ struct Parser {
 							parameter->parsed_type = parsed_type;
 							parameter->is_parameter = true;
 							parameter->mutability = mutability;
+
+							if (auto found = lambda->head.parameters_block.definition_map.find(parameter->name); found && found->value.count) {
+								reporter.error(parameter->location, "Redefinition of parameter '{}'", parameter->name);
+								reporter.info(found->value[0]->location, "First definition here:");
+								yield(YieldResult::fail);
+							}
+
 							lambda->head.parameters_block.add(parameter);
 						}
 
@@ -422,6 +442,19 @@ struct Parser {
 				NOTE_LEAK(lambda, u8"the rest of the lambda is unused.can't just free lambda because head is in it"s);
 		
 				return finish_node(&lambda->head);
+			}
+			case '(': {
+				next();
+				skip_lines();
+
+				auto expression = parse_expression();
+
+				skip_lines();
+
+				expect(')');
+				next();
+
+				return expression;
 			}
 			case '{': {
 				auto block = Block::create();

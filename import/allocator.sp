@@ -15,7 +15,7 @@ const Allocation = struct {
 // Dynamic Allocator
 //
 const Allocator = struct {
-    func: (state: *None, old: Allocation, new: Allocation): Allocation
+    func: fn (state: *None, old: Allocation, new: Allocation): Allocation
     state: *None
 }
 
@@ -42,10 +42,10 @@ const reallocate = fn (allocator: PageAllocator, old: Allocation, new: Allocatio
     var result = old
 
     let first_page = floor(old.data as U64, PAGE_SIZE)
-    let last_page  = floor(old.data as U64 + new.size as U64 - 1, PAGE_SIZE)
+    let last_page  = floor(old.data as U64 + new.size - 1, PAGE_SIZE)
     if first_page != last_page {
         result = allocate(allocator, new)
-        memcpy(result.data, old.data, old.size as U64)
+        memcpy(result.data, old.data, old.size)
         deallocate(allocator, old)
     }
     result
