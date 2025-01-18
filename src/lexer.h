@@ -298,6 +298,14 @@ struct Lexer {
 					return max; 
 				}();
 
+				#if 0
+				
+				if (false) {}
+				#define x(name) else if (token.string == u8###name##s) { token.kind = Token_##name; }
+				ENUMERATE_KEYWORDS(x)
+				#undef x
+
+				#else
 				// NOTE:
 				// This relies on compiler being able to optimize out branches.
 				// Based on string size, check only keywords with that size.
@@ -377,6 +385,7 @@ struct Lexer {
 							case const_string_to_token_kind("while"s): { token.kind = Token_while; break; }
 							case const_string_to_token_kind("break"s): { token.kind = Token_break; break; }
 							case const_string_to_token_kind("match"s): { token.kind = Token_match; break; }
+							case const_string_to_token_kind("defer"s): { token.kind = Token_defer; break; }
 						}
 						break;
 					}
@@ -486,6 +495,7 @@ struct Lexer {
 					#undef x
 					#endif
 				}
+				#endif
 
 				return token;
 			}

@@ -18,37 +18,32 @@
 	} while (0)
 
 ForEachDirective visit(Node **node, auto &&visitor);
-ForEachDirective visit_impl(Block **node, auto &&visitor) {
-	auto block = *node;
+ForEachDirective visit_impl(Block *block, auto &&visitor) {
 	for (auto &child : block->children) {
 		VISIT(&child);
 	}
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Return **node, auto &&visitor) {
-	auto ret = *node;
+ForEachDirective visit_impl(Return *ret, auto &&visitor) {
 	if (ret->value) {
 		VISIT(&ret->value);
 	}
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(IfStatement **node, auto &&visitor) {
-	auto If = *node;
+ForEachDirective visit_impl(IfStatement *If, auto &&visitor) {
 	VISIT(&If->condition);
 	VISIT(&If->true_branch);
 	if (If->false_branch)
 		VISIT(&If->false_branch);
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(IfExpression **node, auto &&visitor) {
-	auto If = *node;
+ForEachDirective visit_impl(IfExpression *If, auto &&visitor) {
 	VISIT(&If->condition);
 	VISIT(&If->true_branch);
 	VISIT(&If->false_branch);
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Definition **node, auto &&visitor) {
-	auto definition = *node;
+ForEachDirective visit_impl(Definition *definition, auto &&visitor) {
 	if (definition->parsed_type) {
 		VISIT(&definition->parsed_type);
 	}
@@ -57,43 +52,37 @@ ForEachDirective visit_impl(Definition **node, auto &&visitor) {
 	}
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Call **node, auto &&visitor) { 
-	auto call = *node;
+ForEachDirective visit_impl(Call *call, auto &&visitor) { 
 	VISIT(&call->callable);
 	for (auto &argument : call->arguments) {
 		VISIT(&argument.expression);
 	}
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Lambda **node, auto &&visitor) {
-	auto lambda = *node;
+ForEachDirective visit_impl(Lambda *lambda, auto &&visitor) {
 	VISIT_STATIC(lambda->head);
 	if (lambda->body) {
 		VISIT(&lambda->body);
 	}
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(LambdaHead **node, auto &&visitor) {
-	auto head = *node;
+ForEachDirective visit_impl(LambdaHead *head, auto &&visitor) {
 	VISIT_STATIC(head->parameters_block);
 	if (head->parsed_return_type) {
 		VISIT(&head->parsed_return_type);
 	}
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Binary **node, auto &&visitor) {
-	auto binary = *node;
+ForEachDirective visit_impl(Binary *binary, auto &&visitor) {
 	VISIT(&binary->left);
 	VISIT(&binary->right);
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Unary **node, auto &&visitor) {
-	auto unary = *node;
+ForEachDirective visit_impl(Unary *unary, auto &&visitor) {
 	VISIT(&unary->expression);
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Match **node, auto &&visitor) {
-	auto match = *node;
+ForEachDirective visit_impl(Match *match, auto &&visitor) {
 	VISIT(&match->expression);
 	for (auto &Case : match->cases) {
 		if (Case.from) {
@@ -103,53 +92,51 @@ ForEachDirective visit_impl(Match **node, auto &&visitor) {
 	}
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(While **node, auto &&visitor) {
-	auto While = *node;
+ForEachDirective visit_impl(While *While, auto &&visitor) {
 	VISIT(&While->condition);
 	VISIT(&While->body);
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Name **node, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(IntegerLiteral **node, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(BooleanLiteral **node, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(NoneLiteral **node, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(StringLiteral  **node, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(BuiltinTypeName **node, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(Continue **node, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(Break **node, auto &&visitor) {
-	auto Break = *node;
+ForEachDirective visit_impl(Name *name, auto &&visitor) { return ForEach_continue; }
+ForEachDirective visit_impl(IntegerLiteral *literal, auto &&visitor) { return ForEach_continue; }
+ForEachDirective visit_impl(BooleanLiteral *literal, auto &&visitor) { return ForEach_continue; }
+ForEachDirective visit_impl(NoneLiteral *literal, auto &&visitor) { return ForEach_continue; }
+ForEachDirective visit_impl(StringLiteral  *literal, auto &&visitor) { return ForEach_continue; }
+ForEachDirective visit_impl(BuiltinTypeName *type_name, auto &&visitor) { return ForEach_continue; }
+ForEachDirective visit_impl(Continue *Continue, auto &&visitor) { return ForEach_continue; }
+ForEachDirective visit_impl(Break *Break, auto &&visitor) {
 	if (Break->value) {
 		VISIT(&Break->value);
 	}
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Struct **node, auto &&visitor) {
-	auto Struct = *node;
+ForEachDirective visit_impl(Struct *Struct, auto &&visitor) {
 	for (auto &member : Struct->members) {
 		VISIT(&member);
 	}
 	return ForEach_continue; 
 }
-ForEachDirective visit_impl(ArrayType **node, auto &&visitor) {
-	auto arr = *node;
+ForEachDirective visit_impl(ArrayType *arr, auto &&visitor) {
 	VISIT(&arr->count_expression);
 	VISIT(&arr->element_type);
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Subscript **node, auto &&visitor) {
-	auto subscript = *node;
+ForEachDirective visit_impl(Subscript *subscript, auto &&visitor) {
 	VISIT(&subscript->subscriptable);
 	VISIT(&subscript->index);
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(ArrayConstructor **node, auto &&visitor) {
-	auto arr = *node;
+ForEachDirective visit_impl(ArrayConstructor *arr, auto &&visitor) {
 	for (auto &element : arr->elements) {
 		VISIT(&element);
 	}
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Import **node, auto &&visitor) {
+ForEachDirective visit_impl(Import *import, auto &&visitor) {
+	return ForEach_continue;
+}
+ForEachDirective visit_impl(Defer *defer_, auto &&visitor) {
+	VISIT(&defer_->body);
 	return ForEach_continue;
 }
 
@@ -188,7 +175,7 @@ ForEachDirective visit(Node **node, auto &&visitor) {
 	}
 
 	switch ((*node)->kind) {
-#define x(name) case NodeKind::name: return visit_impl((name **)node, visitor);
+#define x(name) case NodeKind::name: return visit_impl((name *)*node, visitor);
 		ENUMERATE_NODE_KIND(x)
 #undef x
 		default: invalid_code_path();

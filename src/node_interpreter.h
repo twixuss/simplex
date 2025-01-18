@@ -716,6 +716,7 @@ private:
 		return result;
 	}
 	Value execute_impl(Import *import) { invalid_code_path(); }
+	Value execute_impl(Defer *defer_) { not_implemented(); }
 };
 
 #undef PERFORM_WITH_BREAKS

@@ -795,7 +795,7 @@ struct Parser {
 				}
 
 				reporter.error(token.string, "Unexpected token {} when parsing expression.", token.kind);
-				report_last_parsed_node();
+				// report_last_parsed_node();
 				yield(YieldResult::fail);
 			}
 		}
@@ -1011,6 +1011,17 @@ struct Parser {
 				};
 
 				return finish_node(import);
+			}
+			case Token_defer: {
+				auto defer_ = Defer::create();
+				defer_->location = token.string;
+
+				next();
+				skip_lines();
+
+				defer_->body = parse_statement();
+
+				return defer_;
 			}
 		}
 

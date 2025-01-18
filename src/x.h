@@ -139,6 +139,7 @@ ENUMERATE_KEYWORDS(x)
 	x(none) \
 	x(import) \
 	x(fn) \
+	x(defer) \
 
 /*
 #define x(name, token, precedence)
@@ -259,6 +260,7 @@ ENUMERATE_STATEMENT_KIND(x)
 	x(Continue) \
 	x(Break) \
 	x(Import) \
+	x(Defer) \
 
 /*
 #define x(name)

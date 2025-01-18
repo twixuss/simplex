@@ -1151,6 +1151,8 @@ DEFINE_EXPRESSION(Block) {
 	String tag;
 	List<Break *> breaks;
 
+	GList<Defer *> defers;
+
 	void add(Node *child);
 	void free_impl() {
 		tl::free(children);
@@ -1304,6 +1306,9 @@ DEFINE_STATEMENT(IfStatement) {
 };
 DEFINE_STATEMENT(Import) {
 	String path;
+};
+DEFINE_STATEMENT(Defer) {
+	Node *body = 0;
 };
 
 template <class T>
@@ -2023,6 +2028,16 @@ void print_ast_impl(ArrayConstructor *arr) {
 }
 void print_ast_impl(Import *import) {
 	print("import \"{}\"", EscapedString{import->path});
+}
+void print_ast_impl(Defer *defer_) {
+	print("defer {\n");
+	tabbed {
+		print_tabs();
+		print_ast(defer_->body);
+		println();
+	};
+	print_tabs();
+	print("}");
 }
 void print_ast(Node *node) {
 	switch (node->kind) {
@@ -2764,6 +2779,7 @@ Result<Value, Node *> get_constant_value_impl(ArrayConstructor *node) {
 	return result;
 }
 Result<Value, Node *> get_constant_value_impl(Import *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(Defer *node) { return node; }
 Result<Value, Node *> get_constant_value(Node *node) {
 	scoped_replace(debug_current_location, node->location);
 	switch (node->kind) {
@@ -2917,6 +2933,8 @@ struct Copier {
 
 		if (!to->type)
 			to->type = get_builtin_type(BuiltinType::None);
+
+		COPY_LIST(defers, LOOKUP_COPY);
 	} 
 	void deep_copy_impl(Call *from, Call *to) {
 		DEEP_COPY(callable);
@@ -3050,6 +3068,9 @@ struct Copier {
 	void deep_copy_impl(Import *from, Import *to) {
 		COPY(path);
 	}
+	void deep_copy_impl(Defer *from, Defer *to) {
+		DEEP_COPY(body);
+	}
 
 #undef LOOKUP_COPY
 #undef DEEP_COPY
@@ -3067,141 +3088,160 @@ inline String get_non_block_location(Node *node) {
 	return node->location;
 }
 
+inline bool do_all_paths_return(Node *node);
+inline bool do_all_paths_return_impl(Block *block) {
+	for (auto child : block->children) {
+		if (do_all_paths_return(child)) {
+			return true;
+		}
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(Call *call) {
+	if (do_all_paths_return(call->callable)) {
+		return true;
+	}
+	for (auto argument : call->arguments) {
+		if (do_all_paths_return(argument.expression)) {
+			return true;
+		}
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(Definition *definition) {
+	if (definition->initial_value) {
+		if (do_all_paths_return(definition->initial_value)) {
+			return true;
+		}
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(IntegerLiteral *literal) {
+	return false;
+}
+inline bool do_all_paths_return_impl(BooleanLiteral *literal) {
+	return false;
+}
+inline bool do_all_paths_return_impl(NoneLiteral *literal) {
+	return false;
+}
+inline bool do_all_paths_return_impl(StringLiteral *literal) {
+	return false;
+}
+inline bool do_all_paths_return_impl(Lambda *lambda) {
+	return false;
+}
+inline bool do_all_paths_return_impl(LambdaHead *head) {
+	return false;
+}
+inline bool do_all_paths_return_impl(Name *name) {
+	return false;
+}
+inline bool do_all_paths_return_impl(IfExpression *If) {
+	if (do_all_paths_return(If->condition)) {
+		return true;
+	}
+	if (do_all_paths_return(If->true_branch) && do_all_paths_return(If->false_branch)) {
+		return true;
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(BuiltinTypeName *name) {
+	return false;
+}
+inline bool do_all_paths_return_impl(Binary *bin) {
+	if (do_all_paths_return(bin->left)) {
+		return true;
+	}
+	if (do_all_paths_return(bin->right)) {
+		return true;
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(Match *match) {
+	if (do_all_paths_return(match->expression)) {
+		return true;
+	}
+	for (auto Case : match->cases) {
+		if (do_all_paths_return(Case.to)) {
+			return true;
+		}
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(Unary *un) {
+	if (do_all_paths_return(un->expression)) {
+		return true;
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(Struct *Struct) {
+	return false;
+}
+inline bool do_all_paths_return_impl(ArrayType *arr) {
+	if (do_all_paths_return(arr->count_expression)) {
+		return true;
+	}
+	if (do_all_paths_return(arr->element_type)) {
+		return true;
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(Subscript *sub) {
+	if (do_all_paths_return(sub->subscriptable)) {
+		return true;
+	}
+	if (do_all_paths_return(sub->index)) {
+		return true;
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(ArrayConstructor *arr) {
+	for (auto element : arr->elements) {
+		if (do_all_paths_return(element)) {
+			return true;
+		}
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(IfStatement *If) {
+	if (do_all_paths_return(If->condition)) {
+		return true;
+	}
+	if (!If->false_branch) {
+		return false;
+	}
+	if (do_all_paths_return(If->true_branch) && do_all_paths_return(If->false_branch)) {
+		return true;
+	}
+	return false;
+}
+inline bool do_all_paths_return_impl(Return *node) {
+	return true;
+}
+inline bool do_all_paths_return_impl(While *node) {
+	// TODO: check constant condition
+	return false;
+}
+inline bool do_all_paths_return_impl(Continue *node) {
+	return false;
+}
+inline bool do_all_paths_return_impl(Break *node) {
+	return false;
+}
+inline bool do_all_paths_return_impl(Import *node) {
+	return false;
+}
+inline bool do_all_paths_return_impl(Defer *node) {
+	return false;
+}
 inline bool do_all_paths_return(Node *node) {
 	switch (node->kind) {
-		case NodeKind::Return: return true;
-		case NodeKind::Block: {
-			auto block = (Block *)node;
-			for (auto child : block->children) {
-				if (do_all_paths_return(child)) {
-					return true;
-				}
-			}
-			return false;
-		}
-		case NodeKind::IfStatement: {
-			auto If = (IfStatement *)node;
-			if (do_all_paths_return(If->condition)) {
-				return true;
-			}
-
-			if (!If->false_branch) {
-				return false;
-			}
-
-			if (do_all_paths_return(If->true_branch) && do_all_paths_return(If->false_branch)) {
-				return true;
-			}
-
-			return false;
-		}
-		case NodeKind::IfExpression: {
-			auto If = (IfExpression *)node;
-			if (do_all_paths_return(If->condition)) {
-				return true;
-			}
-
-			if (do_all_paths_return(If->true_branch) && do_all_paths_return(If->false_branch)) {
-				return true;
-			}
-
-			return false;
-		}
-		case NodeKind::Binary: {
-			auto bin = (Binary *)node;
-			if (do_all_paths_return(bin->left)) {
-				return true;
-			}
-			if (do_all_paths_return(bin->right)) {
-				return true;
-			}
-			return false;
-		}
-		case NodeKind::Unary: {
-			auto un = (Unary *)node;
-			if (do_all_paths_return(un->expression)) {
-				return true;
-			}
-			return false;
-		}
-		case NodeKind::Call: {
-			auto call = (Call *)node;
-			if (do_all_paths_return(call->callable)) {
-				return true;
-			}
-			for (auto argument : call->arguments) {
-				if (do_all_paths_return(argument.expression)) {
-					return true;
-				}
-			}
-			return false;
-		}
-		case NodeKind::Definition: {
-			auto definition = (Definition *)node;
-			if (definition->initial_value) {
-				if (do_all_paths_return(definition->initial_value)) {
-					return true;
-				}
-			}
-			return false;
-		}
-		case NodeKind::Match: {
-			auto match = (Match *)node;
-			if (do_all_paths_return(match->expression)) {
-				return true;
-			}
-			for (auto Case : match->cases) {
-				if (do_all_paths_return(Case.to)) {
-					return true;
-				}
-			}
-			return false;
-		}
-		case NodeKind::While: {
-			return false;
-		}
-		case NodeKind::ArrayType:{
-			auto arr = (ArrayType *)node;
-			if (do_all_paths_return(arr->count_expression)) {
-				return true;
-			}
-			if (do_all_paths_return(arr->element_type)) {
-				return true;
-			}
-			return false;
-		}
-		case NodeKind::Subscript:{
-			auto sub = (Subscript *)node;
-			if (do_all_paths_return(sub->subscriptable)) {
-				return true;
-			}
-			if (do_all_paths_return(sub->index)) {
-				return true;
-			}
-			return false;
-		}
-		case NodeKind::ArrayConstructor:{
-			auto arr = (ArrayConstructor *)node;
-			for (auto element : arr->elements) {
-				if (do_all_paths_return(element)) {
-					return true;
-				}
-			}
-			return false;
-		}
-		case NodeKind::BuiltinTypeName:
-		case NodeKind::Break:
-		case NodeKind::Continue:
-		case NodeKind::Name:
-		case NodeKind::IntegerLiteral:
-		case NodeKind::BooleanLiteral:
-		case NodeKind::NoneLiteral:
-		case NodeKind::StringLiteral:
-		case NodeKind::Lambda:
-		case NodeKind::LambdaHead:
-			return false;
+		#define x(name) case NodeKind::name: return do_all_paths_return_impl((name *)node);
+		ENUMERATE_NODE_KIND(x)
+		#undef x
 	}
-	not_implemented("do_all_paths_return not implemented for {}", node->kind);
+	invalid_code_path("invalid node kind {}", node->kind);
 	return false;
 }
 
@@ -5499,6 +5539,11 @@ const {} = fn (a: {}, b: {}) => {{
 	}
 	[[nodiscard]] Import *typecheck_impl(Import *import, bool can_substitute) {
 		return import;
+	}
+	[[nodiscard]] Defer *typecheck_impl(Defer *defer_, bool can_substitute) {
+		typecheck(&defer_->body);
+		current_block->defers.add(defer_);
+		return defer_;
 	}
 
 	u32 debug_thread_id = 0;

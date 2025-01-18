@@ -135,6 +135,7 @@ struct Builder {
 		scoped_replace(locals_size, 0);
 		scoped_replace(max_temporary_size, 0);
 		scoped_replace(max_size_reserved_for_arguments, 0);
+		scoped_replace(current_lambda, lambda);
 		assert(available_registers.count() == (umm)Register::base);
 		jumps_to_ret.clear();
 
@@ -256,6 +257,8 @@ struct Builder {
 	ContiguousHashMap<String, umm> string_literal_offsets;
 
 	Node *current_node = 0;
+	Lambda *current_lambda = 0;
+	Block *current_block = 0;
 
 	void write(List<u8> &data, Value value, Type type) {
 		switch (value.kind) {
@@ -465,6 +468,8 @@ struct Builder {
 	}
 
 	void output_impl(Site destination, Block *block) {
+		scoped_replace(current_block, block);
+
 		auto &info = block_infos.get_or_insert(block);
 		if (block->breaks.count) {
 			info.destination = destination;
@@ -477,18 +482,25 @@ struct Builder {
 			}
 		};
 
-		if (block->children.count) {
-			if (auto expression = as<Expression>(block->children.back())) {
-				for (auto child : block->children.skip(-1)) {
-					output_discard(child);
+		auto output_children = [&] {
+			if (block->children.count) {
+				if (auto expression = as<Expression>(block->children.back())) {
+					for (auto child : block->children.skip(-1)) {
+						output_discard(child);
+					}
+					output(destination, expression);
+					return;
 				}
-				output(destination, expression);
-				return;
 			}
-		}
 
-		for (auto child : block->children) {
-			output_discard(child);
+			for (auto child : block->children) {
+				output_discard(child);
+			}
+		};
+
+		output_children();
+		for (auto defer_ : reversed(block->defers)) {
+			output_discard(defer_->body);
 		}
 	} 
 	void output_impl(Site destination, Call *call) {
@@ -968,12 +980,24 @@ struct Builder {
 			output(element_destination, element);
 			element_destination.offset += element_size;
 		}
-	} 
+	}
 	void output_impl(Return *ret) {
 		if (ret->value) {
 			Site return_value_destination = Address { .base = Register::returns };
 			output(return_value_destination, ret->value);
 		}
+
+		auto block = current_block;
+		while (1) {
+			for (auto defer_ : reversed(block->defers)) {
+				output_discard(defer_->body);
+			}
+			if (block == current_lambda->body) {
+				break;
+			}
+			block = block->parent;
+		}
+
 		jumps_to_ret.add(output_bytecode.instructions.count);
 		I(jmp, 0);
 	} 
@@ -1033,6 +1057,9 @@ struct Builder {
 		}
 	} 
 	void output_impl(Import *import) { invalid_code_path(); } 
+	void output_impl(Defer *defer_) {
+		/* Defers are outputted at end of blocks and at return statements */
+	} 
 
 	void load_address(Site destination, Expression *expression) {
 		scoped_replace(current_node, expression);
