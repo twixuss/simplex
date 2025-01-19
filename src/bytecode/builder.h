@@ -467,6 +467,19 @@ struct Builder {
 		return false;
 	}
 
+	void output_defers_up_until(Node *last_node) {
+		auto block = current_block;
+		while (1) {
+			for (auto defer_ : reversed(block->defers)) {
+				output_discard(defer_->body);
+			}
+			if (block == last_node) {
+				break;
+			}
+			block = block->parent;
+		}
+	}
+
 	void output_impl(Site destination, Block *block) {
 		scoped_replace(current_block, block);
 
@@ -987,16 +1000,7 @@ struct Builder {
 			output(return_value_destination, ret->value);
 		}
 
-		auto block = current_block;
-		while (1) {
-			for (auto defer_ : reversed(block->defers)) {
-				output_discard(defer_->body);
-			}
-			if (block == current_lambda->body) {
-				break;
-			}
-			block = block->parent;
-		}
+		output_defers_up_until(current_lambda->body);
 
 		jumps_to_ret.add(output_bytecode.instructions.count);
 		I(jmp, 0);
@@ -1022,6 +1026,8 @@ struct Builder {
 		}
 	} 
 	void output_impl(Continue *node) {
+		output_defers_up_until(node->loop->body);
+
 		continue_jump_indices.get_or_insert(node->loop).add(output_bytecode.instructions.count);
 		I(jmp, 0);
 	} 
@@ -1029,13 +1035,20 @@ struct Builder {
 		if (node->tag_block) {
 			auto &info = block_infos.find(node->tag_block)->value;
 			output(info.destination, node->value);
+			
+			output_defers_up_until(node->tag_block);
+
 			info.break_jump_indices.add(output_bytecode.instructions.count);
 			I(jmp, 0);
 		} else {
 			assert(node->loop);
+		
+			output_defers_up_until(node->loop->body);
+			
 			loop_break_indices.get_or_insert(node->loop).add(output_bytecode.instructions.count);
 			I(jmp, 0);
 		}
+
 	}
 	void output_impl(IfStatement *If) {
 		umm jf_index;

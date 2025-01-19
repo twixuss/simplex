@@ -1340,11 +1340,29 @@ Type::operator Expr*() {
 }
 #endif
 
+auto switch_(Node *node, auto &&visitor) {
+	switch (node->kind) {
+		#define x(name) case NodeKind::name: return visitor((name *)node);
+		ENUMERATE_NODE_KIND(x)
+		#undef x
+	}
+	invalid_code_path();
+}
+
 void Block::add(Node *child) {
 	children.add(child);
-	if (auto definition = as<Definition>(child)) {
-		definition_list.add(definition);
-		definition_map.get_or_insert(definition->name).add(definition);
+	switch (child->kind) {
+		case NodeKind::Block: {
+			auto block = (Block *)child;
+			block->parent = this;
+			break;
+		}
+		case NodeKind::Definition: {
+			auto definition = (Definition *)child;
+			definition_list.add(definition);
+			definition_map.get_or_insert(definition->name).add(definition);
+			break;
+		}
 	}
 }
 
@@ -2920,6 +2938,8 @@ struct Copier {
 	}
 
 	void deep_copy_impl(Block *from, Block *to) {
+		LOOKUP_COPY(parent);
+
 		for (auto from_child : from->children) {
 			auto to_child = deep_copy(from_child);
 			to->add(to_child);
@@ -3757,16 +3777,15 @@ private:
 		}
 
 		if (auto body_block = as<Block>(copied_lambda->body)) {
-			body_block->tag = format(u8"_{}", body_block->uid);
+			result_block->tag = format(u8"_{}", result_block->uid);
 			visit(body_block, Combine{
 				[&](Node *) {},
 				[&](Return *ret) -> Statement * {
 					if (ret->lambda == copied_lambda) {
 						auto Break = Break::create();
 						Break->value = ret->value;
-						assert(body_block);
-						Break->tag_block = body_block;
-						body_block->breaks.add(Break);
+						Break->tag_block = result_block;
+						result_block->breaks.add(Break);
 						NOTE_LEAK(ret);
 						return Break;
 					}

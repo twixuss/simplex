@@ -1,8 +1,10 @@
-// COMPILER OUTPUT 111\n222\n42
+// COMPILER OUTPUT 111\n222\n66\n42
 
 var bar = fn () => 69
 
 const foo = inline fn (param: S64) => {
+    defer println(66)
+
     {
         println(111);
         println(222);
