@@ -1,5 +1,8 @@
 #define TL_IMPL
 #include "common.h"
+#include "targets\x64\x64.h"
+#include <tl/main.h>
+#include <tl/process.h>
 
 #define ENABLE_STRING_HASH_COUNT 0
 #define ENABLE_NOTE_LEAK 0
@@ -416,49 +419,110 @@ inline umm append(StringBuilder &builder, Token token) {
 #define PASTE_CASE(x) case x:
 #define PASTE_CASE_0(x) case x[0]:
 
+struct SourceLine {
+	String string;
+	u32 number = 0;
+};
+
 struct SourceLocation {
 	String location;
 	String file;
-	u32 line_number = 0;
-	u32 column_number = 0;
+	u32 location_line_number = 0;
+	u32 location_column_number = 0;
+
+	u32 lines_start_number = 0;
 	List<String> lines;
 };
 
 LockProtected<GHashMap<utf8 *, String>, SpinLock> content_start_to_file_name;
 
-SourceLocation get_source_location(String location) {
+struct GetSourceLocationOptions {
+	int lines_before = 0;
+	int lines_after = 0;
+};
+
+SourceLocation get_source_location(String location, GetSourceLocationOptions options = {}) {
 	SourceLocation result;
 	result.location = location;
+	result.location_column_number = 0;
 
-	auto cursor = location.data;
-	result.column_number = 0;
-	while (*cursor != '\n' && *cursor != '\0') {
-		++result.column_number;
-		--cursor;
-	}
+	utf8 *chunk_start = location.begin();
+	utf8 *chunk_end = location.end();
 
 	if (location == u8"\n"s) {
-		result.lines.add({location});
-	} else {
-		String combined_lines;
-		combined_lines.data = cursor + 1;
-		combined_lines.set_end(location.end());
-
-		while (*combined_lines.end() != '\n' && *combined_lines.end() != '\0')
-			++combined_lines.count;
-
-		split_by_one(combined_lines, u8'\n', [&](String line){ result.lines.add({ line }); });
+		// Show preceding line in this case
+		chunk_start--;
+		chunk_end--;
 	}
 
-	assert(result.lines.front().begin() <= location.begin());
-	assert(result.lines.back().end() >= location.end());
+	while (*chunk_start && *chunk_start != '\n') {
+		--chunk_start;
+		++result.location_column_number;
+	}
+	++chunk_start;
+	// Now chunk_start it is at the beggining of first line of `location`
 
-	result.line_number = 1;
+	while (*chunk_end && *chunk_end != '\n') {
+		++chunk_end;
+	}
+	// Now chunk_end it is at the end of last line of `location`
+
+	// chunk_* now points at line(s) with `location`. Extend to desired line count.
+	
+	int missing_lines_before = 0;
+	for (int i = 0; i < options.lines_before; ++i) {
+		--chunk_start;
+		if (*chunk_start == 0) {
+			missing_lines_before = options.lines_before - i;
+			break;
+		}
+		assert(*chunk_start == '\n');
+		--chunk_start;
+		
+		while (*chunk_start && *chunk_start != '\n') {
+			--chunk_start;
+		}
+		++chunk_start;
+	}
+	
+	int missing_lines_after = 0;
+	for (int i = 0; i < options.lines_after; ++i) {
+		if (*chunk_end == 0) {
+			missing_lines_after = options.lines_after - i;
+			break;
+		}
+
+		++chunk_end;
+		while (*chunk_end && *chunk_end != '\n') {
+			++chunk_end;
+		}
+	}
+
+	for (int i = 0; i < missing_lines_before; ++i) {
+		result.lines.add(Span(chunk_start, (umm)0));
+	}
+	split_by_one(Span(chunk_start, chunk_end), u8'\n', [&](String line) {
+		result.lines.add(line);
+	});
+	for (int i = 0; i < missing_lines_after; ++i) {
+		result.lines.add(Span(chunk_end, (umm)0));
+	}
+
+	assert(result.lines.count);
+	assert(result.lines.front().begin() <= location.begin());
+	if (location != u8"\n"s) {
+		assert(result.lines.back().end() >= location.end());
+	}
+
+	result.lines_start_number = 1;
+	utf8 *cursor = chunk_start;
 	while (*cursor != '\0') {
 		if (*cursor == '\n') 
-			++result.line_number;
+			++result.lines_start_number;
 		--cursor;
 	}
+
+	result.location_line_number = result.lines_start_number + options.lines_before;
 
 	auto found_file_name = locked_use(content_start_to_file_name) { return content_start_to_file_name.find(cursor + 1); };
 	assert(found_file_name);
@@ -468,7 +532,7 @@ SourceLocation get_source_location(String location) {
 }
 
 inline umm append(StringBuilder &builder, SourceLocation location) {
-	return append_format(builder, "{}:{}:{}", location.file, location.line_number, location.column_number);
+	return append_format(builder, "{}:{}:{}", location.file, location.location_line_number, location.location_column_number);
 }
 
 void print_replacing_tabs_with_spaces(String string) {
@@ -479,6 +543,20 @@ void print_replacing_tabs_with_spaces(String string) {
 				print(' ');
 		else 
 			print(c);
+	}
+}
+void print_with_length_of(char r, umm count) {
+	for (umm i = 0; i < count; ++i) {
+		print(r);
+	}
+}
+void print_with_length_of(char r, String string) {
+	for (auto c : string) {
+		if (c == '\t')
+			for (umm i = 0; i < 4;++i) 
+				tl::print(r);
+		else 
+			print(r);
 	}
 }
 
@@ -496,39 +574,60 @@ void print_report_indentation(int indentation) {
 }
 
 void print_source_chunk(SourceLocation source_location, int indentation, ConsoleColor highlight_color) {
-	auto max_line_number = source_location.line_number + source_location.lines.count - 1;
-	auto line_number_width = log10(max_line_number);
+	auto log10_ceil = [](int x) {
+		if (x < 1) return 0;
+		if (x < 10) return 1;
+		if (x < 100) return 2;
+		if (x < 1000) return 3;
+		if (x < 10000) return 4;
+		if (x < 100000) return 5;
+		if (x < 1000000) return 6;
+		return 7;
+	};
+
+	auto max_line_number = source_location.lines_start_number + source_location.lines.count - 1;
+	auto line_number_width = log10_ceil(max_line_number);
 	auto line_number_alignment = align_right(line_number_width, ' ');
 
 	auto output_line = [&](u32 line_number, String line, String highlight) {
-		auto prefix = format(u8" {} | {}", Format(line_number, line_number_alignment), String(line.begin(), highlight.begin()));
-		auto postfix = String(highlight.end(), line.end());
-
 		print_report_indentation(indentation);
-		print_replacing_tabs_with_spaces(prefix);
-		with(highlight_color, print_replacing_tabs_with_spaces(highlight));
-		print_replacing_tabs_with_spaces(postfix);
-		println();
-		if (!is_stdout_console()) {
-			for (auto c : prefix)    for (umm i = 0; i < (c=='\t'?4:1);++i) tl::print(' ');
-			for (auto c : highlight) for (umm i = 0; i < (c=='\t'?4:1);++i) tl::print('~');
-			for (auto c : postfix)   for (umm i = 0; i < (c=='\t'?4:1);++i) tl::print(' ');
+		umm chars_pre_source = print(u8" {} | ", Format(line_number, line_number_alignment));
+
+		highlight.set_begin(clamp(highlight.begin(), line.begin(), line.end()));
+		highlight.set_end(clamp(highlight.end(), line.begin(), line.end()));
+		if (highlight.count) {
+			auto prefix = String(line.begin(), highlight.begin());
+			auto postfix = String(highlight.end(), line.end());
+
+			print_replacing_tabs_with_spaces(prefix);
+			with(highlight_color, print_replacing_tabs_with_spaces(highlight));
+			print_replacing_tabs_with_spaces(postfix);
 			println();
+			if (!is_stdout_console()) {
+				withs(highlight_color) {
+					print_with_length_of(' ', chars_pre_source);
+					print_with_length_of(' ', prefix);
+					print_with_length_of('~', highlight);
+					print_with_length_of(' ', postfix);
+					println();
+				};
+			}
+		} else {
+			print_replacing_tabs_with_spaces(line);
+			println();
+			if (source_location.location == u8"\n"s) {
+				withs(highlight_color) {
+					print_with_length_of(' ', chars_pre_source);
+					print_with_length_of(' ', line);
+					println('~');
+				};
+			}
 		}
+
 	};
 
-	if (source_location.lines.count == 1) {
-		output_line(source_location.line_number, source_location.lines[0], source_location.location);
-	} else {
-		assert(source_location.lines.count > 1);
-
-		output_line(source_location.line_number, source_location.lines[0], String{source_location.location.begin(), source_location.lines[0].end()});
-
-		for (umm i = 1; i < source_location.lines.count - 1; ++i) {
-			output_line(source_location.line_number + i, source_location.lines[i], source_location.lines[i]);
-		}
-				
-		output_line(source_location.line_number + source_location.lines.count - 1, source_location.lines.back(), String{source_location.lines.back().begin(), source_location.location.end()});
+	for (int i = 0; i < source_location.lines.count; ++i) {
+		output_line(source_location.lines_start_number + i, source_location.lines[i], source_location.location);
 	}
 }
 
@@ -644,20 +743,6 @@ void assertion_failure_impl(char const *cause_string, char const *expression, ch
 	immediate_reporter.error(debug_current_location, "COMPILER ERROR: {} {} at {}:{} in function {}", cause_string, expression, file, line, function);
 	if (message.count)
 		println("Message: {}", message);
-}
-
-void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function) {
-	assertion_failure_impl(cause_string, expression, file, line, function, {}, {});
-}
-
-template <class ...Args>
-void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, char const *format, Args ...args) {
-	assertion_failure_impl(cause_string, expression, file, line, function, location, tformat(format, args...));
-}
-
-template <class ...Args>
-void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, char const *format, Args ...args) {
-	assertion_failure_impl(cause_string, expression, file, line, function, {}, tformat(format, args...));
 }
 
 void print_crash_info() {
@@ -1283,6 +1368,7 @@ DEFINE_EXPRESSION(Subscript) {
 DEFINE_EXPRESSION(ArrayConstructor) {
 	List<Expression *> elements;
 };
+DEFINE_EXPRESSION(ZeroInitialized) {}; // Might get rid of this if `none as type` becomes real
 DEFINE_STATEMENT(Return) {
 	Expression *value = 0;
 	Lambda *lambda = 0;
@@ -1697,25 +1783,12 @@ u64 get_size(BuiltinType type_kind) {
 }
 
 u64 get_size(Type type);
-u64 get_size_impl(Block *node) { invalid_code_path("get_size({}) is invalid", "Block"); }
-u64 get_size_impl(Call *node) { invalid_code_path("get_size({}) is invalid", "Call"); }
-u64 get_size_impl(Definition *node) { invalid_code_path("get_size({}) is invalid", "Definition"); }
-u64 get_size_impl(IntegerLiteral *node) { invalid_code_path("get_size({}) is invalid", "IntegerLiteral"); }
-u64 get_size_impl(BooleanLiteral *node) { invalid_code_path("get_size({}) is invalid", "BooleanLiteral"); }
-u64 get_size_impl(NoneLiteral *node) { invalid_code_path("get_size({}) is invalid", "NoneLiteral"); }
-u64 get_size_impl(StringLiteral *node) { invalid_code_path("get_size({}) is invalid", "StringLiteral"); }
-u64 get_size_impl(Lambda *node) { invalid_code_path("get_size({}) is invalid", "Lambda"); }
 u64 get_size_impl(LambdaHead *node) {
 	return 8;
 }
-u64 get_size_impl(Name *node) { invalid_code_path("get_size({}) is invalid", "Name"); }
-u64 get_size_impl(IfStatement *node) { invalid_code_path("get_size({}) is invalid", "IfStatement"); }
-u64 get_size_impl(IfExpression *node) { invalid_code_path("get_size({}) is invalid", "IfExpression"); }
 u64 get_size_impl(BuiltinTypeName *node) {
 	return get_size(node->type_kind);
 }
-u64 get_size_impl(Binary *node) { invalid_code_path("get_size({}) is invalid", "Binary"); }
-u64 get_size_impl(Match *node) { invalid_code_path("get_size({}) is invalid", "Match"); }
 u64 get_size_impl(Unary *node) {
 	if (node->operation == UnaryOperation::pointer)
 		return 8;
@@ -1728,17 +1801,15 @@ u64 get_size_impl(Struct *Struct) {
 u64 get_size_impl(ArrayType *arr) {
 	return get_size(arr->element_type) * arr->count.value();
 }
-u64 get_size_impl(Subscript *node) { invalid_code_path("get_size({}) is invalid", "Subscript"); }
-u64 get_size_impl(ArrayConstructor *node) { invalid_code_path("get_size({}) is invalid", "ArrayConstructor"); }
 
 u64 get_size(Type type) {
 	type = direct(type);
 	switch (type->kind) {
 #define x(name) case NodeKind::name: return get_size_impl((name *)type);
-		ENUMERATE_EXPRESSION_KIND(x)
+		ENUMERATE_TYPE_EXPRESSION_KIND(x)
 #undef x
 	}
-	invalid_code_path("invalid type->kind {}", type->kind);
+	invalid_code_path("get_size({}) is invalid", type->kind);
 }
 
 enum class Sign : u8 {
@@ -2057,6 +2128,11 @@ void print_ast_impl(Defer *defer_) {
 	print_tabs();
 	print("}");
 }
+void print_ast_impl(ZeroInitialized *zi) {
+	print("{none as ");
+	print_ast(zi->type);
+	print("}");
+}
 void print_ast(Node *node) {
 	switch (node->kind) {
 #define x(name) case NodeKind::name: return print_ast_impl((name *)node);
@@ -2363,6 +2439,33 @@ Unary *as_pointer(Type type) {
 	return 0;
 }
 
+
+Value zero_of_type(Type type) {
+	Value result = {};
+	auto direct_type = direct(type);
+	if (auto struct_ = as<Struct>(direct_type)) {
+		for (int i = 0; i < struct_->members.count; ++i) {
+			result.elements.add(zero_of_type(struct_->members[i]->type));
+		}
+	} 
+	else if (types_match(direct_type, BuiltinType::Bool)) { result = Value(false); }
+	else if (types_match(direct_type, BuiltinType::U8)) { result = Value((u8)0); }
+	else if (types_match(direct_type, BuiltinType::U16)) { result = Value((u16)0); }
+	else if (types_match(direct_type, BuiltinType::U32)) { result = Value((u32)0); }
+	else if (types_match(direct_type, BuiltinType::U64)) { result = Value((u64)0); }
+	else if (types_match(direct_type, BuiltinType::S8)) { result = Value((s8)0); }
+	else if (types_match(direct_type, BuiltinType::S16)) { result = Value((s16)0); }
+	else if (types_match(direct_type, BuiltinType::S32)) { result = Value((s32)0); }
+	else if (types_match(direct_type, BuiltinType::S64)) { result = Value((s64)0); }
+	else if (types_match(direct_type, BuiltinType::String)) { result = Value(String{}); }
+	else if (types_match(direct_type, BuiltinType::UnsizedInteger)) { result = Value(unsized_integer_tag, 0); }
+	else if (auto pointer = as_pointer(direct_type)) { result = Value((Value *)0); }
+	else {
+		invalid_code_path("zero_of_type({}) is invalid", direct_type);
+	}
+	return result;
+}
+
 #include "node_interpreter.h"
 
 std::pair<Lambda *, LambdaHead *> get_lambda_and_head(Expression *expression) {
@@ -2386,42 +2489,9 @@ std::tuple<Lambda *, LambdaHead *, Struct *> get_lambda_and_head_or_struct(Expre
 	if (lambda) {
 		head = &lambda->head;
 	} else {
-		if (auto definition = as<Definition>(directed)) {
-			head = direct_as<LambdaHead>(definition->type);
-		}
+		head = direct_as<LambdaHead>(expression->type);
 	}
 	return {lambda, head, struct_};
-}
-
-#define PASSTHROUGH(...) __VA_ARGS__
-
-#define ENUMERATE_COMPARISONS \
-	x(equals) \
-	x(not_equals) \
-	x(signed_less) \
-	x(signed_greater) \
-	x(signed_less_equals) \
-	x(signed_greater_equals) \
-	x(unsigned_less) \
-	x(unsigned_greater) \
-	x(unsigned_less_equals) \
-	x(unsigned_greater_equals) \
-
-enum class Comparison : u8 {
-#define x(name) name,
-	ENUMERATE_COMPARISONS
-#undef x
-};
-
-inline umm append(StringBuilder &builder, Comparison c) {
-	switch (c) {
-		#define x(name) case Comparison::name: return append(builder, #name);
-		#define y(name, value) x(name)
-		ENUMERATE_COMPARISONS
-		#undef y
-		#undef x
-	}
-	return append_format(builder, "(unknown Comparison {})", (u64)c);
 }
 
 #include "bytecode/builder.h"
@@ -2429,117 +2499,61 @@ inline umm append(StringBuilder &builder, Comparison c) {
 
 namespace Bytecode {
 
-u64 ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *lambda) {
-	return Interpreter::current_interpreter->ffi_callback(arg0, arg1, arg2, arg3, lambda);
-}
+Callback generate_callback(Lambda *lambda) {
+	// arg0 - rcx
+	// arg1 - rdx
+	// arg2 - r8
+	// arg3 - r9
+	assert(lambda->head.parameters_block.definition_list.count == 4, "Other count of arguments not implemented");
+	List<u8> bytes;
+	
+	constexpr u8 stack_size = 40;
+	// sub rsp, 40 // 8 bytes for lambda, 32 bytes for shadow space -----, 8 dummy bytes to keep stack aligned
+	bytes.add({0x48, 0x83, 0xec, stack_size});
 
-inline umm append(StringBuilder &builder, Register r) {
-	switch (r) {
-#define x(name, value) case Register::name: return append(builder, #name);
-		ENUMERATE_NAMED_BYTECODE_REGISTERS
-#undef x
+	// mov r10, lambda
+	bytes.add({0x49, 0xba});
+	bytes.add(value_as_bytes(lambda));
+
+	// mov r11, ffi_callback
+	bytes.add({0x49, 0xbb});
+	bytes.add(value_as_bytes(&ffi_callback));
+	
+	// mov qword ptr[rsp+32], r10
+	bytes.add({0x4c, 0x89, 0x54, 0x24, 32});
+
+	// call r11
+	bytes.add({0x41, 0xff, 0xd3});
+	
+	// add rsp, 40
+	bytes.add({0x48, 0x83, 0xc4, stack_size});
+
+	// ret
+	bytes.add({0xc3});
+
+
+	#if OS_WINDOWS
+	void *page = VirtualAlloc(0, bytes.count, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+	#elif OS_LINUX
+	void *page = mmap(NULL, bytes.count, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	#endif
+
+	memcpy(page, bytes.data, bytes.count);
+	memset((char *)page + bytes.count, 0xcc, ceil(bytes.count, (umm)4096) - bytes.count);
+
+	#if OS_WINDOWS
+	DWORD old_protect;
+	if (!VirtualProtect(page, bytes.count, PAGE_EXECUTE_READ, &old_protect)) {
+		immediate_reporter.error(lambda->location, "FATAL: VirtualProtect failed: {}", win32_error());
+		exit(-1);
 	}
-	return append_format(builder, "r{}", (u64)r);
-}
+	#elif OS_LINUX
+    if (mprotect(page, bytes.count, PROT_READ | PROT_EXEC) == -1) {
+		immediate_reporter.error(lambda->location, "FATAL: mprotect failed: {}", strerror(errno));
+    }
+	#endif
 
-inline umm append(StringBuilder &builder, Address a) {
-	umm result = 0;
-	result += append(builder, '[');
-	if (a.base)
-		if (a.element_size)
-			if (a.offset)
-				result += append_format(builder, "{}+{}*{}{}{}", a.base.value(), a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
-			else
-				result += append_format(builder, "{}+{}*{}", a.base.value(), a.element_index, a.element_size);
-		else
-			if (a.offset)
-				result += append_format(builder, "{}{}{}", a.base.value(), a.offset < 0 ? "-" : "+", abs(a.offset));
-			else
-				result += append_format(builder, "{}", a.base.value());
-	else
-		if (a.element_size)
-			if (a.offset)
-				result += append_format(builder, "{}*{}{}{}", a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
-			else
-				result += append_format(builder, "{}*{}", a.element_index, a.element_size);
-		else
-			if (a.offset)
-				result += append_format(builder, "{}{}", a.offset < 0 ? "-" : "", abs(a.offset));
-			else
-				result += append_format(builder, "0");
-
-	result += append(builder, ']');
-	return result;
-}
-
-inline umm append(StringBuilder &builder, Site s) {
-	if (s.is_register())
-		return append(builder, s.get_register());
-	else
-		return append(builder, s.get_address());
-}
-
-inline umm append(StringBuilder &builder, InputValue v) {
-	if (v.is_register())
-		return append(builder, v.get_register());
-	else if (v.is_address())
-		return append(builder, v.get_address());
-	else
-		return append(builder, v.get_constant());
-}
-
-inline umm append(StringBuilder &builder, InstructionKind i) {
-	switch (i) {
-#define x(name, fields) case InstructionKind::name: return append(builder, #name);
-		ENUMERATE_BYTECODE_INSTRUCTION_KIND
-#undef x
-	}
-	return append_format(builder, "(unknown InstructionKind {})", (u64)i);
-}
-
-#define y(type, name) \
-	if (need_comma) { result += print(", "); } \
-	need_comma = true; \
-	result += print(i.name); \
-
-#define x(name, fields) \
-inline umm print_instruction(Instruction::name##_t i) { \
-	umm result = 0; \
-	result += print(InstructionKind::name); \
-	result += print(' '); \
-	bool need_comma = false; \
-	PASSTHROUGH fields; \
-	return result; \
-}
-ENUMERATE_BYTECODE_INSTRUCTION_KIND
-#undef x
-#undef y
-
-inline umm print_instruction(Instruction i) {
-	switch (i.kind) {
-#define x(name, fields) case InstructionKind::name: return print_instruction(i.v_##name);
-		ENUMERATE_BYTECODE_INSTRUCTION_KIND
-#undef x
-	}
-	return print("(unknown InstructionKind {})", (u64)i.kind);
-}
-
-inline void print_instruction(umm index, Instruction instruction) {
-	umm c = 0;
-	c += print("{}: ", index);
-	c += print_instruction(instruction);
-	while (c <= 32) {
-		print(' ');
-		c++;
-	}
-	with(ConsoleColor::gray, println("{}:{}", instruction.file, instruction.line));
-}
-
-void print_instructions(Span<Instruction> instructions) {
-	for (auto [index, instruction] : enumerate(instructions)) {
-		print_instruction(index, instruction);
-	}
-	println();
+	return {page};
 }
 
 }
@@ -2642,6 +2656,7 @@ CheckResult is_constant_impl(ArrayConstructor *node) {
 	}
 	return true;
 }
+CheckResult is_constant_impl(ZeroInitialized *) { return true; }
 CheckResult is_constant(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
@@ -2715,6 +2730,7 @@ CheckResult is_mutable_impl(Struct *Struct) { return {false, Struct}; }
 CheckResult is_mutable_impl(ArrayType *Array) { return {false, Array}; }
 CheckResult is_mutable_impl(Subscript *Subscript) { return is_mutable(Subscript->subscriptable); }
 CheckResult is_mutable_impl(ArrayConstructor *Array) { return {false, Array}; }
+CheckResult is_mutable_impl(ZeroInitialized *zi) { return {false, zi}; }
 CheckResult is_mutable(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {
@@ -2738,6 +2754,7 @@ Result<Value, Node *> get_constant_value_impl(Call *call) {
 		case CallKind::constructor: {
 			Value result;
 			result.kind = ValueKind::struct_;
+			result.elements = {};
 			for (auto argument : call->arguments) {
 				auto argument_value = get_constant_value(argument.expression);
 				if (argument_value.is_error()) {
@@ -2798,6 +2815,7 @@ Result<Value, Node *> get_constant_value_impl(ArrayConstructor *node) {
 }
 Result<Value, Node *> get_constant_value_impl(Import *node) { return node; }
 Result<Value, Node *> get_constant_value_impl(Defer *node) { return node; }
+Result<Value, Node *> get_constant_value_impl(ZeroInitialized *zi) { return zero_of_type(zi->type); }
 Result<Value, Node *> get_constant_value(Node *node) {
 	scoped_replace(debug_current_location, node->location);
 	switch (node->kind) {
@@ -3091,6 +3109,9 @@ struct Copier {
 	void deep_copy_impl(Defer *from, Defer *to) {
 		DEEP_COPY(body);
 	}
+	void deep_copy_impl(ZeroInitialized *from, ZeroInitialized *to) {
+		LOOKUP_COPY(type);
+	}
 
 #undef LOOKUP_COPY
 #undef DEEP_COPY
@@ -3136,27 +3157,13 @@ inline bool do_all_paths_return_impl(Definition *definition) {
 	}
 	return false;
 }
-inline bool do_all_paths_return_impl(IntegerLiteral *literal) {
-	return false;
-}
-inline bool do_all_paths_return_impl(BooleanLiteral *literal) {
-	return false;
-}
-inline bool do_all_paths_return_impl(NoneLiteral *literal) {
-	return false;
-}
-inline bool do_all_paths_return_impl(StringLiteral *literal) {
-	return false;
-}
-inline bool do_all_paths_return_impl(Lambda *lambda) {
-	return false;
-}
-inline bool do_all_paths_return_impl(LambdaHead *head) {
-	return false;
-}
-inline bool do_all_paths_return_impl(Name *name) {
-	return false;
-}
+inline bool do_all_paths_return_impl(IntegerLiteral *literal) { return false; }
+inline bool do_all_paths_return_impl(BooleanLiteral *literal) { return false; }
+inline bool do_all_paths_return_impl(NoneLiteral *literal) { return false; }
+inline bool do_all_paths_return_impl(StringLiteral *literal) { return false; }
+inline bool do_all_paths_return_impl(Lambda *lambda) { return false; }
+inline bool do_all_paths_return_impl(LambdaHead *head) { return false; }
+inline bool do_all_paths_return_impl(Name *name) { return false; }
 inline bool do_all_paths_return_impl(IfExpression *If) {
 	if (do_all_paths_return(If->condition)) {
 		return true;
@@ -3166,9 +3173,7 @@ inline bool do_all_paths_return_impl(IfExpression *If) {
 	}
 	return false;
 }
-inline bool do_all_paths_return_impl(BuiltinTypeName *name) {
-	return false;
-}
+inline bool do_all_paths_return_impl(BuiltinTypeName *name) { return false; }
 inline bool do_all_paths_return_impl(Binary *bin) {
 	if (do_all_paths_return(bin->left)) {
 		return true;
@@ -3195,9 +3200,7 @@ inline bool do_all_paths_return_impl(Unary *un) {
 	}
 	return false;
 }
-inline bool do_all_paths_return_impl(Struct *Struct) {
-	return false;
-}
+inline bool do_all_paths_return_impl(Struct *Struct) { return false; }
 inline bool do_all_paths_return_impl(ArrayType *arr) {
 	if (do_all_paths_return(arr->count_expression)) {
 		return true;
@@ -3243,18 +3246,11 @@ inline bool do_all_paths_return_impl(While *node) {
 	// TODO: check constant condition
 	return false;
 }
-inline bool do_all_paths_return_impl(Continue *node) {
-	return false;
-}
-inline bool do_all_paths_return_impl(Break *node) {
-	return false;
-}
-inline bool do_all_paths_return_impl(Import *node) {
-	return false;
-}
-inline bool do_all_paths_return_impl(Defer *node) {
-	return false;
-}
+inline bool do_all_paths_return_impl(Continue *node) { return false; }
+inline bool do_all_paths_return_impl(Break *node) { return false; }
+inline bool do_all_paths_return_impl(Import *node) { return false; }
+inline bool do_all_paths_return_impl(Defer *node) { return false; }
+inline bool do_all_paths_return_impl(ZeroInitialized *zi) { return false; }
 inline bool do_all_paths_return(Node *node) {
 	switch (node->kind) {
 		#define x(name) case NodeKind::name: return do_all_paths_return_impl((name *)node);
@@ -3857,7 +3853,7 @@ private:
 					lambda_name = format(u8"__v_{}_{}"s, original_lambda->definition->name, vector_size);
 				} else {
 					auto location = get_source_location(original_lambda->location);
-					lambda_name = format(u8"__v_{}_{}_{}_{}"s, Nameable(location.file), location.line_number, original_lambda->uid, vector_size);
+					lambda_name = format(u8"__v_{}_{}_{}_{}"s, Nameable(location.file), location.location_line_number, original_lambda->uid, vector_size);
 				}
 
 				StringBuilder source_builder;
@@ -4027,7 +4023,11 @@ private:
 		};
 	}
 
-	void sort_arguments(GList<Call::Argument> &arguments, GList<Definition *> &parameters, String call_location, Node *lambda_head_or_struct, Definition *lambda_or_struct_definition) {
+	struct SortArgumentOptions {
+		bool allow_missing = false;
+	};
+
+	void sort_arguments(GList<Call::Argument> &arguments, GList<Definition *> &parameters, String call_location, Node *lambda_head_or_struct, Definition *lambda_or_struct_definition, SortArgumentOptions options = {}) {
 		scoped(temporary_storage_checkpoint);
 		List<Call::Argument, TemporaryAllocator> sorted_arguments;
 		sorted_arguments.resize(parameters.count);
@@ -4081,13 +4081,15 @@ private:
 			}
 		}
 
-		for (umm i = 0; i < sorted_arguments.count; ++i) {
-			auto &argument = sorted_arguments[i];
-			auto &parameter = parameters[i];
-			if (!argument.expression) {
-				reporter.error(call_location, "Too few arguments. Value for {} was not provided.", parameter->name);
-				reporter.info(lambda_head_or_struct->location, "Here's the {} list:", definition_element_name);
-				fail();
+		if (!options.allow_missing) {
+			for (umm i = 0; i < sorted_arguments.count; ++i) {
+				auto &argument = sorted_arguments[i];
+				auto &parameter = parameters[i];
+				if (!argument.expression) {
+					reporter.error(call_location, "Too few arguments. Value for {} was not provided.", parameter->name);
+					reporter.info(lambda_head_or_struct->location, "Here's the {} list:", definition_element_name);
+					fail();
+				}
 			}
 		}
 
@@ -4180,7 +4182,7 @@ private:
 		auto &arguments = call->arguments;
 		auto &members = Struct->members;
 
-		sort_arguments(arguments, members, call->location, Struct, Struct->definition);
+		sort_arguments(arguments, members, call->location, Struct, Struct->definition, {.allow_missing = true});
 
 		for (umm i = 0; i < arguments.count; ++i) {
 			auto &argument = arguments[i];
@@ -4188,8 +4190,14 @@ private:
 
 			argument.parameter = member;
 
-			if (!implicitly_cast(&argument.expression, member->type, true)) {
-				fail();
+			if (argument.expression) {
+				if (!implicitly_cast(&argument.expression, member->type, true)) {
+					fail();
+				}
+			} else {
+				argument.expression = ZeroInitialized::create();
+				argument.expression->type = member->type;
+				argument.expression->location = call->location;
 			}
 		}
 
@@ -4422,23 +4430,6 @@ private:
 					}
 				}
 
-				auto constant_check = is_constant(definition->initial_value);
-				if (!constant_check) {
-					reporter.error(definition->location, "Initial value is not constant.");
-					assert(constant_check.failed_node);
-					reporter.info(constant_check.failed_node->location, "Because this is not constant.");
-					fail();
-				}
-
-				// NOTE:
-				// Maybe this should not be an error, I just don't wanna deal with it rigt now.
-				if (types_match(definition->initial_value->type, BuiltinType::None)) {
-					reporter.error(definition->location, "Definitions with type None can't exist.");
-					fail();
-				}
-
-				definition->constant_value = execute(definition->initial_value);
-
 				// 
 				//if (auto builtin_type = direct_as<BuiltinTypeName>(definition->type)) {
 				//	switch (builtin_type->type_kind) {
@@ -4453,7 +4444,29 @@ private:
 				} else {
 					make_concrete(definition->initial_value);
 				}
+			}
+			
+			if (current_block == &global_block || definition->mutability == Mutability::constant) {
+				auto constant_check = is_constant(definition->initial_value);
+				if (!constant_check) {
+					if (definition->mutability == Mutability::constant) {
+						reporter.error(definition->location, "Initial value is not constant.");
+					} else {
+						reporter.error(definition->location, "Initial value of global variables must be constant.");
+					}
+					assert(constant_check.failed_node);
+					reporter.info(constant_check.failed_node->location, "Because this is not constant.");
+					fail();
+				}
 
+				// NOTE:
+				// Maybe this should not be an error, I just don't wanna deal with it rigt now.
+				if (types_match(definition->initial_value->type, BuiltinType::None)) {
+					reporter.error(definition->location, "Definitions with type None can't exist.");
+					fail();
+				}
+
+				definition->constant_value = execute(definition->initial_value);
 			}
 		} else {
 			if (definition->is_parameter) {
@@ -4800,74 +4813,79 @@ private:
 					if (with_unwind_strategy([&] { return typecheck_binary_dot(binary, reporter2); })) {
 						goto typecheck_dot_succeeded;
 					} else {
-						Definition *lambda_definition = 0;
-						for (auto block = current_block; block; block = block->parent) {
-							if (auto found_definitions = block->definition_map.find(lambda_name->name)) {
-								auto [name, definitions] = *found_definitions;
-								assert(definitions.count != 0);
-								if (definitions.count > 1) {
-									reporter.error(binary->right->location, "Function overloading not implemented yet.");
-									fail();
+						constexpr bool old_dotcall = true;
+
+						if constexpr (old_dotcall) {
+							//Definition *lambda_definition = 0;
+							//for (auto block = current_block; block; block = block->parent) {
+							//	if (auto found_definitions = block->definition_map.find(lambda_name->name)) {
+							//		auto [name, definitions] = *found_definitions;
+							//		assert(definitions.count != 0);
+							//		if (definitions.count > 1) {
+							//			reporter.error(binary->right->location, "Function overloading for dot calls is not implemented yet.");
+							//			fail();
+							//		}
+							//		lambda_definition = definitions[0];
+							//		break;
+							//	}
+							//}
+							//
+							//auto lambda = lambda_definition->initial_value ? as<Lambda>(lambda_definition->initial_value) : 0;
+							//if (!lambda) {
+							//	reporter.error(binary->right->location, "This is not a lambda.");
+							//	fail();
+							//}
+
+
+							call->callable = binary->right;
+						
+							// Attempt passing `this` as follows (return on first successful attempt):
+							//     1. As-is.
+							//     2. By pointer.
+
+							call->arguments.insert_at({.expression = binary->left}, 0);
+
+							Reporter as_is_reporter;
+							{
+								scoped_exchange(reporter, as_is_reporter);
+								auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
+								if (result) {
+									as_is_reporter.reports.add(reporter.reports);
+									return result;
 								}
-								lambda_definition = definitions[0];
-								break;
 							}
-						}
+						
+							Reporter by_pointer_reporter;
+							{
+								scoped_exchange(reporter, by_pointer_reporter);
 
-						auto lambda = lambda_definition->initial_value ? as<Lambda>(lambda_definition->initial_value) : 0;
-						if (!lambda) {
-							reporter.error(binary->right->location, "This is not a lambda.");
+								auto first_argument_address = Unary::create();
+								first_argument_address->location = binary->left->location;
+								first_argument_address->expression = binary->left;
+								first_argument_address->operation = UnaryOperation::addr;
+								call->arguments[0].expression = first_argument_address;
+
+								auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
+								if (result) {
+									by_pointer_reporter.reports.add(reporter.reports);
+									return result;
+								}
+							}
+
+							reporter.error(call->location, "Unable to pass `this` argument. Here are attempt results:");
+							reporter.info("Attempt to pass `this` as-is:");
+							for (auto &r : as_is_reporter.reports) {
+								++r.indentation;
+							}
+							reporter.reports.add(as_is_reporter.reports);
+							reporter.info("Attempt to pass `this` by pointer:");
+							for (auto &r : by_pointer_reporter.reports) {
+								++r.indentation;
+							}
+							reporter.reports.add(by_pointer_reporter.reports);
 							fail();
+						} else {
 						}
-
-
-						call->callable = binary->right;
-						
-						// Attempt passing `this` as follows (return on first successful attempt):
-						//     1. As-is.
-						//     2. By pointer.
-
-						call->arguments.insert_at({.expression = binary->left}, 0);
-
-						Reporter as_is_reporter;
-						{
-							scoped_exchange(reporter, as_is_reporter);
-							auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
-							if (result) {
-								as_is_reporter.reports.add(reporter.reports);
-								return result;
-							}
-						}
-						
-						Reporter by_pointer_reporter;
-						{
-							scoped_exchange(reporter, by_pointer_reporter);
-
-							auto first_argument_address = Unary::create();
-							first_argument_address->location = binary->left->location;
-							first_argument_address->expression = binary->left;
-							first_argument_address->operation = UnaryOperation::addr;
-							call->arguments[0].expression = first_argument_address;
-
-							auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
-							if (result) {
-								by_pointer_reporter.reports.add(reporter.reports);
-								return result;
-							}
-						}
-
-						reporter.error(call->location, "Unable to pass `this` argument. Here are attempt results:");
-						reporter.info("Attempt to pass `this` as-is:");
-						for (auto &r : as_is_reporter.reports) {
-							++r.indentation;
-						}
-						reporter.reports.add(as_is_reporter.reports);
-						reporter.info("Attempt to pass `this` by pointer:");
-						for (auto &r : by_pointer_reporter.reports) {
-							++r.indentation;
-						}
-						reporter.reports.add(by_pointer_reporter.reports);
-						fail();
 					}
 				}
 			}
@@ -4966,9 +4984,11 @@ private:
 				reporter.info(overload->definition->location, "Overload #{}:", i);
 			}
 			fail();
+		} else if (auto head = as<LambdaHead>(directed_callable->type)) {
+			return typecheck_lambda_call(call, 0, head, true);
 		}
 
-		reporter.error(call->callable->location, "Only lambdas / structs can be called for now, not {}", call->callable->type);
+		reporter.error(call->callable->location, "Expression of type {} can't be called", call->callable->type);
 		fail();
 		return 0;
 	}
@@ -5564,6 +5584,9 @@ const {} = fn (a: {}, b: {}) => {{
 		current_block->defers.add(defer_);
 		return defer_;
 	}
+	[[nodiscard]] ZeroInitialized *typecheck_impl(ZeroInitialized *zi, bool can_substitute) {
+		invalid_code_path("ZeroInitialized cannot be typechecked.");
+	}
 
 	u32 debug_thread_id = 0;
 	bool debug_stopped = false;
@@ -6020,7 +6043,9 @@ bool find_main_and_run() {
 							println("\nFinal instructions:\n");
 							print_instructions(bytecode.instructions);
 						}
-							
+						
+						//target_x64::emit(u8"output.exe"s, bytecode);
+
 						if (run_compiled_code) {
 							timed_block("executing main");
 							auto result = Bytecode::Interpreter{}.run(&bytecode, builder.entry_point(), run_interactive);

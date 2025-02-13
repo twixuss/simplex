@@ -139,6 +139,10 @@ ForEachDirective visit_impl(Defer *defer_, auto &&visitor) {
 	VISIT(&defer_->body);
 	return ForEach_continue;
 }
+ForEachDirective visit_impl(ZeroInitialized *zi, auto &&visitor) {
+	// VISIT(&zi->parsed_type);
+	return ForEach_continue;
+}
 
 ForEachDirective visit(Node **node, auto &&visitor) {
 

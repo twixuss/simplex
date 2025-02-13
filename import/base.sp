@@ -3,15 +3,11 @@ const UInt = U64
 
 const debug_break = fn () => #intrinsic
 const panic = fn () => #intrinsic
-const println = fn (value: S64) => #intrinsic
-const println = fn (value: String) => #intrinsic
-
-const floor = fn (a: U64, b: U64) => {
-    return a / b * b
-}
-const ceil = fn (a: U64, b: U64) => {
-    return (a + b - 1) / b * b
-}
+const print = fn (value: S64) => #intrinsic
+const print = fn (value: String) => #intrinsic
+const println = fn (value: S64) => { print(value); print("\n"); }
+const println = fn (value: String) => { print(value); print("\n"); }
+const assert = fn (x: Bool) => #intrinsic // intrinsic because theres no expression string and caller location yet
 
 const memcpy = fn (dst: *var None  src: *let None size: U64): *var None => {
     var d = dst as *var U8
@@ -25,4 +21,11 @@ const memcpy = fn (dst: *var None  src: *let None size: U64): *var None => {
     return dst
 }
 
-const assert = fn (x: Bool) => { if !x then panic() }
+const floor = fn (a: U64, b: U64) => {
+    return a / b * b
+}
+const ceil = fn (a: U64, b: U64) => {
+    return (a + b - 1) / b * b
+}
+
+const is_power_of_2 = fn (a: U64) => a & (a - 1) == 0

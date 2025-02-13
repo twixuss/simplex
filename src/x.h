@@ -224,6 +224,18 @@ ENUMERATE_TOKEN_KIND(x, y)
 
 /*
 #define x(name)
+ENUMERATE_TYPE_EXPRESSION_KIND(x)
+#undef x
+*/
+#define ENUMERATE_TYPE_EXPRESSION_KIND(x) \
+	x(LambdaHead) \
+	x(BuiltinTypeName) \
+	x(Unary) \
+	x(Struct) \
+	x(ArrayType) \
+
+/*
+#define x(name)
 ENUMERATE_EXPRESSION_KIND(x)
 #undef x
 */
@@ -247,6 +259,7 @@ ENUMERATE_EXPRESSION_KIND(x)
 	x(ArrayType) \
 	x(Subscript) \
 	x(ArrayConstructor) \
+	x(ZeroInitialized) \
 
 /*
 #define x(name)

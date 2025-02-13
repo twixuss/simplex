@@ -10,22 +10,35 @@ struct Interpreter {
 	inline static Interpreter *current_interpreter;
 	Bytecode *bytecode = 0;
 	bool interactive = false;
+	jmp_buf stop_interpering_jmp_buf = {};
 
-	struct DebugWindow {
-		static constexpr int source    = 0x1;
-		static constexpr int arguments = 0x2;
-		static constexpr int locals    = 0x4;
-		static constexpr int bytecode  = 0x8;
-		static constexpr int registers = 0x10;
-		static constexpr int stack     = 0x20;
+	enum class DebugWindowKind {
+		source,
+		arguments,
+		locals,
+		bytecode,
+		registers,
+		stack,
+		count,
+	};
+	struct DebugWindowFlag {
+		static constexpr int bytecode  = 1 << (int)DebugWindowKind::bytecode;
+		static constexpr int registers = 1 << (int)DebugWindowKind::registers;
+		static constexpr int stack     = 1 << (int)DebugWindowKind::stack;
+		static constexpr int source    = 1 << (int)DebugWindowKind::source;
+		static constexpr int arguments = 1 << (int)DebugWindowKind::arguments;
+		static constexpr int locals    = 1 << (int)DebugWindowKind::locals;
 	};
 
-	int enabled_windows = ~0;
+	int enabled_windows = ~DebugWindowFlag::stack;
 
 	struct Commands {
 		static constexpr char next_instruction = 'n';
 		static constexpr char redraw_window = 'r';
+		static constexpr char toggle_hex = 'x';
 	};
+	
+	static constexpr ConsoleColor next_instruction_color = ConsoleColor::green;
 
 	Optional<u64> run(Bytecode *bytecode, umm entry_index, bool interactive) {
 		scoped_replace(current_interpreter, this);
@@ -47,6 +60,24 @@ struct Interpreter {
 		reg(Register::global_mutable) = (s64)bytecode->global_mutable_data.data;
 		reg(Register::global_readonly) = (s64)bytecode->global_readonly_data.data;
 
+		//
+		// Preload all extern references
+		//
+		for (auto i : bytecode->instructions) {
+			switch (i.kind) {
+				case InstructionKind::callext:
+					load_extern_function(i.v_callext.lib, i.v_callext.name);
+					break;
+				case InstructionKind::copyext:
+					load_extern_function(i.v_copyext.lib, i.v_copyext.name);
+					break;
+			}
+		}
+
+		if (setjmp(stop_interpering_jmp_buf) == 1) {
+			return {};
+		}
+
 		__try {
 			run_while([&] { return current_instruction_index < bytecode->instructions.count; });
 		}
@@ -67,7 +98,7 @@ struct Interpreter {
 				if (auto found = bytecode->first_instruction_to_lambda.find(index)) {
 					auto lambda = found->value;
 					auto loc = get_source_location(lambda->location);
-					println("{}:{}: {}", loc.file, loc.line_number, lambda->definition ? lambda->definition->name : u8"(unnamed)"s);
+					println("{}:{}: {}", loc.file, loc.location_line_number, lambda->definition ? lambda->definition->name : u8"(unnamed)"s);
 				} else {
 					println("unknown at #{}", index);
 				}
@@ -77,52 +108,44 @@ struct Interpreter {
 
 		return val8(Address { .offset = (s64)((stack + stack_size) - 8)});
 	}
+	inline static thread_local char spaces[] = "                                                                                                                                                                                                                                                               ";
 	void run_while(auto predicate) {
 		while (predicate()) {
 			auto i = bytecode->instructions[current_instruction_index];
 
 			if (interactive) {
+				scoped_replace(current_printer, Printer{
+					[](Span<utf8> span, void *) {
+						auto start = span.data;
+						for (auto c = span.data; c != span.data + span.count; ++c) {
+							if (*c == '\n') {
+								print_to_console(Span(start, c));
+								CONSOLE_SCREEN_BUFFER_INFO buffer_info;
+								GetConsoleScreenBufferInfo(std_out, &buffer_info);
+								auto spaces_count = buffer_info.dwMaximumWindowSize.X - buffer_info.dwCursorPosition.X - 1;
+								spaces[spaces_count] = '\n';
+								print_to_console(Span(spaces, spaces_count + 1));
+								spaces[spaces_count] = ' ';
+								start = c + 1;
+							}
+						}
+						print_to_console(Span(start, span.data + span.count));
+					}
+				});
+
 			redraw:
-				clear_console();
-				auto column2 = []() {
-					for (int i = 0; i < 80; ++i)
-						print(' ');
-				};
 				
+				SetConsoleCursorPosition(std_out, {0, 0});
+
 				auto header = [&](char const *name, int flag) {
 					with(((enabled_windows & flag) ? ConsoleColor::cyan : ConsoleColor::gray), println("==== {} {} ====", log2(flag), name));
 					return enabled_windows & flag;
 				};
-
-				column2();
-				if (header("Bytecode", DebugWindow::bytecode)) {
-					for (s64 o = -5; o <= 5; ++o) {
-						scoped_if(ConsoleColor::yellow, o == 0);
-
-						u64 instruction_index = current_instruction_index + o;
-						if (instruction_index >= bytecode->instructions.count) {
-							column2(); println("...");
-						} else {
-							column2(); print_instruction(instruction_index, bytecode->instructions[instruction_index]);
-						}
-					}
-				}
-				column2();
-				if (header("Registers", DebugWindow::registers)) {
-					auto print_register = [&] (Register r) {
-						print("0x{}", FormatInt{.value = reg(r), .radix = 16, .leading_zero_count = 16});
-					};
-
-					column2(); print("base: "); print_register(Register::base); println();
-					column2(); print("stack: "); print_register(Register::stack); println();
-					for (int i = 0; i < 8; ++i) {
-						column2(); print("r{}: ", i); print_register((Register)i); println();
-					}
-				}
+				
 				
 
 				Lambda *lambda = 0;
-				if (enabled_windows & (DebugWindow::locals | DebugWindow::arguments | DebugWindow::stack)) {
+				if (enabled_windows & (DebugWindowFlag::locals | DebugWindowFlag::arguments | DebugWindowFlag::stack)) {
 					u64 max_lambda_first_instruction = 0;
 					if (current_instruction_index < bytecode->instructions.count - 3) { // Ignore initial instructions that don't belong to any lambda
 						for (auto [first_instruction, some_lambda] : bytecode->first_instruction_to_lambda) {
@@ -135,68 +158,97 @@ struct Interpreter {
 						}
 					}
 				}
-				
-				column2();
-				if (header("Stack", DebugWindow::stack)) {
-					if (lambda) {
-						for (s64 i = lambda->stack_frame_size - 8; i >= 0; i -= 8) {
-							s64 addr = reg(Register::stack) + i;
-							column2(); 
-							print("0x{}: ", format_hex(addr));
-							print_value(Address{.offset = addr}, get_builtin_type(BuiltinType::U64), {.hex = true});
-							if (i == 0)
-								print(" <- stack");
-							if (i == lambda->space_for_call_arguments && lambda->temporary_size)
-								print(" <- temporary");
-							if (i == lambda->space_for_call_arguments + lambda->temporary_size && lambda->locals_size)
-								print(" <- locals");
-							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size)
-								print(" <- base");
-							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 8)
-								print(" <- return address");
-							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 16 && lambda->head.total_parameters_size)
-								print(" <- arguments");
-							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 16 + lambda->head.total_parameters_size && get_size(lambda->head.return_type))
-								print(" <- return value");
-							println();
+
+				for (int debug_window_index = 0; debug_window_index != (int)DebugWindowKind::count; ++debug_window_index) {
+					if (debug_window_index == (int)DebugWindowKind::bytecode && header("Bytecode", DebugWindowFlag::bytecode)) {
+						for (s64 o = -5; o <= 5; ++o) {
+							scoped_if(next_instruction_color, o == 0);
+
+							u64 instruction_index = current_instruction_index + o;
+							if (instruction_index >= bytecode->instructions.count) {
+								println("...");
+							} else {
+								print_instruction(instruction_index, bytecode->instructions[instruction_index]);
+							}
 						}
 					}
-				}
-				
-				SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), {0, 0});
-
-				if (header("Source", DebugWindow::source)) {
-					if (i.source_location.count) {
-						auto location = get_source_location(i.source_location);
-
-						print_source_chunk(location, 0, ConsoleColor::yellow);
-					} else {
-						println("unknown source");
-					}
-				}
-				if (header("Arguments", DebugWindow::arguments)) {
-					if (lambda) {
-						for (auto parameter : lambda->head.parameters_block.definition_list) {
-							print("{}: ", parameter->name);
-							Address address = {
-								.base = Register::base,
-								.offset = (s64)(16 + parameter->offset),
-							};
-							print_value(address, parameter->type);
+					else if (debug_window_index == (int)DebugWindowKind::registers && header("Registers", DebugWindowFlag::registers)) {
+						auto print_register = [&] (String name, Register r) {
+							print("{}: ", name);
+							u64 current = registers[(int)r];
+							u64 previous = previous_registers[(int)r];
+							if (current == previous) {
+								print("0x{}", format_hex(current));
+							} else {
+								with(ConsoleColor::red, print("0x{}", format_hex(current)));
+								with(ConsoleColor::gray, print(" 0x{}", format_hex(previous)));
+							}
 							println();
+						};
+
+						print_register(u8"base"s, Register::base);
+						print_register(u8"stack"s, Register::stack);
+						for (int i = 0; i < 8; ++i) {
+							print_register(tformat(u8"r{}", i), (Register)i);
 						}
 					}
-				}
-				if (header("Locals", DebugWindow::locals)) {
-					if (lambda) {
-						for (auto local : lambda->locals) {
-							print("{}: ", local->name);
-							Address address = {
-								.base = Register::base,
-								.offset = (s64)(-lambda->locals_size + local->offset),
-							};
-							print_value(address, local->type);
-							println();
+					else if (debug_window_index == (int)DebugWindowKind::stack && header("Stack", DebugWindowFlag::stack)) {
+						if (lambda) {
+							for (s64 i = lambda->stack_frame_size - 8; i >= 0; i -= 8) {
+								s64 addr = reg(Register::stack) + i;
+								print("0x{}: ", format_hex(addr));
+								print_value(Address{.offset = addr}, get_builtin_type(BuiltinType::U64), {.hex = true});
+								if (i == 0)
+									print(" <- stack");
+								if (i == lambda->space_for_call_arguments && lambda->temporary_size)
+									print(" <- temporary");
+								if (i == lambda->space_for_call_arguments + lambda->temporary_size && lambda->locals_size)
+									print(" <- locals");
+								if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size)
+									print(" <- base");
+								if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 8)
+									print(" <- return address");
+								if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 16 && lambda->head.total_parameters_size)
+									print(" <- arguments");
+								if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 16 + lambda->head.total_parameters_size && get_size(lambda->head.return_type))
+									print(" <- return value");
+								println();
+							}
+						}
+					}
+					else if (debug_window_index == (int)DebugWindowKind::source && header("Source", DebugWindowFlag::source)) {
+						if (i.source_location.count) {
+							auto location = get_source_location(i.source_location, {.lines_before = 8, .lines_after = 8});
+
+							print_source_chunk(location, 0, next_instruction_color);
+						} else {
+							println("unknown source");
+						}
+					}
+					else if (debug_window_index == (int)DebugWindowKind::arguments && header("Arguments", DebugWindowFlag::arguments)) {
+						if (lambda) {
+							for (auto parameter : lambda->head.parameters_block.definition_list) {
+								print("{}: ", parameter->name);
+								Address address = {
+									.base = Register::base,
+									.offset = (s64)(16 + parameter->offset),
+								};
+								print_value(address, parameter->type);
+								println();
+							}
+						}
+					}
+					else if (debug_window_index == (int)DebugWindowKind::locals && header("Locals", DebugWindowFlag::locals)) {
+						if (lambda) {
+							for (auto local : lambda->locals) {
+								print("{}: ", local->name);
+								Address address = {
+									.base = Register::base,
+									.offset = (s64)(-lambda->locals_size + local->offset),
+								};
+								print_value(address, local->type);
+								println();
+							}
 						}
 					}
 				}
@@ -205,6 +257,10 @@ struct Interpreter {
 				println();
 				println("{} - next instruction", Commands::next_instruction);
 				println("{} - redraw window", Commands::redraw_window);
+				println("{} - toggle hex", Commands::toggle_hex);
+				println();
+				println();
+				println();
 
 			retry_char:
 				int pressed_key = _getch();
@@ -219,11 +275,17 @@ struct Interpreter {
 					case Commands::redraw_window: {
 						goto redraw;
 					}
+					case Commands::toggle_hex: {
+						current_print_options.hex ^= 1;
+						goto redraw;
+					}
 					default: {
 						goto retry_char;
 					}
 				}
 			}
+
+			previous_registers = registers;
 
 			switch (i.kind) {
 #define x(name, fields) case InstructionKind::name: execute(i.v_##name); break;
@@ -238,43 +300,83 @@ struct Interpreter {
 		bool hex = false;
 	};
 
-	int print_value(Address address, Type type, PrintValueOptions options = {}) {
+	inline static PrintValueOptions current_print_options = {};
+
+	template <class T>
+	int print_int(auto address, PrintValueOptions options = {}) {
+		auto val = [&](Address address) {
+			if constexpr (sizeof(T) == 1) return val1(address);
+			if constexpr (sizeof(T) == 2) return val2(address);
+			if constexpr (sizeof(T) == 4) return val4(address);
+			if constexpr (sizeof(T) == 8) return val8(address);
+		};
+
+		auto v = (T)val(address);
+		if (options.hex) {
+			print("0x");
+			return print(format_hex(v));
+		} else {
+			return print(v);
+		}
+	}
+
+	ContiguousHashMap<s8 *, Empty> printed_value_addresses;
+
+	int print_value_inner(Address address, Type type, PrintValueOptions options) {
 		__try {
-			auto print_int = [&]<class T>(auto address) {
-				auto val = [&](Address address) {
-					if constexpr (sizeof(T) == 1) return val1(address);
-					if constexpr (sizeof(T) == 2) return val2(address);
-					if constexpr (sizeof(T) == 4) return val4(address);
-					if constexpr (sizeof(T) == 8) return val8(address);
-				};
-
-				auto v = FormatInt{(T)val(address)};
-				if (options.hex) {
-					v = format_hex(v.value); 
-					print("0x");
-				}
-				return print(v);
-			};
-
-			if (types_match(type, BuiltinType::None)) return print("none");
+			if (types_match(type, BuiltinType::None)) return 0;
 			if (types_match(type, BuiltinType::Bool)) return print((bool)val1(address));
-			if (types_match(type, BuiltinType::U8 )) { return print_int.operator()<u8 >(address); }
-			if (types_match(type, BuiltinType::U16)) { return print_int.operator()<u16>(address); }
-			if (types_match(type, BuiltinType::U32)) { return print_int.operator()<u32>(address); }
-			if (types_match(type, BuiltinType::U64)) { return print_int.operator()<u64>(address); }
-			if (types_match(type, BuiltinType::S8 )) { return print_int.operator()<s8 >(address); }
-			if (types_match(type, BuiltinType::S16)) { return print_int.operator()<s16>(address); }
-			if (types_match(type, BuiltinType::S32)) { return print_int.operator()<s32>(address); }
-			if (types_match(type, BuiltinType::S64)) { return print_int.operator()<s64>(address); }
+			if (types_match(type, BuiltinType::U8 )) { return print_int<u8 >(address, options); }
+			if (types_match(type, BuiltinType::U16)) { return print_int<u16>(address, options); }
+			if (types_match(type, BuiltinType::U32)) { return print_int<u32>(address, options); }
+			if (types_match(type, BuiltinType::U64)) { return print_int<u64>(address, options); }
+			if (types_match(type, BuiltinType::S8 )) { return print_int<s8 >(address, options); }
+			if (types_match(type, BuiltinType::S16)) { return print_int<s16>(address, options); }
+			if (types_match(type, BuiltinType::S32)) { return print_int<s32>(address, options); }
+			if (types_match(type, BuiltinType::S64)) { return print_int<s64>(address, options); }
+			if (types_match(type, BuiltinType::String)) {
+				return print("\"{}\"", EscapedString(Span((utf8 *)val8(address), (umm)val8(address withx { it.offset += 8; }))));
+			}
+			auto directed = direct(type);
+			if (auto struct_ = as<Struct>(directed)) {
+				print("{}(", struct_->definition ? struct_->definition->name : u8"unnamed_struct"s);
+				for (int i = 0; i < struct_->members.count; ++i) {
+					if (i) print(", ");
 
-			if (auto array = as<ArrayType>(type)) {
+					auto member = struct_->members[i];
+
+					print("{} = ", member->name);
+					print_value_inner(address withx { it.offset += member->offset; }, member->type, options);
+				}
+				print(")");
+				return 0;
+			}
+
+			if (auto pointer = as_pointer(directed)) {
+				auto ptr = val8(address);
+				if (ptr) {
+					print_int<u64>(address, {.hex = true});
+					print(" ");
+					if (printed_value_addresses.find(&val1(address))) {
+						print("<recursive>");
+					} else {
+						printed_value_addresses.get_or_insert(&val1(address));
+						print_value_inner(Address{.offset = ptr}, pointer->expression, options);
+					}
+				} else {
+					print("null");
+				}
+				return 0;
+			}
+
+			if (auto array = as<ArrayType>(directed)) {
 				print("[");
 				auto element_size = get_size(array->element_type);
 				for (umm i = 0; i < array->count.value(); ++i) {
 					if (i) print(", ");
 					auto element_address = address;
 					element_address.offset += i * element_size;
-					print_value(element_address, array->element_type);
+					print_value_inner(element_address, array->element_type, options);
 				}
 				print("]");
 				return 0;
@@ -285,9 +387,14 @@ struct Interpreter {
 			return print("???");
 		}
 	}
+	int print_value(Address address, Type type, PrintValueOptions options = current_print_options) {
+		printed_value_addresses.clear();
+		return print_value_inner(address, type, options);
+	}
 
 	umm current_instruction_index = (umm)-1;
-	s64 registers[256] = {};
+	Array<s64, 256> registers = {};
+	Array<s64, 256> previous_registers = {};
 	u8 *stack = 0;
 	List<u64> debug_stack;
 	List<s64> debug_call_stack;
@@ -345,12 +452,28 @@ struct Interpreter {
 	s8  &val1(InputValue x) { return (s8  &)val8(x); }
 
 #define E(name, ...) execute(Instruction{.kind = InstructionKind::name, .v_##name = { __VA_ARGS__ }}.v_##name)
+	
+	void *load_extern_function(String libname, String name) {
+		auto &lib = libraries.get_or_insert(libname);
+		if (!lib.dll) {
+			auto lib_name = tformat(u8"{}{}"s, libname, dll_extension);
+			lib.dll = load_dll(lib_name);
+			assert(lib.dll);
+		}
+
+		auto &fn = lib.functions.get_or_insert(name);
+		if (!fn) {
+			fn = get_symbol(lib.dll, name);
+			assert(fn, "{}.dll does not contain {}", libname, name);
+		}
+
+		return fn;
+	}
 
 	void execute(Instruction::pop_t i) {
 		E(copy, .d = i.d, .s = Address{.base = Register::stack}, .size = 8);
 		E(add8, .d = Register::stack, .a = Register::stack, .b = 8);
 	}
-
 	void execute(Instruction::nop_t i) {}
 	void execute(Instruction::push_t i) {
 		E(sub8, .d = Register::stack, .a = Register::stack, .b = 8);
@@ -472,7 +595,6 @@ struct Interpreter {
 	void execute(Instruction::sex81_t i) { val8(i.d) = (s64)(s8)val1(i.a); }
 	void execute(Instruction::sex82_t i) { val8(i.d) = (s64)(s16)val2(i.a); }
 	void execute(Instruction::sex84_t i) { val8(i.d) = (s64)(s32)val4(i.a); }
-
 	void execute(Instruction::call_t i) {
 		E(push, (s64)current_instruction_index);
 
@@ -486,18 +608,7 @@ struct Interpreter {
 		debug_stack.add(val8(Register::stack));
 	}
 	void execute(Instruction::callext_t i) {
-		auto &lib = libraries.get_or_insert(i.lib);
-		if (!lib.dll) {
-			auto lib_name = tformat(u8"{}{}"s, i.lib, dll_extension);
-			lib.dll = load_dll(lib_name);
-			assert(lib.dll);
-		}
-
-		auto &fn = lib.functions.get_or_insert(i.name);
-		if (!fn) {
-			fn = get_symbol(lib.dll, i.name);
-			assert(fn, "{}.dll does not contain {}", i.lib, i.name);
-		}
+		auto fn = load_extern_function(i.lib, i.name);
 
 		s64 parameter_count = i.lambda->head.parameters_block.definition_list.count;
 
@@ -718,6 +829,9 @@ struct Interpreter {
 		}
 		val8(Address{.base = Register::stack, .offset = 8 * parameter_count}) = result;
 	}
+	void execute(Instruction::copyext_t i) {
+		val8(i.d) = (s64)load_extern_function(i.lib, i.name);
+	}
 	void execute(Instruction::ret_t i) {
 		{
 			auto expected = debug_stack.pop().value();
@@ -736,40 +850,48 @@ struct Interpreter {
 	void execute(Instruction::jt_t i) { if (val1(i.s) != 0) current_instruction_index = val8(i.d) - 1; }
 	void execute(Instruction::intrinsic_t i) {
 		switch (i.i) {
-			case Intrinsic::println_S64: {
-				println(val8(Address { .base = Register::stack }));
-				break;
-			}
-			case Intrinsic::println_String: {
-				auto data  = val8(Address { .base = Register::stack });
-				auto count = val8(Address { .base = Register::stack, .offset = 8 });
-				println(String((utf8 *)data, count));
-				break;
-			}
-			case Intrinsic::panic: {
-				immediate_reporter.error("PANIC");
-				invalid_code_path();
-				break;
-			}
-			case Intrinsic::debug_break: {
-				debug_break();
-				break;
-			}
+			#define x(name) case Intrinsic::name: execute_intrinsic_##name(i); break;
+			ENUMERATE_INTRINSICS
+			#undef x
+			default: invalid_code_path();
+		}
+	}
+	
+	void execute_intrinsic_print_S64(Instruction::intrinsic_t i) {
+		print(val8(Address { .base = Register::stack }));
+	}
+	void execute_intrinsic_print_String(Instruction::intrinsic_t i) {
+		auto data  = val8(Address { .base = Register::stack });
+		auto count = val8(Address { .base = Register::stack, .offset = 8 });
+		print(String((utf8 *)data, count));
+	}
+	void execute_intrinsic_panic(Instruction::intrinsic_t i) {
+		immediate_reporter.error("PANIC");
+		invalid_code_path();
+	}
+	void execute_intrinsic_debug_break(Instruction::intrinsic_t i) {
+		debug_break();
+	}
+	void execute_intrinsic_assert(Instruction::intrinsic_t i) {
+		if (!val1(Address{.base = Register::stack})) {
+			immediate_reporter.error(i.message, "Assertion failed: {}", i.message);
+			longjmp(stop_interpering_jmp_buf, 1);
 		}
 	}
 
 	u64 ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *lambda) {
-		auto ret_size = get_size(lambda->head.return_type);
-		assert(lambda->head.parameters_block.definition_list.count == 4, "Expected exactly 4 arguments. TODO: implement others");
-		auto arg0_size = get_size(lambda->head.parameters_block.definition_list[0]->type);
-		auto arg1_size = get_size(lambda->head.parameters_block.definition_list[1]->type);
-		auto arg2_size = get_size(lambda->head.parameters_block.definition_list[2]->type);
-		auto arg3_size = get_size(lambda->head.parameters_block.definition_list[3]->type);
-		E(sub8, Register::stack, Register::stack, (s64)(ret_size + arg0_size + arg1_size + arg2_size + arg3_size));
-		E(copy, .d = Address{.base = Register::stack, .offset = 0                                       }, .s = (s64)arg0, .size = arg0_size);
-		E(copy, .d = Address{.base = Register::stack, .offset = (s64)(arg0_size                        )}, .s = (s64)arg1, .size = arg1_size);
-		E(copy, .d = Address{.base = Register::stack, .offset = (s64)(arg0_size + arg1_size            )}, .s = (s64)arg2, .size = arg2_size);
-		E(copy, .d = Address{.base = Register::stack, .offset = (s64)(arg0_size + arg1_size + arg2_size)}, .s = (s64)arg3, .size = arg3_size);
+		auto &parameters = lambda->head.parameters_block.definition_list;
+		auto ret_size = ceil(get_size(lambda->head.return_type), 8ull);
+		assert(parameters.count == 4, "Expected exactly 4 arguments. TODO: implement others");
+		auto arg0_size = get_size(parameters[0]->type);
+		auto arg1_size = get_size(parameters[1]->type);
+		auto arg2_size = get_size(parameters[2]->type);
+		auto arg3_size = get_size(parameters[3]->type);
+		E(sub8, Register::stack, Register::stack, (s64)(ret_size + lambda->head.total_parameters_size));
+		E(copy, .d = Address{.base = Register::stack, .offset = (s64)parameters[0]->offset}, .s = (s64)arg0, .size = arg0_size);
+		E(copy, .d = Address{.base = Register::stack, .offset = (s64)parameters[1]->offset}, .s = (s64)arg1, .size = arg1_size);
+		E(copy, .d = Address{.base = Register::stack, .offset = (s64)parameters[2]->offset}, .s = (s64)arg2, .size = arg2_size);
+		E(copy, .d = Address{.base = Register::stack, .offset = (s64)parameters[3]->offset}, .s = (s64)arg3, .size = arg3_size);
 		E(call, (s64)lambda->first_instruction_index);
 		
 		// NOTE: `call` does an offset by -1 because the main loop always increments the index, but we are not in a loop yet, so offset the offset.
@@ -782,7 +904,7 @@ struct Interpreter {
 		// skip one instruction, so offset it here as well.
 		--current_instruction_index;
 
-		E(add8, Register::stack, Register::stack, (s64)(ret_size + arg0_size + arg1_size + arg2_size + arg3_size));
+		E(add8, Register::stack, Register::stack, (s64)(ret_size + lambda->head.total_parameters_size));
 		
 		auto result = val8(Address{.base = Register::stack, .offset = -(s64)ret_size});
 		return result;
@@ -790,5 +912,9 @@ struct Interpreter {
 
 #undef E
 };
+
+u64 ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *lambda) {
+	return Interpreter::current_interpreter->ffi_callback(arg0, arg1, arg2, arg3, lambda);
+}
 
 }

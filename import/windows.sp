@@ -443,3 +443,5 @@ const VirtualFree = fn (
     dwSize: SIZE_T,
     dwFreeType: DWORD,
 ): BOOL => #extern
+
+const GetLastError = fn (): DWORD => #extern;

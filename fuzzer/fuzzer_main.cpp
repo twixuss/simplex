@@ -108,107 +108,111 @@ s32 tl_main(Span<String> arguments) {
 	auto executable_directory = parse_path(executable_path).directory;
 
 	auto fuzz_directory = format(u8"{}\\..\\fuzzer", executable_directory);
-	auto fuzz_path = format(u8"{}\\fuzz.sp", fuzz_directory);
-	auto run_command = format(u8"simplex -t1 {}"s, fuzz_path);
-
-	xorshift32 r{get_performance_counter()};
 
 	init_tracking_allocator(&tracking_allocator, current_allocator);
 	current_allocator = tracking_allocator;
 
-	while (1) {
-		defer { current_temporary_allocator.clear(); };
-		scoped(temporary_allocator_and_checkpoint);
-		StringBuilder builder;
+	for (umm thread_index = 0; thread_index < get_cpu_info().logical_processor_count; ++thread_index) {
+		create_thread([=] {
+			xorshift32 r{get_performance_counter()};
+			auto fuzz_path = format(u8"{}\\fuzz{}.sp", fuzz_directory, thread_index);
+			auto run_command = format(u8"simplex {}"s, fuzz_path);
+			while (1) {
+				defer { current_temporary_allocator.clear(); };
+				scoped(temporary_allocator_and_checkpoint);
+				StringBuilder builder;
 
-		auto random_tokens = [&] {
-			char const *tokens[] = {
-#define x(name) #name,
-				ENUMERATE_KEYWORDS(x)
-#undef x
-#define x(name) name,
-				ENUMERATE_DOUBLE_CHAR_TOKENS(x)
-				ENUMERATE_TRIPLE_CHAR_TOKENS(x)
-#undef x
-				"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-				"main",
-				"0","1","2","3","4","5","6","7","8","0",
-				"{","}","[","]","(",")",
-				"`","~","!","@","#","$",
-				"%","^","&","*","-","=",
-				"+",";",":",",",".","/",
-				"?",
-			};
+				auto random_tokens = [&] {
+					char const *tokens[] = {
+		#define x(name) #name,
+						ENUMERATE_KEYWORDS(x)
+		#undef x
+		#define x(name) name,
+						ENUMERATE_DOUBLE_CHAR_TOKENS(x)
+						ENUMERATE_TRIPLE_CHAR_TOKENS(x)
+		#undef x
+						"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+						"main",
+						"0","1","2","3","4","5","6","7","8","0",
+						"{","}","[","]","(",")",
+						"`","~","!","@","#","$",
+						"%","^","&","*","-","=",
+						"+",";",":",",",".","/",
+						"?",
+					};
 
-			u32 count = 1 << (next(r) % 16);
-			for (u32 i = 0; i < count; ++i) {
-				append(builder, tokens[next(r) % count_of(tokens)]);
-				if (((next(r) >> 16) & 3) == 0) {
-					append(builder, '\n');
-				} else {
-					append(builder, ' ');
+					u32 count = 1 << (next(r) % 16);
+					for (u32 i = 0; i < count; ++i) {
+						append(builder, tokens[next(r) % count_of(tokens)]);
+						if (((next(r) >> 16) & 3) == 0) {
+							append(builder, '\n');
+						} else {
+							append(builder, ' ');
+						}
+					}
+				};
+
+				auto garbage_bytes = [&] {
+					u32 count = 1 << (next(r) % 16);
+					for (u32 i = 0; i < count; ++i) {
+						append(builder, value_as_bytes(next(r)));
+					}
+				};
+
+				auto garbage_ascii = [&] {
+					static auto list = []{
+						List<char> list;
+						// Give more chance to new lines
+						for (u32 i = 0; i < 4; ++i)
+							list.add('\n');
+						list.add('\r');
+						list.add('\t');
+						for (u32 i = 0x20; i < 0x7f; ++i) {
+							list.add(i);
+						}
+						return list;
+					}();
+					u32 count = 1 << (next(r) % 16);
+					for (u32 i = 0; i < count; ++i) {
+						append(builder, list[next(r) % list.count]);
+					}
+				};
+
+		#if 0
+				garbage_ascii();
+		#else
+				switch ((next(r) >> 16) % 3) {
+					case 0: random_tokens(); break;
+					case 1: garbage_bytes(); break;
+					case 2: garbage_ascii(); break;
+				}
+		#endif
+
+				auto source = to_string(builder);
+
+				write_entire_file(fuzz_path, source.span());
+
+				auto result = run_process(run_command);
+
+				switch (result.exit_code) {
+					case 0:
+					case 1:
+						print(".");
+						continue;
+					default: {
+						println();
+						println("EXIT CODE:");
+						println(result.exit_code);
+						println("OUTPUT:");
+						println(result.output);
+						exit(0);
+					}
 				}
 			}
-		};
-
-		auto garbage_bytes = [&] {
-			u32 count = 1 << (next(r) % 16);
-			for (u32 i = 0; i < count; ++i) {
-				append(builder, value_as_bytes(next(r)));
-			}
-		};
-
-		auto garbage_ascii = [&] {
-			static auto list = []{
-				List<char> list;
-				// Give more chance to new lines
-				for (u32 i = 0; i < 4; ++i)
-					list.add('\n');
-				list.add('\r');
-				list.add('\t');
-				for (u32 i = 0x20; i < 0x7f; ++i) {
-					list.add(i);
-				}
-				return list;
-			}();
-			u32 count = 1 << (next(r) % 16);
-			for (u32 i = 0; i < count; ++i) {
-				append(builder, list[next(r) % list.count]);
-			}
-		};
-
-#if 0
-		garbage_ascii();
-#else
-		switch ((next(r) >> 16) % 3) {
-			case 0: random_tokens(); break;
-			case 1: garbage_bytes(); break;
-			case 2: garbage_ascii(); break;
-		}
-#endif
-
-		auto source = to_string(builder);
-
-		write_entire_file(fuzz_path, source);
-
-		auto result = run_process(run_command);
-
-		switch (result.exit_code) {
-			case 0:
-			case 1:
-				print(".");
-				continue;
-			default: {
-				println();
-				println("EXIT CODE:");
-				println(result.exit_code);
-				println("OUTPUT:");
-				println(result.output);
-				return 0;
-			}
-		}
+		});
 	}
 
+	Sleep(-1);
 
 	return 0;
 }

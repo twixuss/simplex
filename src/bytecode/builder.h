@@ -51,7 +51,7 @@ struct Builder {
 		.v_##name = { __VA_ARGS__ },   \
 		.file = __FILE_NAME__, \
 		.line = __LINE__, \
-		.source_location = current_node ? current_node->location : String{}, \
+		.source_location = current_location, \
 	}
 #define I(name, ...) (output_bytecode.instructions.add(MI(name, __VA_ARGS__)), 0)
 
@@ -97,6 +97,10 @@ struct Builder {
 			*(u64 *)&(*relocation.section)[relocation.offset] = relocation.lambda->first_instruction_index;
 		}
 
+		for (auto patch : pointers_to_patch) {
+			*(u64 *)&(*patch.in_section)[patch.in_section_offset] = patch.to_lambda->first_instruction_index;
+		}
+
 		return output_bytecode;
 	}
 
@@ -124,14 +128,14 @@ struct Builder {
 			Result<Value, Node *> get_constant_value(Node *);
 			auto value = get_constant_value(definition->initial_value).value();
 
-			write(section, value, definition->initial_value->type);
+			write(section, definition->constant_value.value(), definition->type);
 		} else {
 			section.resize(section.count + get_size(definition->type));
 		}
 	}
 
 	void append_lambda(Lambda *lambda) {
-		scoped_replace(current_node, lambda);
+		scoped_replace(current_location, lambda->location);
 		scoped_replace(locals_size, 0);
 		scoped_replace(max_temporary_size, 0);
 		scoped_replace(max_size_reserved_for_arguments, 0);
@@ -155,6 +159,8 @@ struct Builder {
 		I(set, .d = return_value_destination, .value = 0, .size = return_value_size);
 
 		output(return_value_destination, lambda->body);
+
+		scoped_replace(current_location, lambda->body->location.take(-1));
 
 		lambda->first_instruction_index = first_instruction_index;
 		output_bytecode.first_instruction_to_lambda.get_or_insert(first_instruction_index) = lambda;
@@ -256,11 +262,20 @@ struct Builder {
 
 	ContiguousHashMap<String, umm> string_literal_offsets;
 
-	Node *current_node = 0;
+	String current_location = {};
 	Lambda *current_lambda = 0;
 	Block *current_block = 0;
 
-	void write(List<u8> &data, Value value, Type type) {
+	struct PointerInSection {
+		List<u8> *in_section = 0;
+		umm in_section_offset = 0;
+
+		Lambda *to_lambda = 0;
+	};
+
+	List<PointerInSection> pointers_to_patch;
+
+	void write(List<u8> &section, Value value, Type type) {
 		switch (value.kind) {
 			case ValueKind::Bool:
 			case ValueKind::U8:
@@ -271,13 +286,13 @@ struct Builder {
 			case ValueKind::S16:
 			case ValueKind::S32:
 			case ValueKind::S64: {
-				data.add(Span((u8 *)&value.S64, get_size(type)));
+				section.add(Span((u8 *)&value.S64, get_size(type)));
 				break;
 			}
 			case ValueKind::lambda: {
-				lambda_relocations.add({&data, data.count, value.lambda});
+				lambda_relocations.add({&section, section.count, value.lambda});
 				u64 index = 0;
-				data.add(value_as_bytes(index));
+				section.add(value_as_bytes(index));
 				break;
 			}
 			case ValueKind::struct_: {
@@ -286,8 +301,30 @@ struct Builder {
 				assert(value.elements.count == struct_->members.count);
 				for (umm i = 0; i < value.elements.count; ++i) {
 					immediate_reporter.warning("Struct padding in sections is not implemented");
-					write(data, value.elements[i], struct_->members[i]);
+					write(section, value.elements[i], struct_->members[i]->type);
 				}
+				break;
+			}
+			case ValueKind::pointer: {
+				if (value.pointer) {
+					PointerInSection pis = {
+						.in_section = &section,
+						.in_section_offset = section.count,
+					};
+
+					switch (value.pointer->kind) {
+						case ValueKind::lambda: {
+							pis.to_lambda = value.pointer->lambda;
+							break;
+						}
+						default: {
+							not_implemented();
+						}
+					}
+
+					pointers_to_patch.add(pis);
+				}
+				section.add({0,0,0,0,0,0,0,0});
 				break;
 			}
 			default:
@@ -387,7 +424,7 @@ struct Builder {
 	}
 
 	void output(Site destination, Expression *expression) {
-		scoped_replace(current_node, expression);
+		scoped_replace(current_location, expression->location);
 		switch (expression->kind) {
 #define x(name) case NodeKind::name: return output_impl(destination, (name *)expression);
 			ENUMERATE_EXPRESSION_KIND(x)
@@ -397,7 +434,7 @@ struct Builder {
 	}
 
 	void output(Statement *statement) {
-		scoped_replace(current_node, statement);
+		scoped_replace(current_location, statement->location);
 		switch (statement->kind) {
 #define x(name) case NodeKind::name: return output_impl((name *)statement);
 			ENUMERATE_STATEMENT_KIND(x)
@@ -407,7 +444,7 @@ struct Builder {
 	}
 
 	void output_discard(Node *node) {
-		scoped_replace(current_node, node);
+		scoped_replace(current_location, node->location);
 		if (auto definition = as<Definition>(node)) {
 			output_local_definition({}, definition);
 		} else if (auto expression = as<Expression>(node)) {
@@ -520,7 +557,6 @@ struct Builder {
 		auto [lambda, head, Struct] = get_lambda_and_head_or_struct(call->callable);
 		switch (call->call_kind) {
 			case CallKind::lambda: {
-				assert(lambda);
 				assert(head);
 
 				s64 return_value_size = get_size(head->return_type);
@@ -550,34 +586,47 @@ struct Builder {
 					output(destination, argument.expression);
 				}
 
-				if (lambda->is_intrinsic) {
-					auto definition = lambda->definition;
-					assert(definition, lambda->location, "Intrinsic function is expected to have a definition, but for some reason this doesn't");
-					if (definition->name == "println") {
-						auto &parameters = lambda->head.parameters_block.definition_list;
-						assert(parameters.count == 1, lambda->location, "Intrinsic function 'println' is expected to have exactly one parameter");
-						auto parameter_type = parameters[0]->type;
-						if (types_match(parameter_type, BuiltinType::S64)) {
-							I(intrinsic, Intrinsic::println_S64);
-						} else if (types_match(parameter_type, BuiltinType::String)) {
-							I(intrinsic, Intrinsic::println_String);
+				if (lambda) {
+					if (lambda->is_intrinsic) {
+						auto definition = lambda->definition;
+						assert(definition, lambda->location, "Intrinsic function is expected to have a definition, but for some reason this doesn't");
+						if (definition->name == "print") {
+							auto &parameters = lambda->head.parameters_block.definition_list;
+							assert(parameters.count == 1, lambda->location, "Intrinsic function 'print' is expected to have exactly one parameter");
+							auto parameter_type = parameters[0]->type;
+							if (types_match(parameter_type, BuiltinType::S64)) {
+								I(intrinsic, Intrinsic::print_S64, {});
+							} else if (types_match(parameter_type, BuiltinType::String)) {
+								I(intrinsic, Intrinsic::print_String, {});
+							} else {
+								invalid_code_path(definition->location, "Unsupported parameter type '{}' in 'print' intrinsic", parameter_type);
+							}
+						} else if (definition->name == "panic") {
+							I(intrinsic, Intrinsic::panic, {});
+						} else if (definition->name == "debug_break") {
+							I(intrinsic, Intrinsic::debug_break, {});
+						} else if (definition->name == "assert") {
+							I(intrinsic, Intrinsic::assert, call->arguments[0].expression->location);
 						} else {
-							invalid_code_path(definition->location, "Unsupported parameter type '{}' in 'println' intrinsic", parameter_type);
+							invalid_code_path(definition->location, "Unknown intrinsic name '{}'", definition->name);
 						}
-					} else if (definition->name == "panic") {
-						I(intrinsic, Intrinsic::panic);
-					} else if (definition->name == "debug_break") {
-						I(intrinsic, Intrinsic::debug_break);
+					} else if (lambda->is_extern) {
+						assert(lambda->definition);
+						assert(lambda->definition->name.count);
+						I(callext, .lambda = lambda, .lib = lambda->extern_library, .name = lambda->definition->name);
 					} else {
-						invalid_code_path(definition->location, "Unknown intrinsic name '{}'", definition->name);
+						calls_to_patch.add({output_bytecode.instructions.count, lambda});
+						I(call, .d = -1);
 					}
-				} else if (lambda->is_extern) {
-					assert(lambda->definition);
-					assert(lambda->definition->name.count);
-					I(callext, .lambda = lambda, .lib = lambda->extern_library, .name = lambda->definition->name);
 				} else {
-					calls_to_patch.add({output_bytecode.instructions.count, lambda});
-					I(call, .d = -1);
+					// TODO: Can't distinguish externs and intrinsics here.
+					//       Assume local lambda.
+
+					tmpreg(callable);
+
+					output(callable, call->callable);
+
+					I(call, callable);
 				}
 				
 				for_each<ForEach_reverse>(registers_to_save, [&] (umm r) {
@@ -815,10 +864,15 @@ struct Builder {
 				if (auto lambda = direct_as<Lambda>(binary->left)) {
 					// To pointer
 					if (auto right_pointer = as_pointer(target_type)) {
-						// TODO: only works with direct lambdas.
-						auto callback = generate_callback(lambda);
-						I(copy, destination, (s64)callback.start_address, pointer_size);
-						break;
+						if (lambda->is_extern) {
+							I(copyext, destination, lambda->extern_library, lambda->definition->name);
+							break;
+						} else {
+							// TODO: only works with direct lambdas.
+							auto callback = generate_callback(lambda);
+							I(copy, destination, (s64)callback.start_address, pointer_size);
+							break;
+						}
 					}
 				}
 
@@ -930,9 +984,9 @@ struct Builder {
 				message.location = match->location;
 				message.type = get_builtin_type(BuiltinType::String);
 				output(Address{.base = Register::stack}, &message);
-				I(intrinsic, Intrinsic::println_String);
+				I(intrinsic, Intrinsic::print_String, {});
 				I(add8, Register::stack, Register::stack, 16);
-				I(intrinsic, Intrinsic::panic);
+				I(intrinsic, Intrinsic::panic, {});
 			}
 		}
 
@@ -994,6 +1048,9 @@ struct Builder {
 			element_destination.offset += element_size;
 		}
 	}
+	void output_impl(Site destination, ZeroInitialized *zi) {
+		I(copy, destination, 0, get_size(zi->type));
+	}
 	void output_impl(Return *ret) {
 		if (ret->value) {
 			Site return_value_destination = Address { .base = Register::returns };
@@ -1016,6 +1073,7 @@ struct Builder {
 			I(jf, cr, 0);
 		}
 		output_discard(While->body);
+		scoped_replace(current_location, While->body->location.take(-1));
 		I(jmp, (s64)condition_index);
 		output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
 		for (auto i : continue_jump_indices.get_or_insert(While)) {
@@ -1075,7 +1133,7 @@ struct Builder {
 	} 
 
 	void load_address(Site destination, Expression *expression) {
-		scoped_replace(current_node, expression);
+		scoped_replace(current_location, expression->location);
 		switch (expression->kind) {
 #define x(name) case NodeKind::name: load_address_impl(destination, (name *)expression); break;
 			ENUMERATE_EXPRESSION_KIND(x)
@@ -1136,6 +1194,7 @@ struct Builder {
 		I(add8, destination, destination, offset);
 	}
 	void load_address_impl(Site destination, ArrayConstructor *node) { not_implemented(); }
+	void load_address_impl(Site destination, ZeroInitialized *zi) { not_implemented(); }
 
 #undef MI
 #undef I

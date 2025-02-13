@@ -1,7 +1,9 @@
 #pragma once
-#include "common.h"
+#include "../common.h"
 
 using namespace tl;
+
+struct Lambda;
 
 namespace Bytecode {
 
@@ -27,12 +29,51 @@ enum class Register : u8 {
 #undef x
 };
 
+inline umm append(StringBuilder &builder, Register r) {
+	switch (r) {
+#define x(name, value) case Register::name: return append(builder, #name);
+		ENUMERATE_NAMED_BYTECODE_REGISTERS
+#undef x
+	}
+	return append_format(builder, "r{}", (u64)r);
+}
+
 struct Address {
 	Optional<Register> base = {};
 	Register element_index = {};
 	u8 element_size = {};
 	s64 offset = {};
 };
+
+inline umm append(StringBuilder &builder, Address a) {
+	umm result = 0;
+	result += append(builder, '[');
+	if (a.base)
+		if (a.element_size)
+			if (a.offset)
+				result += append_format(builder, "{}+{}*{}{}{}", a.base.value(), a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
+			else
+				result += append_format(builder, "{}+{}*{}", a.base.value(), a.element_index, a.element_size);
+		else
+			if (a.offset)
+				result += append_format(builder, "{}{}{}", a.base.value(), a.offset < 0 ? "-" : "+", abs(a.offset));
+			else
+				result += append_format(builder, "{}", a.base.value());
+	else
+		if (a.element_size)
+			if (a.offset)
+				result += append_format(builder, "{}*{}{}{}", a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
+			else
+				result += append_format(builder, "{}*{}", a.element_index, a.element_size);
+		else
+			if (a.offset)
+				result += append_format(builder, "{}{}", a.offset < 0 ? "-" : "", abs(a.offset));
+			else
+				result += append_format(builder, "0");
+
+	result += append(builder, ']');
+	return result;
+}
 
 struct Site {
 	Site() { memset(this, 0, sizeof(*this)); }
@@ -53,6 +94,13 @@ private:
 		Address a;
 	};
 };
+
+inline umm append(StringBuilder &builder, Site s) {
+	if (s.is_register())
+		return append(builder, s.get_register());
+	else
+		return append(builder, s.get_address());
+}
 
 struct InputValue {
 	InputValue() { memset(this, 0, sizeof(*this)); }
@@ -90,11 +138,26 @@ private:
 	};
 };
 
+inline umm append(StringBuilder &builder, InputValue v) {
+	if (v.is_register())
+		return append(builder, v.get_register());
+	else if (v.is_address())
+		return append(builder, v.get_address());
+	else
+		return append(builder, v.get_constant());
+}
+
+/*
+#define x(name)
+ENUMERATE_INTRINSICS
+#undef x
+*/
 #define ENUMERATE_INTRINSICS \
-	x(println_S64) \
-	x(println_String) \
+	x(print_S64) \
+	x(print_String) \
 	x(panic) \
 	x(debug_break) \
+	x(assert) \
 
 enum class Intrinsic : u8 {
 #define x(name) name,
@@ -184,17 +247,28 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(sex84,  (y(Site, d) y(InputValue, a))) \
 	x(call, (y(InputValue, d))) \
 	x(callext, (y(Lambda *, lambda) y(String, lib) y(String, name))) \
+	x(copyext, (y(Site, d) y(String, lib) y(String, name))) \
 	x(ret,  ()) \
 	x(jmp,  (y(InputValue, d))) \
 	x(jf,   (y(Site, s) y(InputValue, d))) \
 	x(jt,   (y(Site, s) y(InputValue, d))) \
-	x(intrinsic, (y(Intrinsic, i))) \
+	x(intrinsic, (y(Intrinsic, i) y(String, message))) \
 
 enum class InstructionKind : u8 {
 #define x(name, fields) name,
 	ENUMERATE_BYTECODE_INSTRUCTION_KIND
 #undef x
 };
+
+inline umm append(StringBuilder &builder, InstructionKind i) {
+	switch (i) {
+		#define x(name, fields) case InstructionKind::name: return append(builder, #name);
+		ENUMERATE_BYTECODE_INSTRUCTION_KIND
+		#undef x		
+
+	}
+	return append_format(builder, "(unknown InstructionKind {})", (u64)i);
+}
 
 struct Instruction {
 	InstructionKind kind;
@@ -277,62 +351,7 @@ struct Callback {
 
 u64 ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *lambda);
 
-Callback generate_callback(Lambda *lambda) {
-	// arg0 - rcx
-	// arg1 - rdx
-	// arg2 - r8
-	// arg3 - r9
-	assert(lambda->head.parameters_block.definition_list.count == 4, "Other count of arguments not implemented");
-	List<u8> bytes;
-	
-	// sub rsp, 40 // 8 bytes for lambda and 32 bytes for shadow space
-	bytes.add({0x48, 0x83, 0xec, 40});
-
-	// mov r10, lambda
-	bytes.add({0x49, 0xba});
-	bytes.add(value_as_bytes(lambda));
-
-	// mov r11, ffi_callback
-	bytes.add({0x49, 0xbb});
-	bytes.add(value_as_bytes(&ffi_callback));
-	
-	// mov qword ptr[rsp+32], r10
-	bytes.add({0x4c, 0x89, 0x54, 0x24, 32});
-
-	// call r11
-	bytes.add({0x41, 0xff, 0xd3});
-	
-	// add rsp, 40
-	bytes.add({0x48, 0x83, 0xc4, 40});
-
-	// ret
-	bytes.add({0xc3});
-
-
-	#if OS_WINDOWS
-	void *page = VirtualAlloc(0, bytes.count, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-	#elif OS_LINUX
-	void *page = mmap(NULL, bytes.count, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	#endif
-
-	memcpy(page, bytes.data, bytes.count);
-	memset((char *)page + bytes.count, 0xcc, ceil(bytes.count, (umm)4096) - bytes.count);
-
-	#if OS_WINDOWS
-	DWORD old_protect;
-	if (!VirtualProtect(page, bytes.count, PAGE_EXECUTE_READ, &old_protect)) {
-		immediate_reporter.error(lambda->location, "FATAL: VirtualProtect failed: {}", win32_error());
-		exit(-1);
-	}
-	#elif OS_LINUX
-    if (mprotect(page, bytes.count, PROT_READ | PROT_EXEC) == -1) {
-		immediate_reporter.error(lambda->location, "FATAL: mprotect failed: {}", strerror(errno));
-    }
-	#endif
-
-	return {page};
-}
-
+Callback generate_callback(Lambda *lambda);
 
 struct Bytecode {
 	List<Instruction> instructions;
@@ -340,5 +359,50 @@ struct Bytecode {
 	List<u8> global_mutable_data;
 	HashMap<u64, Lambda *> first_instruction_to_lambda;
 };
+
+#define y(type, name) \
+	if (need_comma) { result += print(", "); } \
+	need_comma = true; \
+	result += print(i.name); \
+
+#define x(name, fields) \
+inline umm print_instruction(Instruction::name##_t i) { \
+	umm result = 0; \
+	result += print(InstructionKind::name); \
+	result += print(' '); \
+	bool need_comma = false; \
+	PASSTHROUGH fields; \
+	return result; \
+}
+ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+#undef y
+
+inline umm print_instruction(Instruction i) {
+	switch (i.kind) {
+#define x(name, fields) case InstructionKind::name: return print_instruction(i.v_##name);
+		ENUMERATE_BYTECODE_INSTRUCTION_KIND
+#undef x
+	}
+	return print("(unknown InstructionKind {})", (u64)i.kind);
+}
+
+inline void print_instruction(umm index, Instruction instruction) {
+	umm c = 0;
+	c += print("{}: ", index);
+	c += print_instruction(instruction);
+	while (c <= 32) {
+		print(' ');
+		c++;
+	}
+	with(ConsoleColor::gray, println("{}:{}", instruction.file, instruction.line));
+}
+
+inline void print_instructions(Span<Instruction> instructions) {
+	for (auto [index, instruction] : enumerate(instructions)) {
+		print_instruction(index, instruction);
+	}
+	println();
+}
 
 }

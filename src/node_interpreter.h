@@ -214,6 +214,7 @@ private:
 	}
 	Value load_address_impl(ArrayConstructor *) { invalid_code_path(); }
 	Value load_address_impl(Import *) { invalid_code_path(); }
+	Value load_address_impl(ZeroInitialized *) { invalid_code_path(); }
 
 	Value execute(Node *node) {
 		scoped_replace(debug_current_location, node->location);
@@ -717,6 +718,9 @@ private:
 	}
 	Value execute_impl(Import *import) { invalid_code_path(); }
 	Value execute_impl(Defer *defer_) { not_implemented(); }
+	Value execute_impl(ZeroInitialized *zi) {
+		return zero_of_type(zi->type);
+	}
 };
 
 #undef PERFORM_WITH_BREAKS
