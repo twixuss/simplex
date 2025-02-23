@@ -171,10 +171,16 @@ struct Lexer {
 					}
 					goto restart;
 				} else if (*cursor == '*') {
+					int level = 1;
 					while (true) {
-						if (String(cursor, 2) == "*/") {
+						if (String(cursor, 2) == "/*") {
 							cursor += 2;
-							break;
+							level += 1;
+						} else if (String(cursor, 2) == "*/") {
+							cursor += 2;
+							level -= 1;
+							if (level == 0)
+								break;
 						}
 						next();
 						if (cursor > source.end()) {

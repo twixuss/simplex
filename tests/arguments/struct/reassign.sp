@@ -1,6 +1,6 @@
 // COMPILER ERROR
 // COMPILER OUTPUT Member "b" was already assigned
-const Foo = struct {
+const Foo = struct #must_be_fully_initialized {
     a: Int
     b: Int
 }

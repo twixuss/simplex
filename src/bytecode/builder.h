@@ -135,6 +135,7 @@ struct Builder {
 	}
 
 	void append_lambda(Lambda *lambda) {
+		assert(!lambda->head.is_template);
 		scoped_replace(current_location, lambda->location);
 		scoped_replace(locals_size, 0);
 		scoped_replace(max_temporary_size, 0);
@@ -446,7 +447,9 @@ struct Builder {
 	void output_discard(Node *node) {
 		scoped_replace(current_location, node->location);
 		if (auto definition = as<Definition>(node)) {
-			output_local_definition({}, definition);
+			if (definition->mutability != Mutability::constant) {
+				output_local_definition({}, definition);
+			}
 		} else if (auto expression = as<Expression>(node)) {
 			tmpval(destination, get_size(expression->type));
 			output(destination, expression);

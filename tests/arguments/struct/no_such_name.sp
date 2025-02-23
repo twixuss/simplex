@@ -1,6 +1,6 @@
 // COMPILER ERROR
 // COMPILER OUTPUT Struct "Foo" does not have member named blabla
-const Foo = struct {
+const Foo = struct #must_be_fully_initialized {
     a: Int
     b: Int
 }

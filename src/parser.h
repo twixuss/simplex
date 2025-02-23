@@ -48,6 +48,258 @@ struct Parser {
 		}
 	}
 
+	// Returns true if list was present
+	bool parse_list(u64 opening, u64 separator, u64 closing, auto fn) {
+		if (token.kind != opening)
+			return false;
+		
+		next();
+		skip_lines();
+
+		if (token.kind != closing) {
+			while (true) {
+				fn();
+				
+				skip_lines();
+
+				if (token.kind == separator) {
+					next();
+					skip_lines();
+					if (token.kind == closing) {
+						break;
+					}
+					continue;
+				}
+				if (token.kind == closing) {
+					break;
+				}
+			}
+		}
+		
+		next();
+
+		return true;
+	}
+
+	struct ParsedLambda {
+		Expression *lambda_or_head = 0;
+		String name = {};
+	};
+
+	ParsedLambda parse_lambda() {
+		auto lambda = Lambda::create();
+		lambda->location = token.string;
+		lambda->head.template_parameters_block.parent = current_block;
+
+		scoped_replace(current_block, &lambda->head.parameters_block);
+		scoped_replace(current_loop, 0);
+		scoped_replace(current_container, lambda);
+		assert(current_container->kind == NodeKind::Lambda);
+
+		String lambda_name = {};
+
+		next();
+		skip_lines();
+
+		if (token.kind == Token_name) {
+			lambda_name = token.string;
+			next();
+			skip_lines();
+		}
+		
+		lambda->head.is_template = parse_list('[', ',', ']', [&] {
+			expect(Token_name);
+
+			List<Definition *> template_parameter_group;
+
+			auto create_and_add_template_parameter = [&] {
+				auto template_parameter = Definition::create();
+				template_parameter->name = token.string;
+				template_parameter->location = token.string;
+				template_parameter_group.add(template_parameter);
+			};
+
+			create_and_add_template_parameter();
+
+			next();
+			skip_lines();
+
+			while (token.kind == ',') {
+				next();
+				skip_lines();
+				expect(Token_name);
+				create_and_add_template_parameter();
+				next();
+			}
+						
+			if (token.kind != ':') {
+				reporter.error(token.string, "Expected {}, but got {}", (TokenKind)':', token);
+				reporter.help(lambda->location, "We are currently parsing a lambda, because only lambdas start with `(`. If you want to wrap an operation, do that with a block `{}`");
+				yield(YieldResult::fail);
+			}
+
+			next();
+			skip_lines();
+
+			auto parsed_type = parse_expression();
+
+			for (auto template_parameter : template_parameter_group) {
+				template_parameter->container = lambda;
+				template_parameter->parsed_type = parsed_type;
+				template_parameter->is_template_parameter = true;
+				template_parameter->mutability = Mutability::constant;
+
+				if (auto found = lambda->head.template_parameters_block.definition_map.find(template_parameter->name); found && found->value.count) {
+					reporter.error(template_parameter->location, "Redefinition of template_parameter '{}'", template_parameter->name);
+					reporter.info(found->value[0]->location, "First definition here:");
+					yield(YieldResult::fail);
+				}
+
+				lambda->head.template_parameters_block.add(template_parameter);
+			}
+		});
+
+		expect('(');
+		parse_list('(', ',', ')', [&] {
+			expect({Token_name, Token_var, Token_let, Token_const});
+
+			auto mutability = Mutability::readonly;
+
+			switch (token.kind) {
+				case Token_var:
+				case Token_let:
+				case Token_const:
+					mutability = to_mutability(token.kind).value();
+					next();
+					skip_lines();
+					expect(Token_name);
+					break;
+			}
+
+			List<Definition *> parameter_group;
+
+			auto create_and_add_parameter = [&] {
+				auto parameter = Definition::create();
+				parameter->name = token.string;
+				parameter->location = token.string;
+				parameter_group.add(parameter);
+			};
+
+			create_and_add_parameter();
+
+			next();
+			skip_lines();
+
+			while (token.kind == ',') {
+				next();
+				skip_lines();
+				expect(Token_name);
+				create_and_add_parameter();
+				next();
+			}
+						
+			if (token.kind != ':') {
+				reporter.error(token.string, "Expected {}, but got {}", (TokenKind)':', token);
+				reporter.help(lambda->location, "We are currently parsing a lambda, because only lambdas start with `(`. If you want to wrap an operation, do that with a block `{}`");
+				yield(YieldResult::fail);
+			}
+
+			next();
+			skip_lines();
+
+			auto parsed_type = parse_expression();
+
+			for (auto parameter : parameter_group) {
+				parameter->container = lambda;
+				parameter->parsed_type = parsed_type;
+				parameter->is_parameter = true;
+				parameter->mutability = mutability;
+
+				if (auto found = lambda->head.parameters_block.definition_map.find(parameter->name); found && found->value.count) {
+					reporter.error(parameter->location, "Redefinition of parameter '{}'", parameter->name);
+					reporter.info(found->value[0]->location, "First definition here:");
+					yield(YieldResult::fail);
+				}
+
+				lambda->head.parameters_block.add(parameter);
+			}
+		});
+
+		bool body_required = true;
+		bool should_expect_arrow = true;
+
+		if (token.kind == ':') {
+			next();
+			skip_lines();
+
+			lambda->head.parsed_return_type = parse_expression_0();
+			body_required = false;
+		} else if (token.kind == '{') {
+			body_required = true;
+			should_expect_arrow = false;
+		}
+				
+		lambda->head.location = lambda->location = { lambda->location.begin(), previous_token.string.end() };
+
+		if (should_expect_arrow) {
+			constexpr auto arrow = const_string_to_token_kind("=>"s);
+			if (lambda->head.parsed_return_type) {
+				if (token.kind == arrow) {
+					next();
+					body_required = true;
+				}
+			} else {
+				if (token.kind != arrow) {
+					reporter.error(token.string, "Expected : or => after )");
+
+					reporter.help("Functions are written like this:\n\n    (a: Type1, b: Type2): ReturnType => BodyExpression\n\nReturnType can be omitted:\n\n    (a: Type1, b: Type2) => BodyExpression");
+					yield(YieldResult::fail);
+				}
+				next();
+				body_required = true;
+			}
+		}
+
+		if (body_required) {
+			skip_lines();
+
+			while (token.kind == Token_directive) {
+				if (token.string == u8"#intrinsic"s) {
+					lambda->is_intrinsic = true;
+				} else if (token.string == u8"#extern"s) {
+					lambda->is_extern = true;
+					lambda->extern_library = extern_library;
+				} else {
+					reporter.error(token.string, "Unknown lambda directive '{}'.", token.string);
+					yield(YieldResult::fail);
+				}
+				next();
+			}
+
+			if (lambda->is_intrinsic || lambda->is_extern) {
+				if (lambda->head.is_template) {
+					reporter.error(lambda->location, "Templated lambdas can't be intrinsic or extern and must have a body");
+					yield(YieldResult::fail);
+				}
+
+				return {finish_node(lambda), lambda_name};
+			}
+
+			lambda->body = parse_expression();
+
+			return {finish_node(lambda), lambda_name};
+		}
+
+		NOTE_LEAK(lambda, u8"the rest of the lambda is unused.can't just free lambda because head is in it"s);
+		
+		if (lambda->head.is_template) {
+			reporter.error(lambda->location, "Using templated lambdas as types is not supported");
+			yield(YieldResult::fail);
+		}
+
+		return {finish_node(&lambda->head), lambda_name};
+	}
+
 	// Parses parse_expression_2 with binary operators and definitions.
 	Expression *parse_expression(bool whitespace_is_skippable_before_binary_operator = false, int right_precedence = 0) {
 		switch (token.kind) {
@@ -102,11 +354,7 @@ struct Parser {
 					definition->initial_value = parse_expression();
 
 					if (definition->mutability == Mutability::constant) {
-						if (auto lambda = as<Lambda>(definition->initial_value)) {
-							lambda->definition = definition;
-						} else if (auto Struct = as<::Struct>(definition->initial_value)) {
-							Struct->definition = definition;
-						}
+						link_constant_definition_to_initial_value(definition);
 					}
 				} else {
 					//if (definition->mutability != Mutability::variable) {
@@ -284,165 +532,7 @@ struct Parser {
 	// Parses single-part expressions
 	Expression *parse_expression_0() {
 		switch (token.kind) {
-			case Token_fn: {
-				auto lambda = Lambda::create();
-				lambda->location = token.string;
-				lambda->head.parameters_block.parent = current_block;
-
-				scoped_replace(current_block, &lambda->head.parameters_block);
-				scoped_replace(current_loop, 0);
-				scoped_replace(current_container, lambda);
-				assert(current_container->kind == NodeKind::Lambda);
-
-				next();
-				skip_lines();
-
-				expect('(');
-
-				next();
-				skip_lines();
-
-				if (token.kind != ')') {
-					while (true) {
-						expect({Token_name, Token_var, Token_let, Token_const});
-
-						auto mutability = Mutability::readonly;
-
-						switch (token.kind) {
-							case Token_var:
-							case Token_let:
-							case Token_const:
-								mutability = to_mutability(token.kind).value();
-								next();
-								skip_lines();
-								expect(Token_name);
-								break;
-						}
-
-						List<Definition *> parameter_group;
-
-						auto create_and_add_parameter = [&] {
-							auto parameter = Definition::create();
-							parameter->name = token.string;
-							parameter->location = token.string;
-							parameter_group.add(parameter);
-						};
-
-						create_and_add_parameter();
-
-						next();
-						skip_lines();
-
-						while (token.kind == ',') {
-							next();
-							skip_lines();
-							expect(Token_name);
-							create_and_add_parameter();
-							next();
-						}
-						
-						if (token.kind != ':') {
-							reporter.error(token.string, "Expected {}, but got {}", (TokenKind)':', token);
-							reporter.help(lambda->location, "We are currently parsing a lambda, because only lambdas start with `(`. If you want to wrap an operation, do that with a block `{}`");
-							yield(YieldResult::fail);
-						}
-
-						next();
-						skip_lines();
-
-						auto parsed_type = parse_expression();
-
-						for (auto parameter : parameter_group) {
-							parameter->container = lambda;
-							parameter->parsed_type = parsed_type;
-							parameter->is_parameter = true;
-							parameter->mutability = mutability;
-
-							if (auto found = lambda->head.parameters_block.definition_map.find(parameter->name); found && found->value.count) {
-								reporter.error(parameter->location, "Redefinition of parameter '{}'", parameter->name);
-								reporter.info(found->value[0]->location, "First definition here:");
-								yield(YieldResult::fail);
-							}
-
-							lambda->head.parameters_block.add(parameter);
-						}
-
-						skip_lines();
-						if (token.kind == ',') {
-							next();
-							skip_lines();
-							if (token.kind == ')') {
-								break;
-							}
-							continue;
-						}
-						if (token.kind == ')') {
-							break;
-						}
-					}
-				}
-				
-				next();
-				skip_lines();
-
-				bool body_required = true;
-
-				if (token.kind == ':') {
-					next();
-					skip_lines();
-
-					lambda->head.parsed_return_type = parse_expression_0();
-					body_required = false;
-				}
-				
-				lambda->head.location = lambda->location = { lambda->location.begin(), previous_token.string.end() };
-
-				constexpr auto arrow = const_string_to_token_kind("=>"s);
-				if (lambda->head.parsed_return_type) {
-					if (token.kind == arrow) {
-						next();
-						body_required = true;
-					}
-				} else {
-					if (token.kind != arrow) {
-						reporter.error(token.string, "Expected : or => after )");
-
-						reporter.help("Functions are written like this:\n\n    (a: Type1, b: Type2): ReturnType => BodyExpression\n\nReturnType can be omitted:\n\n    (a: Type1, b: Type2) => BodyExpression");
-						yield(YieldResult::fail);
-					}
-					next();
-					body_required = true;
-				}
-
-				if (body_required) {
-					skip_lines();
-
-					while (token.kind == Token_directive) {
-						if (token.string == u8"#intrinsic"s) {
-							lambda->is_intrinsic = true;
-						} else if (token.string == u8"#extern"s) {
-							lambda->is_extern = true;
-							lambda->extern_library = extern_library;
-						} else {
-							reporter.error(token.string, "Unknown lambda directive '{}'.", token.string);
-							yield(YieldResult::fail);
-						}
-						next();
-					}
-
-					if (lambda->is_intrinsic || lambda->is_extern) {
-						return finish_node(lambda);
-					}
-
-					lambda->body = parse_expression();
-
-					return finish_node(lambda);
-				}
-
-				NOTE_LEAK(lambda, u8"the rest of the lambda is unused.can't just free lambda because head is in it"s);
-		
-				return finish_node(&lambda->head);
-			}
+			case Token_fn: return parse_lambda().lambda_or_head;
 			case '(': {
 				next();
 				skip_lines();
@@ -729,6 +819,17 @@ struct Parser {
 
 				Struct->location = token.string;
 				next();
+				skip_lines();
+				if (token.kind == Token_directive) {
+					if (token.string == u8"#must_be_fully_initialized"s) {
+						Struct->must_be_fully_initialized = true;
+					} else {
+						reporter.error(token.string, "Unknown directive for struct");
+						yield(YieldResult::fail);
+					}
+					next();
+					skip_lines();
+				}
 				expect('{');
 				next();
 				skip_lines();
@@ -1023,6 +1124,27 @@ struct Parser {
 
 				return defer_;
 			}
+			case Token_fn: {
+				auto parsed = parse_lambda();
+				
+				if (!parsed.name.count) {
+					return parsed.lambda_or_head;
+				}
+
+				if (parsed.lambda_or_head->kind == NodeKind::LambdaHead) {
+					reporter.error(parsed.lambda_or_head->location, "This is a type, but an actual lambda was expected.");
+					yield(YieldResult::fail);
+				}
+				assert(parsed.lambda_or_head->kind == NodeKind::Lambda);
+
+				auto definition = Definition::create();
+				definition->name = parsed.name;
+				definition->initial_value = parsed.lambda_or_head;
+				definition->location = parsed.name;
+				definition->mutability = Mutability::constant;
+				link_constant_definition_to_initial_value(definition);
+				return definition;
+			}
 		}
 
 		auto expression = parse_expression();
@@ -1083,6 +1205,14 @@ struct Parser {
 		result_node = 0;
 		tl::yield(fiber);
 		return result_node;
+	}
+
+	void link_constant_definition_to_initial_value(Definition *definition) {
+		if (auto lambda = as<Lambda>(definition->initial_value)) {
+			lambda->definition = definition;
+		} else if (auto Struct = as<::Struct>(definition->initial_value)) {
+			Struct->definition = definition;
+		}
 	}
 
 	void ensure_allowed_in_statement_context(Node *node) {

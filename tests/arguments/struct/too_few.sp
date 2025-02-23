@@ -1,6 +1,6 @@
 // COMPILER ERROR
-// COMPILER OUTPUT Too few arguments. Value for a was not provided
-const Foo = struct {
+// COMPILER OUTPUT Member `a` must be initialized
+const Foo = struct #must_be_fully_initialized {
     a: Int
     b: Int
 }

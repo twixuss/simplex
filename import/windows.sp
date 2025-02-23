@@ -389,9 +389,9 @@ const MEM_RELEASE                     = 0x00008000
 const MEM_FREE                        = 0x00010000  
 
 #extern "user32"
-const RegisterClassExA = fn (class: *WNDCLASSEXA): *None => #extern
+fn RegisterClassExA(class: *WNDCLASSEXA): *None => #extern
 
-const CreateWindowExA = fn (
+fn CreateWindowExA(
     dwExStyle: DWORD,
     lpClassName: LPCSTR,
     lpWindowName: LPCSTR,
@@ -406,16 +406,16 @@ const CreateWindowExA = fn (
     lpParam: LPVOID,
 ): HWND => #extern
 
-const DefWindowProcA = fn (
+fn DefWindowProcA(
     hWnd: HWND,
     Msg: UINT,
     wParam: WPARAM,
     lParam: LPARAM,
 ): LRESULT => #extern;
     
-const PostQuitMessage = fn (exit_code: int): None => #extern
+fn PostQuitMessage(exit_code: int): None => #extern
 
-const PeekMessageA = fn (
+fn PeekMessageA(
     lpMsg: *var MSG,
     hWnd: HWND,
     wMsgFilterMin: UINT,
@@ -424,24 +424,24 @@ const PeekMessageA = fn (
 ): BOOL => #extern
     
 // FIXME lpMsg is const in c
-const TranslateMessage = fn (lpMsg: *var MSG): BOOL => #extern
+fn TranslateMessage(lpMsg: *var MSG): BOOL => #extern
 // FIXME lpMsg is const in c
-const DispatchMessageA = fn (lpMsg: *var MSG): LRESULT => #extern;
+fn DispatchMessageA(lpMsg: *var MSG): LRESULT => #extern;
 
 #extern "kernel32"
-const GetModuleHandleA = fn (module_name: LPCSTR): HMODULE => #extern
+fn GetModuleHandleA(module_name: LPCSTR): HMODULE => #extern
 
-const VirtualAlloc = fn (
+fn VirtualAlloc(
     lpAddress: LPVOID,
     dwSize: SIZE_T,
     flAllocationType: DWORD,
     flProtect: DWORD,
 ): LPVOID => #extern
 
-const VirtualFree = fn (
+fn VirtualFree(
     lpAddress: LPVOID,
     dwSize: SIZE_T,
     dwFreeType: DWORD,
 ): BOOL => #extern
 
-const GetLastError = fn (): DWORD => #extern;
+fn GetLastError(): DWORD => #extern;

@@ -101,6 +101,7 @@ ENUMERATE_ABSTRACT_BUILTIN_TYPES(x)
 #define ENUMERATE_ABSTRACT_BUILTIN_TYPES(x) \
 	x(UnsizedInteger) \
 	x(Overload) \
+	x(Template) \
 
 /*
 #define x(name)

@@ -1,6 +1,6 @@
 // COMPILER ERROR
 // COMPILER OUTPUT Too many arguments. Expected 2, but got 3
-const Foo = struct {
+const Foo = struct #must_be_fully_initialized {
     a: Int
     b: Int
 }

@@ -9,6 +9,7 @@ const Allocation = struct {
     data: *var None
     size: U64
     alignment: U64
+    is_zeroed: Bool
 }
 
 // 
@@ -19,9 +20,9 @@ const Allocator = struct {
     state: *None
 }
 
-const allocate = fn (allocator: Allocator, new: Allocation): Allocation => allocator.func(allocator.state, AA_ALLOCATE, Allocation(), new)
-const reallocate = fn (allocator: Allocator, old: Allocation, new: Allocation): Allocation => allocator.func(allocator.state, AA_REALLOCATE, old, new)
-const deallocate = fn (allocator: Allocator, old: Allocation): None => allocator.func(allocator.state, AA_DEALLOCATE, old, Allocation())
+fn allocate(allocator: Allocator, new: Allocation): Allocation => allocator.func(allocator.state, AA_ALLOCATE, Allocation(), new)
+fn reallocate(allocator: Allocator, old: Allocation, new: Allocation): Allocation => allocator.func(allocator.state, AA_REALLOCATE, old, new)
+fn deallocate(allocator: Allocator, old: Allocation): None => allocator.func(allocator.state, AA_DEALLOCATE, old, Allocation())
 
 // 
 // Page Allocator
@@ -31,16 +32,20 @@ const PAGE_SIZE = 4096
 const PageAllocator = struct {}
 let page_allocator = PageAllocator()
 
-const allocate = fn (allocator: PageAllocator, new: Allocation): Allocation => {
+fn allocate(allocator: PageAllocator, new: Allocation): Allocation => {
     assert(8 <= new.alignment && new.alignment <= PAGE_SIZE)
     assert(is_power_of_2(new.alignment))
     var result: Allocation
     result.data = VirtualAlloc(none, new.size as SIZE_T, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE)
     result.size = ceil(new.size, PAGE_SIZE)
     result.alignment = PAGE_SIZE
+    result.is_zeroed = true
     result
 }
-const reallocate = fn (allocator: PageAllocator, old: Allocation, new: Allocation): Allocation => {
+fn reallocate(allocator: PageAllocator, old: Allocation, new: Allocation): Allocation => {
+    if old.data == none
+        return allocator.allocate(new)
+
     assert(8 <= new.alignment && new.alignment <= PAGE_SIZE)
     assert(is_power_of_2(new.alignment))
     var result = old
@@ -55,7 +60,7 @@ const reallocate = fn (allocator: PageAllocator, old: Allocation, new: Allocatio
     result
 }
 
-const deallocate = fn (allocator: PageAllocator, old: Allocation): None => {
+fn deallocate(allocator: PageAllocator, old: Allocation): None => {
     VirtualFree(old.data, 0, MEM_RELEASE)
 }
 

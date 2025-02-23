@@ -3,6 +3,7 @@
 #include "targets\x64\x64.h"
 #include <tl/main.h>
 #include <tl/process.h>
+#include <tl/variant.h>
 
 #define ENABLE_STRING_HASH_COUNT 0
 #define ENABLE_NOTE_LEAK 0
@@ -78,6 +79,7 @@ bool run_compiled_code = false;
 bool print_stats = false;
 bool should_print_ast = false;
 bool run_interactive = false;
+u32 nested_reports_verbosity = 1;
 
 enum class InterpretMode {
 	bytecode,
@@ -677,23 +679,35 @@ struct Report {
 	void print() {
 		scoped(temporary_allocator_and_checkpoint);
 
+		bool verbose = indentation < nested_reports_verbosity;
+		
+		if (verbose) {
+			print_report_indentation(indentation);
+			println();
+		}
+
 		if (location.data) {
 			auto source_location = get_source_location(location);
 
 			print_report_indentation(indentation);
-			println("{}: ", source_location);
+			tl::print("{}: ", source_location);
 
-			print_report_indentation(indentation);
-			print_report_kind(kind);
-			println(": {}",  message);
+			if (verbose) {
+				println();
+				print_report_indentation(indentation);
+				print_report_kind(kind);
+				println(": {}",  message);
 
-			print_source_chunk(source_location, indentation, get_color(kind));
+				print_source_chunk(source_location, indentation, get_color(kind));
+			} else {
+				print_report_kind(kind);
+				println(": {}",  message);
+			}
 		} else {
 			print_report_indentation(indentation);
 			print_report_kind(kind);
 			println(": {}", message);
 		}
-		println();
 	}
 };
 
@@ -717,6 +731,10 @@ struct ReporterBase {
 struct Reporter : ReporterBase {
 	List<Report> reports;
 
+	void add(Report report) {
+		report.indentation = indentation;
+		reports.add(report);
+	}
 	void on_report(Report report) {
 		reports.add(report);
 	}
@@ -1267,6 +1285,7 @@ DEFINE_EXPRESSION(Definition) {
 	Mutability mutability = {};
 	u64 offset = invalid_definition_offset;
 	bool is_parameter : 1 = false;
+	bool is_template_parameter : 1 = false;
 };
 DEFINE_EXPRESSION(IntegerLiteral) {
 	u64 value = 0;
@@ -1280,14 +1299,22 @@ DEFINE_EXPRESSION(StringLiteral) {
 };
 DEFINE_EXPRESSION(LambdaHead) {
 	LambdaHead() {
+		template_parameters_block.container = this;
 		parameters_block.container = this;
+
+		parameters_block.parent = &template_parameters_block;
 	}
-	// Definitions in this block must have unique names.
+	// Definitions in these block must have unique names.
 	// Assume .definition_map[...].count == 1
+	Block template_parameters_block;
 	Block parameters_block;
 	Expression *parsed_return_type = 0;
 	Expression *return_type = 0;
 	u64 total_parameters_size = 0;
+
+	// When true, template parameters are unresolved
+	// If false, all template parameters must have their initial values set to resolved types.
+	bool is_template : 1 = false;
 };
 DEFINE_EXPRESSION(Lambda) {
 	Definition *definition = 0;
@@ -1355,6 +1382,7 @@ DEFINE_EXPRESSION(Struct) {
 	Definition *definition = 0;
 	GList<Definition *> members;
 	s64 size = -1;
+	bool must_be_fully_initialized : 1 = false;
 };
 DEFINE_EXPRESSION(ArrayType) {
 	Expression *element_type = 0;
@@ -2134,6 +2162,10 @@ void print_ast_impl(ZeroInitialized *zi) {
 	print("}");
 }
 void print_ast(Node *node) {
+	if (!node) {
+		print("<NULL>");
+		return;
+	}
 	switch (node->kind) {
 #define x(name) case NodeKind::name: return print_ast_impl((name *)node);
 		ENUMERATE_NODE_KIND(x)
@@ -2891,7 +2923,7 @@ struct Copier {
 
 #define COPY(x) to->x = from->x
 #define DEEP_COPY(x) to->x = deep_copy(from->x)
-#define DEEP_COPY_INPLACE(x) deep_copy_impl(&from->x, &to->x)
+#define DEEP_COPY_INPLACE(x) deep_copy(&from->x, &to->x)
 #define LOOKUP_COPY(x)                               \
 	if (auto found = copied_nodes.find(from->x)) {   \
 		assert(found->value->kind == from->x->kind); \
@@ -2904,24 +2936,33 @@ struct Copier {
 	for (umm i = 0; i < from->x.count; ++i) { \
 		COPY_MODE(x[i]);                      \
 	}
-
+	
+	template <class T>
+	[[nodiscard]] void copy_base(T *from, T *to) {
+		copied_nodes.get_or_insert(from) = to;
+		to->location = from->location;
+	}
 	template <class T>
 	[[nodiscard]] T *copy_base(T *from) {
 		auto to = T::create();
-		copied_nodes.get_or_insert(from) = to;
-		to->location = from->location;
+		copy_base(from, to);
 		return to;
 	}
-
+	
 	template <class T>
-	[[nodiscard]] T *deep_copy(T *from) {
-		auto to = copy_base(from);
+	[[nodiscard]] void deep_copy(T *from, T *to) {
+		copy_base(from, to);
 		deep_copy_impl(from, to);
 		if (auto to_expression = as<Expression>(to)) {
 			auto from_expression = as<Expression>(from);
 			assert(from_expression);
 			assert((bool)from_expression->type == (bool)to_expression->type);
 		}
+	}
+	template <class T>
+	[[nodiscard]] T *deep_copy(T *from) {
+		auto to = T::create();
+		deep_copy(from, to);
 		return to;
 	}
 
@@ -2951,7 +2992,7 @@ struct Copier {
 	}
 	[[nodiscard]] Call::Argument deep_copy(Call::Argument from) {
 		Call::Argument to = from;
-		deep_copy_impl(&to, &from);
+		deep_copy_impl(&from, &to);
 		return to;
 	}
 
@@ -2963,16 +3004,8 @@ struct Copier {
 			to->add(to_child);
 		}
 
-		if (to->children.count) {
-			if (auto last_expression = as<Expression>(to->children.back())) {
-				to->type = last_expression->type;
-			}
-		}
-
-		if (!to->type)
-			to->type = get_builtin_type(BuiltinType::None);
-
 		COPY_LIST(defers, LOOKUP_COPY);
+		LOOKUP_COPY(type);
 	} 
 	void deep_copy_impl(Call *from, Call *to) {
 		DEEP_COPY(callable);
@@ -2984,6 +3017,7 @@ struct Copier {
 	void deep_copy_impl(Call::Argument *from, Call::Argument *to) {
 		DEEP_COPY(expression);
 		LOOKUP_COPY(parameter);
+		to->name = from->name;
 	}
 	void deep_copy_impl(Definition *from, Definition *to) {
 		COPY(name);
@@ -2993,30 +3027,26 @@ struct Copier {
 			DEEP_COPY(initial_value);
 
 		COPY(is_parameter);
+		COPY(is_template_parameter);
 		COPY(mutability);
 
 		LOOKUP_COPY(container);
-
-		if (from->parsed_type) {
-			to->type = to->parsed_type;
-		} else {
-			to->type = to->initial_value->type;
-		}
+		LOOKUP_COPY(type);
 	} 
 	void deep_copy_impl(IntegerLiteral *from, IntegerLiteral *to) {
 		COPY(value);
-		COPY(type);
+		COPY(type); // builtin, no need to look up
 	} 
 	void deep_copy_impl(BooleanLiteral *from, BooleanLiteral *to) {
 		COPY(value);
-		COPY(type);
+		COPY(type); // builtin, no need to look up
 	} 
 	void deep_copy_impl(NoneLiteral *from, NoneLiteral *to) {
-		COPY(type);
+		COPY(type); // builtin, no need to look up
 	} 
 	void deep_copy_impl(StringLiteral *from, StringLiteral *to) {
 		COPY(value);
-		COPY(type);
+		COPY(type); // builtin, no need to look up
 	} 
 	void deep_copy_impl(Lambda *from, Lambda *to) {
 		COPY(inline_status);
@@ -3030,12 +3060,14 @@ struct Copier {
 		LOOKUP_COPY(type);
 	} 
 	void deep_copy_impl(LambdaHead *from, LambdaHead *to) {
+		DEEP_COPY_INPLACE(template_parameters_block);
 		DEEP_COPY_INPLACE(parameters_block);
 		if (from->parsed_return_type) {
 			DEEP_COPY(parsed_return_type);
 		}
 		LOOKUP_COPY(return_type);
-		COPY(type);
+		COPY(is_template);
+		COPY(type); // builtin, no need to look up
 	} 
 	void deep_copy_impl(Name *from, Name *to) {
 		COPY(name);
@@ -3052,17 +3084,17 @@ struct Copier {
 		DEEP_COPY(condition);
 		DEEP_COPY(true_branch);
 		DEEP_COPY(false_branch);
-		COPY(type);
+		LOOKUP_COPY(type);
 	} 
 	void deep_copy_impl(BuiltinTypeName *from, BuiltinTypeName *to) {
 		COPY(type_kind);
-		to->type = get_builtin_type(BuiltinType::Type);
+		COPY(type); // builtin, no need to look up
 	} 
 	void deep_copy_impl(Binary *from, Binary *to) {
 		DEEP_COPY(left);
 		DEEP_COPY(right);
 		COPY(operation);
-		COPY(type);
+		LOOKUP_COPY(type);
 	} 
 	void deep_copy_impl(Match *from, Match *to) {
 		DEEP_COPY(expression);
@@ -3072,13 +3104,13 @@ struct Copier {
 				DEEP_COPY(cases[i].from);
 			DEEP_COPY(cases[i].to);
 		}
-		COPY(type);
+		LOOKUP_COPY(type);
 	} 
 	void deep_copy_impl(Unary *from, Unary *to) {
 		DEEP_COPY(expression);
 		COPY(operation);
 		COPY(mutability);
-		COPY(type);
+		LOOKUP_COPY(type);
 	} 
 	void deep_copy_impl(Return *from, Return *to) {
 		DEEP_COPY(value);
@@ -3101,7 +3133,7 @@ struct Copier {
 	void deep_copy_impl(Subscript *from, Subscript *to) { not_implemented(); }
 	void deep_copy_impl(ArrayConstructor *from, ArrayConstructor *to) {
 		COPY_LIST(elements, DEEP_COPY);
-		COPY(type);
+		LOOKUP_COPY(type);
 	}
 	void deep_copy_impl(Import *from, Import *to) {
 		COPY(path);
@@ -3442,6 +3474,18 @@ struct Typechecker {
 
 		if (yield_result != YieldResult::wait) {
 			locked_use(deferred_reports) {
+				{
+					scoped_replace(reporter.indentation, reporter.indentation + 1);
+					for (auto frame : template_instantiation_stack_for_reports) {
+						StringBuilder builder;
+						append_format(builder, "While instantiating {} with ", frame.original_lambda->definition ? frame.original_lambda->definition->name : u8"unnamed lambda"s);
+						for (auto definition : frame.instantiated_lambda->head.template_parameters_block.definition_list) {
+							append_format(builder, "{} = {}; ", definition->name, definition->initial_value);
+						}
+						reporter.info(frame.original_lambda->location, "{}", to_string(builder));
+					}
+				}
+
 				deferred_reports.add(reporter.reports);
 			};
 		}
@@ -4095,6 +4139,67 @@ private:
 
 		arguments.set(sorted_arguments);
 	}
+	
+	struct TemplateInstantiationForReport {
+		Lambda *original_lambda;
+		Lambda *instantiated_lambda;
+		List<Definition *> template_parameters;
+	};
+
+	List<TemplateInstantiationForReport> template_instantiation_stack_for_reports;
+
+	Expression *instantiate_template(Call *old_call, Lambda *lambda) {
+		// Keep passed in `call` unmodified
+		auto call = Copier{}.deep_copy(old_call);
+		auto new_callable_name = Name::create();
+		auto instantiated_lambda_definition = Definition::create();
+		auto instantiated_lambda = Copier{}.deep_copy(lambda);
+
+		auto &arguments = call->arguments;
+		auto &parameters = lambda->head.parameters_block.definition_list;
+
+		assert(arguments.count == 1, "not_implemented");
+		assert(parameters.count == 1, "not_implemented");
+		
+		make_concrete(arguments[0].expression);
+
+		instantiated_lambda->definition = instantiated_lambda_definition;
+		instantiated_lambda->head.is_template = false;
+		instantiated_lambda->head.template_parameters_block.definition_list[0]->initial_value = arguments[0].expression->type;
+		instantiated_lambda->head.template_parameters_block.definition_list[0]->type = arguments[0].expression->type->type;
+		instantiated_lambda->head.template_parameters_block.definition_list[0]->constant_value = Value(Type(arguments[0].expression->type));
+
+		// Make `typecheck` not early out.
+		instantiated_lambda->head.type = 0;
+		instantiated_lambda->type = 0;
+		call->type = 0;
+
+		template_instantiation_stack_for_reports.add({
+			.original_lambda = lambda,
+			.instantiated_lambda = instantiated_lambda,
+			.template_parameters = instantiated_lambda->head.template_parameters_block.definition_list,
+		});
+
+		typecheck(&instantiated_lambda);
+		
+		template_instantiation_stack_for_reports.pop();
+
+		instantiated_lambda_definition->location = lambda->location;
+		instantiated_lambda_definition->mutability = Mutability::constant;
+		instantiated_lambda_definition->initial_value = instantiated_lambda;
+		instantiated_lambda_definition->name = format(u8"{}"s, instantiated_lambda->uid);
+		instantiated_lambda_definition->type = &instantiated_lambda->head;
+		withs(global_block_lock) {
+			global_block.add(instantiated_lambda_definition);
+		};
+
+		new_callable_name->name = instantiated_lambda_definition->name;
+		new_callable_name->possible_definitions.set(instantiated_lambda_definition);
+		new_callable_name->type = instantiated_lambda_definition->type;
+		call->callable = new_callable_name;
+
+		return typecheck_lambda_call(call, instantiated_lambda, &instantiated_lambda->head, true);
+	}
 
 	// Lambda can be null if it's a function pointer call
 	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply = true) {
@@ -4102,8 +4207,13 @@ private:
 		auto &arguments = call->arguments;
 		auto &callable = call->callable;
 
+		if (lambda && lambda->head.is_template) {
+			return instantiate_template(call, lambda);
+		}
+
 		if (!yield_while_null(call->location, &head->return_type)) {
-			reporter.error(head->location, "Could not wait for lambda's return type");
+			reporter.error(call->location, "INTERNAL ERROR: Lambda `{}` was not properly typechecked. Its return type is not set.", call->callable->location);
+			reporter.info(head->location, "That lambda is here:");
 			fail();
 		}
 
@@ -4195,6 +4305,11 @@ private:
 					fail();
 				}
 			} else {
+				if (Struct->must_be_fully_initialized) {
+					reporter.error(call->location, "Member `{}` must be initialized", member->name);
+					reporter.info(Struct->location, "Struct marked with #must_be_fully_initialized");
+					fail();
+				}
 				argument.expression = ZeroInitialized::create();
 				argument.expression->type = member->type;
 				argument.expression->location = call->location;
@@ -4471,6 +4586,8 @@ private:
 		} else {
 			if (definition->is_parameter) {
 				// Parameters can be immutable and have no initial expression
+			} else if (definition->is_template_parameter) {
+				// Template parameters are constant and may have no initial expression
 			} else if (definition->container && definition->container->kind == NodeKind::Struct) {
 				// Struct members can be immutable and have no initial expression
 			} else {
@@ -4509,23 +4626,27 @@ private:
 		return literal;
 	}
 	[[nodiscard]] LambdaHead *typecheck_impl(LambdaHead *head, bool can_substitute) {
-		typecheck(head->parameters_block);
+		if (head->is_template) {
+			typecheck(head->template_parameters_block);
+		} else {
+			scoped_replace(current_block, &head->template_parameters_block);
+			typecheck(head->parameters_block);
 		
-		u64 total_parameters_size = 0;
-		for (auto parameter : head->parameters_block.definition_list) {
-			parameter->offset = total_parameters_size;
-			auto parameter_size = get_size(parameter->type);
-			parameter_size = max((u64)1, parameter_size);
-			total_parameters_size += parameter_size;
-			total_parameters_size = ceil(total_parameters_size, (u64)8);
-		}
-		head->total_parameters_size = total_parameters_size;
+			u64 total_parameters_size = 0;
+			for (auto parameter : head->parameters_block.definition_list) {
+				parameter->offset = total_parameters_size;
+				auto parameter_size = get_size(parameter->type);
+				parameter_size = max((u64)1, parameter_size);
+				total_parameters_size += parameter_size;
+				total_parameters_size = ceil(total_parameters_size, (u64)8);
+			}
+			head->total_parameters_size = total_parameters_size;
 
-		if (head->parsed_return_type) {
-			typecheck(&head->parsed_return_type);
-			head->return_type = head->parsed_return_type;
+			if (head->parsed_return_type) {
+				typecheck(&head->parsed_return_type);
+				head->return_type = head->parsed_return_type;
+			}
 		}
-
 		head->type = get_builtin_type(BuiltinType::Type);
 		return head;
 	}
@@ -4537,187 +4658,192 @@ private:
 		}
 		typecheck(lambda->head);
 
-		lambda->type = &lambda->head;
-
-		if (lambda->head.return_type) {
-			if (lambda->definition) {
-				lambda->definition->type = lambda->type;
-			}
-		}
-
-		bool all_paths_return = false;
-
-		if (lambda->body) {
-			scoped_replace(current_container, lambda);
-			scoped_replace(current_block, &lambda->head.parameters_block);
-
-			typecheck(&lambda->body);
-
-			all_paths_return = do_all_paths_return(lambda->body);
-		}
-
-		if (lambda->head.return_type) {
-			for (auto ret : lambda->returns) {
-				if (!implicitly_cast(&ret->value, lambda->head.return_type, true)) {
-					reporter.info(lambda->head.return_type->location, "Return type specified here:");
-					fail();
-				}
-			}
-
-			if (!all_paths_return) {
-				if (lambda->body) {
-					if (!implicitly_cast(&lambda->body, lambda->head.return_type, true)) {
-						fail();
-					}
-				}
-			}
+		scoped_replace(current_block, &lambda->head.template_parameters_block);
+		if (lambda->head.is_template) {
+			lambda->type = get_builtin_type(BuiltinType::Template);
 		} else {
-			if (lambda->body) {
-				List<Expression **> return_values;
-				List<Return *> empty_returns;
+			lambda->type = &lambda->head;
 
-				for (auto &ret : lambda->returns) {
-					String mixed_return_value_presence_location = {};
-					if (ret->value) {
-						return_values.add(&ret->value);
-						if (empty_returns.count) {
-							mixed_return_value_presence_location = empty_returns.back()->location;
-						}
-					} else {
-						empty_returns.add(ret);
-						if (return_values.count) {
-							mixed_return_value_presence_location = (*return_values.back())->location;
-						}
-					}
-					if (mixed_return_value_presence_location.count) {
-						reporter.error(ret->location, "Right now you are not allowed to mix return statements with values and without.");
-						reporter.info(mixed_return_value_presence_location, "Here's the other return statement:");
+			if (lambda->head.return_type) {
+				if (lambda->definition) {
+					lambda->definition->type = lambda->type;
+				}
+			}
+
+			bool all_paths_return = false;
+
+			if (lambda->body) {
+				scoped_replace(current_container, lambda);
+				scoped_replace(current_block, &lambda->head.parameters_block);
+
+				typecheck(&lambda->body);
+
+				all_paths_return = do_all_paths_return(lambda->body);
+			}
+
+			if (lambda->head.return_type) {
+				for (auto ret : lambda->returns) {
+					if (!implicitly_cast(&ret->value, lambda->head.return_type, true)) {
+						reporter.info(lambda->head.return_type->location, "Return type specified here:");
 						fail();
 					}
 				}
 
-				if (!types_match(lambda->body->type, BuiltinType::None))
-					return_values.add(&lambda->body);
-
-				if (return_values.count == 0) {
-					lambda->head.return_type = get_builtin_type(BuiltinType::None);
-				} else {
-					List<Expression **> concrete_return_values;
-					List<Expression **> inconcrete_return_values;
-
-					for (auto &return_value : return_values) {
-						if (is_concrete((*return_value)->type)) {
-							concrete_return_values.add(return_value);
-						} else {
-							inconcrete_return_values.add(return_value);
-						}
-					}
-
-					List<Expression **> return_values_to_cast;
-					Expression *picked_value = 0;
-
-					if (inconcrete_return_values.count == 0) {
-						picked_value = *concrete_return_values[0];
-						return_values_to_cast.set(concrete_return_values.skip(1));
-					} else if (concrete_return_values.count == 0) {
-						picked_value = *inconcrete_return_values[0];
-						make_concrete(picked_value);
-						return_values_to_cast.set(inconcrete_return_values.skip(1));
-					} else {
-						picked_value = *concrete_return_values[0];
-						return_values_to_cast.set(concrete_return_values.skip(1));
-						return_values_to_cast.add(inconcrete_return_values);
-					}
-
-					for (auto other : return_values_to_cast) {
-						Reporter cast_reporter;
-						if (!implicitly_cast(other, picked_value->type, &cast_reporter, true)) {
-							reporter.error((*other)->location, "Return value of type {} can't be converted to {}", (*other)->type, picked_value->type);
-							reporter.info(get_non_block_location(picked_value), "Return type {} was deduced from this expression:", picked_value->type);
-							reporter.info("Here's the conversion attempt report:");
-							reporter.reports.add(cast_reporter.reports);
+				if (!all_paths_return) {
+					if (lambda->body) {
+						if (!implicitly_cast(&lambda->body, lambda->head.return_type, true)) {
 							fail();
 						}
 					}
-
-					if (lambda->returns.count && lambda->returns.count == empty_returns.count) {
-						if (!types_match(lambda->body->type, BuiltinType::None)) {
-							reporter.error(lambda->location, "All return statements in this lambda do not provide a value, but lambda's body has a type {}", lambda->body->type);
-							reporter.info(get_non_block_location(lambda->body), "Here's the expression that is implicitly returned");
-							fail();
-						}
-					}
-
-					if (!all_paths_return) {
-						if (!types_match(lambda->body->type, picked_value->type)) {
-							reporter.error(lambda->location, "Not all paths return a value.");
-							fail();
-						}
-					}
-					for (auto &ret : lambda->returns) {
-						if (ret->value) {
-							assert(types_match(ret->value->type, picked_value->type));
-						}
-					}
-
-					lambda->head.return_type = picked_value->type;
 				}
-
-				/*
-				auto body_type = lambda->body->type;
-				if (lambda->returns.count) {
-					List<Expression *> concrete_return_types;
+			} else {
+				if (lambda->body) {
+					List<Expression **> return_values;
 					List<Return *> empty_returns;
 
-					for (auto ret : lambda->returns) {
-						if (!ret->value) {
-							empty_returns.add(ret);
-						} else {
-							if (is_concrete(ret->value->type)) {
-								concrete_return_types.add(ret->value->type);
+					for (auto &ret : lambda->returns) {
+						String mixed_return_value_presence_location = {};
+						if (ret->value) {
+							return_values.add(&ret->value);
+							if (empty_returns.count) {
+								mixed_return_value_presence_location = empty_returns.back()->location;
 							}
+						} else {
+							empty_returns.add(ret);
+							if (return_values.count) {
+								mixed_return_value_presence_location = (*return_values.back())->location;
+							}
+						}
+						if (mixed_return_value_presence_location.count) {
+							reporter.error(ret->location, "Right now you are not allowed to mix return statements with values and without.");
+							reporter.info(mixed_return_value_presence_location, "Here's the other return statement:");
+							fail();
 						}
 					}
 
-					if (empty_returns.count > lambda->returns.count) {
-						reporter.error(empty_returns[0]->location, "TODO: Using both valued and empty return statement in a single function is not yet implemented.");
-						fail();
-					}
+					if (!types_match(lambda->body->type, BuiltinType::None))
+						return_values.add(&lambda->body);
 
-					if (concrete_return_types.count) {
-						lambda->head.return_type = concrete_return_types[0];
-					} else if (empty_returns.count) {
+					if (return_values.count == 0) {
 						lambda->head.return_type = get_builtin_type(BuiltinType::None);
 					} else {
-						make_concrete(lambda->returns[0]->value);
-						for (auto ret : lambda->returns.skip(1)) {
-							if (!implicitly_cast(&ret->value, lambda->returns[0]->value->type, true)) {
+						List<Expression **> concrete_return_values;
+						List<Expression **> inconcrete_return_values;
+
+						for (auto &return_value : return_values) {
+							if (is_concrete((*return_value)->type)) {
+								concrete_return_values.add(return_value);
+							} else {
+								inconcrete_return_values.add(return_value);
+							}
+						}
+
+						List<Expression **> return_values_to_cast;
+						Expression *picked_value = 0;
+
+						if (inconcrete_return_values.count == 0) {
+							picked_value = *concrete_return_values[0];
+							return_values_to_cast.set(concrete_return_values.skip(1));
+						} else if (concrete_return_values.count == 0) {
+							picked_value = *inconcrete_return_values[0];
+							make_concrete(picked_value);
+							return_values_to_cast.set(inconcrete_return_values.skip(1));
+						} else {
+							picked_value = *concrete_return_values[0];
+							return_values_to_cast.set(concrete_return_values.skip(1));
+							return_values_to_cast.add(inconcrete_return_values);
+						}
+
+						for (auto other : return_values_to_cast) {
+							Reporter cast_reporter;
+							if (!implicitly_cast(other, picked_value->type, &cast_reporter, true)) {
+								reporter.error((*other)->location, "Return value of type {} can't be converted to {}", (*other)->type, picked_value->type);
+								reporter.info(get_non_block_location(picked_value), "Return type {} was deduced from this expression:", picked_value->type);
+								reporter.info("Here's the conversion attempt report:");
+								reporter.reports.add(cast_reporter.reports);
 								fail();
 							}
 						}
-						lambda->head.return_type = lambda->returns[0]->value->type;
+
+						if (lambda->returns.count && lambda->returns.count == empty_returns.count) {
+							if (!types_match(lambda->body->type, BuiltinType::None)) {
+								reporter.error(lambda->location, "All return statements in this lambda do not provide a value, but lambda's body has a type {}", lambda->body->type);
+								reporter.info(get_non_block_location(lambda->body), "Here's the expression that is implicitly returned");
+								fail();
+							}
+						}
+
+						if (!all_paths_return) {
+							if (!types_match(lambda->body->type, picked_value->type)) {
+								reporter.error(lambda->location, "Not all paths return a value.");
+								fail();
+							}
+						}
+						for (auto &ret : lambda->returns) {
+							if (ret->value) {
+								assert(types_match(ret->value->type, picked_value->type));
+							}
+						}
+
+						lambda->head.return_type = picked_value->type;
 					}
 
-					for (auto ret : lambda->returns) {
-						if (ret->value) {
-							if (!types_match(ret->value->type, lambda->head.return_type)) {
-								reporter.error(ret->location, "Type {} does not match previously deduced return type {}.", ret->value->type, lambda->head.return_type);
-								reporter.info(lambda->returns[0]->location, "First deduced here:");
-								fail();
+					/*
+					auto body_type = lambda->body->type;
+					if (lambda->returns.count) {
+						List<Expression *> concrete_return_types;
+						List<Return *> empty_returns;
+
+						for (auto ret : lambda->returns) {
+							if (!ret->value) {
+								empty_returns.add(ret);
+							} else {
+								if (is_concrete(ret->value->type)) {
+									concrete_return_types.add(ret->value->type);
+								}
 							}
 						}
+
+						if (empty_returns.count > lambda->returns.count) {
+							reporter.error(empty_returns[0]->location, "TODO: Using both valued and empty return statement in a single function is not yet implemented.");
+							fail();
+						}
+
+						if (concrete_return_types.count) {
+							lambda->head.return_type = concrete_return_types[0];
+						} else if (empty_returns.count) {
+							lambda->head.return_type = get_builtin_type(BuiltinType::None);
+						} else {
+							make_concrete(lambda->returns[0]->value);
+							for (auto ret : lambda->returns.skip(1)) {
+								if (!implicitly_cast(&ret->value, lambda->returns[0]->value->type, true)) {
+									fail();
+								}
+							}
+							lambda->head.return_type = lambda->returns[0]->value->type;
+						}
+
+						for (auto ret : lambda->returns) {
+							if (ret->value) {
+								if (!types_match(ret->value->type, lambda->head.return_type)) {
+									reporter.error(ret->location, "Type {} does not match previously deduced return type {}.", ret->value->type, lambda->head.return_type);
+									reporter.info(lambda->returns[0]->location, "First deduced here:");
+									fail();
+								}
+							}
+						}
+					} else {
+						make_concrete(lambda->body);
+						lambda->head.return_type = lambda->body->type;
 					}
+					*/
 				} else {
-					make_concrete(lambda->body);
-					lambda->head.return_type = lambda->body->type;
+					lambda->head.return_type = get_builtin_type(BuiltinType::None);
 				}
-				*/
-			} else {
-				lambda->head.return_type = get_builtin_type(BuiltinType::None);
 			}
-		}
 
-		assert(lambda->head.return_type);
+			assert(lambda->head.return_type);
+		}
 		return lambda;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Name *name, bool can_substitute) {
@@ -4760,9 +4886,14 @@ private:
 					}
 
 					if (!yield_while_null(name->location, &definition->type)) {
-						if (print_wait_failures) {
-							reporter.error(name->location, "Couldn't wait for definition type.");
-						}
+						// Sometimes this error is meaningless and noisy because is is caused by another error.
+						// But other times compiler fails with only this error, which is not printed in case
+						// print_wait_failures is false.
+
+						//if (print_wait_failures) {
+							reporter.error(name->location, "Definition referenced by this name was not properly typechecked.");
+							reporter.info(definition->location, "Here is the bad definition:");
+						//}
 						fail();
 					}
 
@@ -4806,6 +4937,7 @@ private:
 		return 0;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Call *call, bool can_substitute) {
+		defer { assert(call->callable->type != 0); };
 		if (auto binary = as<Binary>(call->callable)) {
 			if (binary->operation == BinaryOperation::dot) {
 				if (auto lambda_name = as<Name>(binary->right)) {
@@ -4973,8 +5105,12 @@ private:
 			if (matching_overloads.count == 0) {
 				reporter.error(call->location, "No matching overload was found.");
 				for (auto [i, overload] : enumerate(overloads)) {
+					scoped_replace(reporter.indentation, reporter.indentation + 1);
 					reporter.info("Overload #{}:", i);
-					reporter.reports.add(overload.reporter.reports);
+					scoped_replace(reporter.indentation, reporter.indentation + 1);
+					for (auto report : overload.reporter.reports) {
+						reporter.add(report);
+					}
 				}
 				fail();
 			}
@@ -5839,54 +5975,64 @@ void init_globals() {
 	//GlobalAllocator::init();
 }
 
+struct CmdArg {
+	char const *key;
+	Variant<
+		void (*)(),
+		void (*)(u64)
+	> run;
+};
+
+CmdArg args_handlers[] = {
+	{"-threads", +[](u64 number){ requested_thread_count = (u32)number; }},
+	{"-nested-reports-verbosity", +[](u64 number) { nested_reports_verbosity = number; }},
+	{"-print-tokens", +[] { print_tokens = true; }},
+	{"-print-ast", +[] { should_print_ast = true; }},
+	{"-print-uids", +[] { print_uids = true; }},
+	{"-no-constant-name-inlining", +[] { constant_name_inlining = false; }},
+	{"-report-yields", +[] { report_yields = true; }},
+	{"-log-time", +[] { enable_time_log = true; }},
+	{"-debug", +[] { is_debugging = true; }},
+	{"-run-bytecode", +[] { interpret_mode = InterpretMode::bytecode; }},
+	{"-run-ast", +[] { interpret_mode = InterpretMode::ast; }},
+	{"-limit-time", +[] {
+		create_thread([] {
+			int seconds_limit = 10;
+			sleep_milliseconds(seconds_limit * 1000);
+			immediate_reporter.error("Time limit of {} seconds exceeded.", seconds_limit);
+			exit(-1);
+		});
+	}},
+	{"-print-wait-failures", +[] { print_wait_failures = true; }},
+	{"-log-error-path", +[] { enable_log_error_path = true; }},
+	{"-run", +[] { run_compiled_code = true; }},
+	{"-stats", +[] { print_stats = true; }},
+	{"-interactive", +[] { run_interactive = true; }},
+};
+
 bool parse_arguments(Span<Span<utf8>> args) {
 	for (umm i = 1; i < args.count; ++i) {
 
-		if (starts_with(args[i], u8"-t"s)) {
-			auto n = args[i];
-			n.set_begin(n.begin() + 2);
-			if (auto number = parse_u64(n)) {
-				requested_thread_count = (u32)number.value();
-			} else {
-				immediate_reporter.error("Could not parse number after -t. Defaulting to all threads.");
-				goto t_arg_fail;
+		for (auto handler : args_handlers) {
+			if (args[i] == handler.key) {
+				handler.run.visit(Combine {
+					[&](void (*run)()) {
+						run();
+					},
+					[&](void (*run)(u64 x)) {
+						if (++i < args.count) {
+							if (auto number = parse_u64(args[i])) {
+								run(number.value());
+								return;
+							}
+						}
+						immediate_reporter.error("Could not parse number after -threads. Defaulting to all threads.");
+					},
+				});
+				goto next_arg;
 			}
-		} else t_arg_fail: if (args[i] == "-print-tokens") {
-			print_tokens = true;
-		} else if (args[i] == "-print-ast") {
-			should_print_ast = true;
-		} else if (args[i] == "-print-uids") {
-			print_uids = true;
-		} else if (args[i] == "-no-constant-name-inlining") {
-			constant_name_inlining = false;
-		} else if (args[i] == "-report-yields") {
-			report_yields = true;
-		} else if (args[i] == "-log-time") {
-			enable_time_log = true;
-		} else if (args[i] == "-debug") {
-			is_debugging = true;
-		} else if (args[i] == "-run-bytecode") {
-			interpret_mode = InterpretMode::bytecode;
-		} else if (args[i] == "-run-ast") {
-			interpret_mode = InterpretMode::ast;
-		} else if (args[i] == "-limit-time") {
-			create_thread([] {
-				int seconds_limit = 10;
-				sleep_milliseconds(seconds_limit * 1000);
-				immediate_reporter.error("Time limit of {} seconds exceeded.", seconds_limit);
-				exit(-1);
-			});
-		} else if (args[i] == "-print-wait-failures") {
-			print_wait_failures = true;
-		} else if (args[i] == "-log-error-path") {
-			enable_log_error_path = true;
-		} else if (args[i] == "-run") {
-			run_compiled_code = true;
-		} else if (args[i] == "-stats") {
-			print_stats = true;
-		} else if (args[i] == "-interactive") {
-			run_interactive = true;
-		} else if (args[i][0] == '-') {
+		}
+		if (args[i][0] == '-') {
 			immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
 		} else {
 			if (input_source_path.count) {
@@ -5896,6 +6042,7 @@ bool parse_arguments(Span<Span<utf8>> args) {
 				input_source_path = normalize_path(make_absolute_path(args[i]));
 			}
 		}
+	next_arg:;
 	}
 
 	if (!input_source_path.count) {
@@ -6033,7 +6180,7 @@ bool find_main_and_run() {
 						visit(&global_block, Combine {
 							[&] (auto) {},
 							[&] (Lambda *lambda) {
-								if (lambda->body) {
+								if (lambda->body && !lambda->head.is_template) {
 									builder.append_lambda(lambda);
 								}
 							},
