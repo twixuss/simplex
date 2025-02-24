@@ -798,7 +798,7 @@ struct Parser {
 			case Token_inline:
 			case Token_noinline: {
 				auto inline_token = token;
-				auto status = token.kind == Token_inline ? Inline::always : Inline::never;
+				auto status = token.kind == Token_inline ? InlineStatus::always : InlineStatus::never;
 				next();
 				auto expr = parse_expression_2();
 				if (auto lambda = as<Lambda>(expr)) {

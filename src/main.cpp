@@ -80,6 +80,7 @@ bool print_stats = false;
 bool should_print_ast = false;
 bool run_interactive = false;
 u32 nested_reports_verbosity = 1;
+bool should_inline_unspecified_lambdas = false;
 
 enum class InterpretMode {
 	bytecode,
@@ -1088,15 +1089,15 @@ inline BuiltinType to_builtin_type_kind(TokenKind kind) {
 	return {};
 }
 
-enum class Inline : u8 {
+enum class InlineStatus : u8 {
 #define x(name) name,
 	ENUMERATE_INLINE_STATUS
 #undef x
 };
 
-inline umm append(StringBuilder &builder, Inline status) {
+inline umm append(StringBuilder &builder, InlineStatus status) {
 	switch (status) {
-#define x(name) case Inline::name: return append(builder, #name ## s);
+#define x(name) case InlineStatus::name: return append(builder, #name ## s);
 		ENUMERATE_INLINE_STATUS
 #undef x
 	}
@@ -1273,7 +1274,7 @@ DEFINE_EXPRESSION(Call) {
 	Expression *callable = 0;
 	GList<Argument> arguments;
 
-	Inline inline_status = {};
+	InlineStatus inline_status = {};
 	CallKind call_kind = {};
 };
 DEFINE_EXPRESSION(Definition) {
@@ -1325,7 +1326,7 @@ DEFINE_EXPRESSION(Lambda) {
 	
 	u64 first_instruction_index = -1;
 
-	Inline inline_status = {};
+	InlineStatus inline_status = {};
 
 	String extern_library = {};
 
@@ -1512,21 +1513,47 @@ inline umm append(StringBuilder &builder, Value value) {
 	return append_format(builder, "(unknown Value {})", value.kind);
 }
 
+inline umm append(StringBuilder &builder, Nameable<Block *> expr) { not_implemented("Block"); }
+inline umm append(StringBuilder &builder, Nameable<Call *> expr) { not_implemented("Call"); }
+inline umm append(StringBuilder &builder, Nameable<Definition *> expr) { not_implemented("Definition"); }
+inline umm append(StringBuilder &builder, Nameable<IntegerLiteral *> expr) { not_implemented("IntegerLiteral"); }
+inline umm append(StringBuilder &builder, Nameable<BooleanLiteral *> expr) { not_implemented("BooleanLiteral"); }
+inline umm append(StringBuilder &builder, Nameable<NoneLiteral *> expr) { not_implemented("NoneLiteral"); }
+inline umm append(StringBuilder &builder, Nameable<StringLiteral *> expr) { not_implemented("StringLiteral"); }
+inline umm append(StringBuilder &builder, Nameable<Lambda *> expr) { not_implemented("Lambda"); }
+inline umm append(StringBuilder &builder, Nameable<LambdaHead *> expr) { not_implemented("LambdaHead"); }
+inline umm append(StringBuilder &builder, Nameable<Name *> name) { return append(builder, name.value->name); }
+inline umm append(StringBuilder &builder, Nameable<IfExpression *> expr) { not_implemented("IfExpression"); }
+inline umm append(StringBuilder &builder, Nameable<BuiltinTypeName *> name) { return append(builder, name.value->type_kind); }
+inline umm append(StringBuilder &builder, Nameable<Binary *> expr) { not_implemented("Binary"); }
+inline umm append(StringBuilder &builder, Nameable<Match *> expr) { not_implemented("Match"); }
+inline umm append(StringBuilder &builder, Nameable<Unary *> expr) { not_implemented("Unary"); }
+inline umm append(StringBuilder &builder, Nameable<Struct *> expr) { not_implemented("Struct"); }
+inline umm append(StringBuilder &builder, Nameable<ArrayType *> expr) { not_implemented("ArrayType"); }
+inline umm append(StringBuilder &builder, Nameable<Subscript *> expr) { not_implemented("Subscript"); }
+inline umm append(StringBuilder &builder, Nameable<ArrayConstructor *> expr) { not_implemented("ArrayConstructor"); }
+inline umm append(StringBuilder &builder, Nameable<ZeroInitialized *> expr) { not_implemented("ZeroInitialized"); }
+inline umm append(StringBuilder &builder, Nameable<IfStatement *> expr) { not_implemented("IfStatement"); }
+inline umm append(StringBuilder &builder, Nameable<Return *> expr) { not_implemented("Return"); }
+inline umm append(StringBuilder &builder, Nameable<While *> expr) { not_implemented("While"); }
+inline umm append(StringBuilder &builder, Nameable<Continue *> expr) { not_implemented("Continue"); }
+inline umm append(StringBuilder &builder, Nameable<Break *> expr) { not_implemented("Break"); }
+inline umm append(StringBuilder &builder, Nameable<Import *> expr) { not_implemented("Import"); }
+inline umm append(StringBuilder &builder, Nameable<Defer *> expr) { not_implemented("Defer"); }
+
 inline umm append(StringBuilder &builder, Nameable<Node *> node) {
 	switch (node.value->kind) {
-		case NodeKind::Name: {
-			auto name = (Name *)node.value;
-			return append(builder, name->name);
-		}
-		case NodeKind::BuiltinTypeName: {
-			auto name = (BuiltinTypeName *)node.value;
-			return append(builder, name->type_kind);
-		}
+		#define x(name) case NodeKind::name: return append(builder, Nameable{(name *)node.value});
+		ENUMERATE_NODE_KIND(x)
+		#undef x
 	}
 	invalid_code_path();
 	return 0;
 }
 inline umm append(StringBuilder &builder, Nameable<Expression *> node) {
+	return append(builder, Nameable((Node *)node.value));
+}
+inline umm append(StringBuilder &builder, Nameable<Statement *> node) {
 	return append(builder, Nameable((Node *)node.value));
 }
 
@@ -1961,6 +1988,19 @@ void print_ast_impl(LambdaHead *head, bool print_braces = true) {
 	}
 	print("(");
 	tabbed {
+	#if 1
+		// Individual parameters
+		for (auto [index, parameter] : enumerate(head->parameters_block.definition_list)) {
+			if (index)
+				print(", ");
+
+			print(parameter->name);
+			print(": ");
+			print_ast(parameter->type);
+		}
+	#else
+		// Grouped parameters
+
 		List<List<Definition *>> grouped_parameters;
 
 		for (auto parameter : head->parameters_block.definition_list) {
@@ -1986,6 +2026,7 @@ void print_ast_impl(LambdaHead *head, bool print_braces = true) {
 			print(": ");
 			print_ast(group[0]->type);
 		}
+	#endif
 	};
 	print("): ");
 	print_ast(head->return_type);
@@ -1998,8 +2039,8 @@ void print_ast_impl(Lambda *lambda) {
 	print("{");
 	tabbed {
 		switch (lambda->inline_status) {
-			case Inline::always: print("inline "); break;
-			case Inline::never: print("noinline "); break;
+			case InlineStatus::always: print("inline "); break;
+			case InlineStatus::never: print("noinline "); break;
 		}
 		print_ast_impl(&lambda->head, false);
 		print(" => ");
@@ -4148,46 +4189,84 @@ private:
 
 	List<TemplateInstantiationForReport> template_instantiation_stack_for_reports;
 
-	Expression *instantiate_template(Call *old_call, Lambda *lambda) {
-		// Keep passed in `call` unmodified
-		auto call = Copier{}.deep_copy(old_call);
+	bool match_one_template_parameter_type(Type expression_type, Type parameter_type, Block *template_parameters) {
+		if (auto pname = as<Name>(parameter_type)) {
+			// :performance: linear search
+			if (auto found = find(template_parameters->definition_list, pname->definition())) {
+				auto template_parameter = *found;
+				template_parameter->initial_value = expression_type;
+				template_parameter->type = expression_type->type;
+				template_parameter->constant_value = Value(Type(expression_type));
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	Expression *instantiate_template(Call *original_call, Lambda *original_lambda) {
+		// Keep passed in Call unmodified
+		auto call = Copier{}.deep_copy(original_call);
 		auto new_callable_name = Name::create();
 		auto instantiated_lambda_definition = Definition::create();
-		auto instantiated_lambda = Copier{}.deep_copy(lambda);
+		auto instantiated_lambda = Copier{}.deep_copy(original_lambda);
 
 		auto &arguments = call->arguments;
-		auto &parameters = lambda->head.parameters_block.definition_list;
-
-		assert(arguments.count == 1, "not_implemented");
-		assert(parameters.count == 1, "not_implemented");
+		auto &parameters = instantiated_lambda->head.parameters_block.definition_list;
+		auto &template_parameters = instantiated_lambda->head.template_parameters_block.definition_list;
 		
-		make_concrete(arguments[0].expression);
-
 		instantiated_lambda->definition = instantiated_lambda_definition;
 		instantiated_lambda->head.is_template = false;
-		instantiated_lambda->head.template_parameters_block.definition_list[0]->initial_value = arguments[0].expression->type;
-		instantiated_lambda->head.template_parameters_block.definition_list[0]->type = arguments[0].expression->type->type;
-		instantiated_lambda->head.template_parameters_block.definition_list[0]->constant_value = Value(Type(arguments[0].expression->type));
+		
+		// Link names in parameters_block to definitions in template_parameters_block to match them later.
+		typecheck(instantiated_lambda->head.parameters_block);
 
-		// Make `typecheck` not early out.
+		sort_arguments(arguments, parameters, call->location, &instantiated_lambda->head, instantiated_lambda->definition);
+
+		for (umm i = 0; i < arguments.count; ++i) {
+			auto &argument = arguments[i];
+			auto &parameter = parameters[i];
+			make_concrete(argument.expression);
+			match_one_template_parameter_type(argument.expression->type, parameter->type, &instantiated_lambda->head.template_parameters_block);
+		}
+
+		// Matching is done
+
+
+		template_instantiation_stack_for_reports.add({
+			.original_lambda = original_lambda,
+			.instantiated_lambda = instantiated_lambda,
+			.template_parameters = template_parameters,
+		});
+
+		// Retypecheck.
 		instantiated_lambda->head.type = 0;
 		instantiated_lambda->type = 0;
 		call->type = 0;
-
-		template_instantiation_stack_for_reports.add({
-			.original_lambda = lambda,
-			.instantiated_lambda = instantiated_lambda,
-			.template_parameters = instantiated_lambda->head.template_parameters_block.definition_list,
+		visit(&instantiated_lambda->head.parameters_block, Combine {
+			[](Node *node) {},
+			[](Expression *expr) {
+				expr->type = 0;
+			},
 		});
 
 		typecheck(&instantiated_lambda);
 		
 		template_instantiation_stack_for_reports.pop();
 
-		instantiated_lambda_definition->location = lambda->location;
+		StringBuilder name_builder;
+		defer { free(name_builder); };
+		append(name_builder, "__");
+		append(name_builder, original_lambda->definition ? original_lambda->definition->name : to_string(original_lambda->uid));
+		for (auto template_parameter : template_parameters) {
+			append(name_builder, "_");
+			append(name_builder, Nameable{template_parameter->initial_value});
+		}
+
+		instantiated_lambda_definition->location = original_lambda->location;
 		instantiated_lambda_definition->mutability = Mutability::constant;
 		instantiated_lambda_definition->initial_value = instantiated_lambda;
-		instantiated_lambda_definition->name = format(u8"{}"s, instantiated_lambda->uid);
+		instantiated_lambda_definition->name = (String)to_string(name_builder);
 		instantiated_lambda_definition->type = &instantiated_lambda->head;
 		withs(global_block_lock) {
 			global_block.add(instantiated_lambda_definition);
@@ -4201,7 +4280,23 @@ private:
 		return typecheck_lambda_call(call, instantiated_lambda, &instantiated_lambda->head, true);
 	}
 
-	// Lambda can be null if it's a function pointer call
+	bool shold_inline(Call *call, Lambda *lambda) {
+		if (call->inline_status != InlineStatus::unspecified) {
+			return call->inline_status == InlineStatus::always;
+		}
+		
+		if (lambda->inline_status != InlineStatus::unspecified) {
+			return lambda->inline_status == InlineStatus::always;
+		}
+
+		if (should_inline_unspecified_lambdas) {
+			return !as<Block>(lambda->body);
+		}
+
+		return false;
+	}
+
+	// `lambda` can be null if it's a function pointer call
 	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply = true) {
 
 		auto &arguments = call->arguments;
@@ -4256,33 +4351,17 @@ private:
 			}
 		}
 
-		if (lambda) {
-			Inline inline_status = {};
-			if (call->inline_status == Inline::unspecified) {
-				inline_status = lambda->inline_status;
-			} else {
-				inline_status = call->inline_status;
-				if ((call->inline_status == Inline::always && lambda->inline_status == Inline::never) ||
-					(call->inline_status == Inline::never && lambda->inline_status == Inline::always))
-				{
-					// What if that was intended? TODO: There should be an option to turn this on/off.
-					reporter.warning(call->location, "Conflicting inlining specifiers: {} at call size, {} at lambda definition. The one at call site ({}) will take place.", call->inline_status, lambda->inline_status, call->inline_status);
-					reporter.info(lambda->location, "Here is the lambda:");
-				}
-			}
-
-			if (inline_status == Inline::always) {
-				if (apply) {
-					return inline_body(call, lambda);
-				} else {
-					return call;
-				}
-			}
-		}
-
 		if (apply) {
 			call->call_kind = CallKind::lambda;
 			call->type = head->return_type;
+		}
+
+		if (lambda) {
+			if (apply && shold_inline(call, lambda)) {
+				return inline_body(call, lambda);
+			} else {
+				return call;
+			}
 		}
 		return call;
 	};
@@ -4652,7 +4731,7 @@ private:
 	}
 	[[nodiscard]] Lambda *typecheck_impl(Lambda *lambda, bool can_substitute) {
 		if (lambda->is_intrinsic) {
-			if (lambda->inline_status != Inline::unspecified) {
+			if (lambda->inline_status != InlineStatus::unspecified) {
 				reporter.warning(lambda->location, "Inline specifiers for intrinsic lambda are meaningless.");
 			}
 		}
@@ -4847,6 +4926,8 @@ private:
 		return lambda;
 	}
 	[[nodiscard]] Expression *typecheck_impl(Name *name, bool can_substitute) {
+		name->possible_definitions.clear();
+
 		for (auto block = current_block; block; block = block->parent) {
 			if (auto found_definitions = block->definition_map.find(name->name)) {
 				auto definitions = found_definitions->value;
@@ -4907,18 +4988,22 @@ private:
 
 					if (constant_name_inlining) {
 						if (definition->mutability == Mutability::constant) {
-							switch (definition->initial_value->kind) {
-								case NodeKind::Lambda:
-								case NodeKind::Struct:
-									break;
-								default:
-									auto result = to_node(definition->constant_value.value());
-									result->location = name->location;
-									if (!types_match(result->type, definition->type)) {
-										immediate_reporter.warning(name->location, "INTERNAL: constant name inlining resulted in a literal with different type, {} instead of {}. TODO FIXME", result->type, definition->type);
-										result->type = definition->type;
-									}
-									return result;
+							// NOTE: Even though definition is constant, definition->initial_value can be null
+							// if it is an unresolved template parameter.
+							if (definition->initial_value) {
+								switch (definition->initial_value->kind) {
+									case NodeKind::Lambda:
+									case NodeKind::Struct:
+										break;
+									default:
+										auto result = to_node(definition->constant_value.value());
+										result->location = name->location;
+										if (!types_match(result->type, definition->type)) {
+											immediate_reporter.warning(name->location, "INTERNAL: constant name inlining resulted in a literal with different type, {} instead of {}. TODO FIXME", result->type, definition->type);
+											result->type = definition->type;
+										}
+										return result;
+								}
 							}
 						}
 					}
@@ -5984,17 +6069,23 @@ struct CmdArg {
 };
 
 CmdArg args_handlers[] = {
-	{"-threads", +[](u64 number){ requested_thread_count = (u32)number; }},
-	{"-nested-reports-verbosity", +[](u64 number) { nested_reports_verbosity = number; }},
-	{"-print-tokens", +[] { print_tokens = true; }},
-	{"-print-ast", +[] { should_print_ast = true; }},
-	{"-print-uids", +[] { print_uids = true; }},
+	{"-threads",                   +[](u64 number){ requested_thread_count = (u32)number; }},
+	{"-nested-reports-verbosity",  +[](u64 number) { nested_reports_verbosity = number; }},
+	{"-print-tokens",              +[] { print_tokens = true; }},
+	{"-print-ast",                 +[] { should_print_ast = true; }},
+	{"-print-uids",                +[] { print_uids = true; }},
 	{"-no-constant-name-inlining", +[] { constant_name_inlining = false; }},
-	{"-report-yields", +[] { report_yields = true; }},
-	{"-log-time", +[] { enable_time_log = true; }},
-	{"-debug", +[] { is_debugging = true; }},
-	{"-run-bytecode", +[] { interpret_mode = InterpretMode::bytecode; }},
-	{"-run-ast", +[] { interpret_mode = InterpretMode::ast; }},
+	{"-report-yields",             +[] { report_yields = true; }},
+	{"-log-time",                  +[] { enable_time_log = true; }},
+	{"-debug",                     +[] { is_debugging = true; }},
+	{"-run-bytecode",              +[] { interpret_mode = InterpretMode::bytecode; }},
+	{"-run-ast",                   +[] { interpret_mode = InterpretMode::ast; }},
+	{"-print-wait-failures",       +[] { print_wait_failures = true; }},
+	{"-log-error-path",            +[] { enable_log_error_path = true; }},
+	{"-run",                       +[] { run_compiled_code = true; }},
+	{"-stats",                     +[] { print_stats = true; }},
+	{"-interactive",               +[] { run_interactive = true; }},
+	{"-auto-inline",               +[] { should_inline_unspecified_lambdas = true; }},
 	{"-limit-time", +[] {
 		create_thread([] {
 			int seconds_limit = 10;
@@ -6003,11 +6094,6 @@ CmdArg args_handlers[] = {
 			exit(-1);
 		});
 	}},
-	{"-print-wait-failures", +[] { print_wait_failures = true; }},
-	{"-log-error-path", +[] { enable_log_error_path = true; }},
-	{"-run", +[] { run_compiled_code = true; }},
-	{"-stats", +[] { print_stats = true; }},
-	{"-interactive", +[] { run_interactive = true; }},
 };
 
 bool parse_arguments(Span<Span<utf8>> args) {
@@ -6509,13 +6595,15 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 		if (failed) {
 			LOG_ERROR_PATH("Typechecking failed.");
-			return 1;
 		}
 	}
 
 	if (should_print_ast) {
 		print_ast(&global_block);
 	}
+
+	if (failed)
+		return 1;
 
 	if (!find_main_and_run()) {
 		return 1;
