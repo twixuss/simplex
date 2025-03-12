@@ -4,6 +4,21 @@
 #include <tl/main.h>
 #include <tl/process.h>
 #include <tl/variant.h>
+#include <tl/contiguous_hash_map.h>
+#include <tl/bucket_hash_map.h>
+
+// 64 - s64
+// -1 - BigInt
+//  N - SignedIntWithBits<N>
+#define UNSIZED_INTEGER_BITS 64
+
+#if UNSIZED_INTEGER_BITS == -1
+#include <tl/big_int.h>
+#elif UNSIZED_INTEGER_BITS != 64
+#include <tl/signed_int.h>
+#endif
+
+OsLock stdout_mutex;
 
 #define ENABLE_STRING_HASH_COUNT 0
 #define ENABLE_NOTE_LEAK 0
@@ -235,6 +250,7 @@ UnescapeResult unescape_string(Span<utf8> string) {
 				case 'n': result.add('\n'); break;
 				case 't': result.add('\t'); break;
 				case 'r': result.add('\r'); break;
+				case '\\': result.add('\\'); break;
 				case 'x': {
 					u32 digits[2];
 					
@@ -529,7 +545,7 @@ SourceLocation get_source_location(String location, GetSourceLocationOptions opt
 
 	auto found_file_name = locked_use(content_start_to_file_name) { return content_start_to_file_name.find(cursor + 1); };
 	assert(found_file_name);
-	result.file = found_file_name->value;
+	result.file = *found_file_name.value;
 
 	return result;
 }
@@ -802,6 +818,137 @@ enum class BinaryOperation : u8 {
 	ENUMERATE_BINARY_OPERATIONS(x)
 #undef x
 };
+bool is_ass(BinaryOperation op) {
+	switch (op) {
+		case BinaryOperation::ass:
+		case BinaryOperation::addass:
+		case BinaryOperation::subass:
+		case BinaryOperation::mulass:
+		case BinaryOperation::divass:
+		case BinaryOperation::modass:
+		case BinaryOperation::borass:
+		case BinaryOperation::banass:
+		case BinaryOperation::bxoass:
+		case BinaryOperation::bslass:
+		case BinaryOperation::bsrass: {
+			return true;
+		}
+	}
+	return false;
+}
+
+enum class LowBinaryOperation : u8 {
+	unknown,
+	// 2s complement addition
+	add8,
+	add16,
+	add32,
+	add64,
+	// 2s complement subtraction
+	sub8,
+	sub16,
+	sub32,
+	sub64,
+	// 2s complement multiplication
+	mul8,
+	mul16,
+	mul32,
+	mul64,
+	// unsigned division
+	divu8,
+	divu16,
+	divu32,
+	divu64,
+	// signed division
+	divs8,
+	divs16,
+	divs32,
+	divs64,
+	// binary xor
+	bxor8,
+	bxor16,
+	bxor32,
+	bxor64,
+	// binary and
+	band8,
+	band16,
+	band32,
+	band64,
+	// binary or
+	bor8,
+	bor16,
+	bor32,
+	bor64,
+	// shift left
+	bsl8,
+	bsl16,
+	bsl32,
+	bsl64,
+	// unsigned(logical) shift right
+	bsru8,
+	bsru16,
+	bsru32,
+	bsru64,
+	// signed(arithmetic) shift right
+	bsrs8,
+	bsrs16,
+	bsrs32,
+	bsrs64,
+	// equality
+	equ8,
+	equ16,
+	equ32,
+	equ64,
+	// notequality
+	neq8,
+	neq16,
+	neq32,
+	neq64,
+	// less than signed
+	lts8,
+	lts16,
+	lts32,
+	lts64,
+	// greater than signed
+	gts8,
+	gts16,
+	gts32,
+	gts64,
+	// less-equals signed
+	les8,
+	les16,
+	les32,
+	les64,
+	// greater-equals signed
+	ges8,
+	ges16,
+	ges32,
+	ges64,
+	// less than unsigned
+	ltu8,
+	ltu16,
+	ltu32,
+	ltu64,
+	// greater than unsigned
+	gtu8,
+	gtu16,
+	gtu32,
+	gtu64,
+	// less-equals unsigned
+	leu8,
+	leu16,
+	leu32,
+	leu64,
+	// greater-equals unsigned
+	geu8,
+	geu16,
+	geu32,
+	geu64,
+	// logical and with short circuiting
+	land,
+	// logical or with short circuiting
+	lor,
+};
 
 enum class UnaryOperation : u8 {
 #define x(name, token) name,
@@ -810,6 +957,17 @@ enum class UnaryOperation : u8 {
 #undef y
 #undef x
 };
+
+inline bool could_be_unary(BinaryOperation op) {
+	switch (op) {
+		case BinaryOperation::add: // plus
+		case BinaryOperation::sub: // minus
+		case BinaryOperation::mul: // deref/pointer
+		case BinaryOperation::ban: // addr
+			return true;
+	}
+	return false;
+}
 
 umm append(StringBuilder &builder, BinaryOperation operation) {
 	switch (operation) {
@@ -948,16 +1106,14 @@ Statement *as(Node *node) {
 }
 
 struct AtomicArenaAllocator : AllocatorBase<AtomicArenaAllocator> {
-	Allocator parent_allocator;
 	umm buffer_size = 0;
 	u8 *base = 0;
 	u8 * volatile cursor = 0;
 
 	forceinline static AtomicArenaAllocator create(umm size TL_LP) {
 		AtomicArenaAllocator result = {};
-		result.parent_allocator = TL_GET_CURRENT(allocator);
 		result.buffer_size = size;
-		result.cursor = result.base = result.parent_allocator.allocate_uninitialized<u8>(size TL_LA);
+		result.cursor = result.base = page_allocator.allocate<u8>(size TL_LA);
 		return result;
 	}
 
@@ -1004,7 +1160,7 @@ struct AtomicArenaAllocator : AllocatorBase<AtomicArenaAllocator> {
 		if (!base)
 			return;
 
-		parent_allocator.free(base);
+		page_allocator.free(base);
 		base = 0;
 		cursor = 0;
 		buffer_size = 0;
@@ -1154,6 +1310,14 @@ struct StructTag {} struct_tag;
 struct ArrayTag {} array_tag;
 struct UnsizedIntegerTag {} unsized_integer_tag;
 
+#if UNSIZED_INTEGER_BITS == 64
+using UnsizedInteger = s64;
+#elif UNSIZED_INTEGER_BITS == -1
+using UnsizedInteger = BigInt<DefaultAllocator>;
+#else
+using UnsizedInteger = SignedIntWithBits<UNSIZED_INTEGER_BITS>;
+#endif
+
 struct Value {
 	ValueKind kind = {};
 	union {
@@ -1165,7 +1329,7 @@ struct Value {
 		s16 S16;
 		s32 S32;
 		s64 S64;
-		s64 UnsizedInteger;
+		UnsizedInteger UnsizedInteger;
 		bool Bool;
 		String String;
 		Lambda *lambda;
@@ -1214,7 +1378,7 @@ struct Value {
 	explicit Value(Value      *value) : kind(ValueKind::pointer), pointer(value) {}
 	explicit Value(StructTag, Span<Value> value) : kind(ValueKind::struct_), elements(to_list(value)) {}
 	explicit Value(ArrayTag,  Span<Value> value) : kind(ValueKind::array),   elements(to_list(value)) {}
-	explicit Value(UnsizedIntegerTag, s64 value) : kind(ValueKind::UnsizedInteger), UnsizedInteger(value) {}
+	explicit Value(UnsizedIntegerTag, ::UnsizedInteger value) : kind(ValueKind::UnsizedInteger), UnsizedInteger(value) {}
 	
 	Value copy() {
 		Value result = *this;
@@ -1261,7 +1425,7 @@ DEFINE_EXPRESSION(Block) {
 	void free_impl() {
 		tl::free(children);
 		tl::free(definition_list);
-		tl::free(definition_map);
+		definition_map.free();
 	}
 };
 DEFINE_EXPRESSION(Call) {
@@ -1289,7 +1453,7 @@ DEFINE_EXPRESSION(Definition) {
 	bool is_template_parameter : 1 = false;
 };
 DEFINE_EXPRESSION(IntegerLiteral) {
-	u64 value = 0;
+	UnsizedInteger value = {};
 };
 DEFINE_EXPRESSION(BooleanLiteral) {
 	bool value = false;
@@ -1363,6 +1527,7 @@ DEFINE_EXPRESSION(Binary) {
 	Expression *left = 0;
 	Expression *right = 0;
 	BinaryOperation operation = {};
+	LowBinaryOperation low_operation = {};
 };
 DEFINE_EXPRESSION(Match) {
 	struct Case {
@@ -1380,10 +1545,16 @@ DEFINE_EXPRESSION(Unary) {
 	Mutability mutability = {};
 };
 DEFINE_EXPRESSION(Struct) {
+	Struct() {
+		template_parameters_block.container = this;
+	}
+
+	Block template_parameters_block;
 	Definition *definition = 0;
 	GList<Definition *> members;
 	s64 size = -1;
 	bool must_be_fully_initialized : 1 = false;
+	bool is_template : 1 = false;
 };
 DEFINE_EXPRESSION(ArrayType) {
 	Expression *element_type = 0;
@@ -1392,7 +1563,7 @@ DEFINE_EXPRESSION(ArrayType) {
 };
 DEFINE_EXPRESSION(Subscript) {
 	Expression *subscriptable = 0;
-	Expression *index = 0;
+	Expression *index = 0; // TODO: replace with GList<Argument> arguments;
 };
 DEFINE_EXPRESSION(ArrayConstructor) {
 	List<Expression *> elements;
@@ -1528,7 +1699,12 @@ inline umm append(StringBuilder &builder, Nameable<BuiltinTypeName *> name) { re
 inline umm append(StringBuilder &builder, Nameable<Binary *> expr) { not_implemented("Binary"); }
 inline umm append(StringBuilder &builder, Nameable<Match *> expr) { not_implemented("Match"); }
 inline umm append(StringBuilder &builder, Nameable<Unary *> expr) { not_implemented("Unary"); }
-inline umm append(StringBuilder &builder, Nameable<Struct *> expr) { not_implemented("Struct"); }
+inline umm append(StringBuilder &builder, Nameable<Struct *> expr) {
+	if (expr.value->definition)
+		return append(builder, expr.value->definition->name);
+	else
+		return append_format(builder, "__{}", expr.value->uid);
+}
 inline umm append(StringBuilder &builder, Nameable<ArrayType *> expr) { not_implemented("ArrayType"); }
 inline umm append(StringBuilder &builder, Nameable<Subscript *> expr) { not_implemented("Subscript"); }
 inline umm append(StringBuilder &builder, Nameable<ArrayConstructor *> expr) { not_implemented("ArrayConstructor"); }
@@ -1832,7 +2008,6 @@ u64 get_size(BuiltinType type_kind) {
 		case BuiltinType::S64:    return 8;
 		case BuiltinType::Bool:   return 1;
 		case BuiltinType::Type:   return 8;
-		case BuiltinType::String: return 16;
 		default: invalid_code_path("Invalid BuiltinType {}", type_kind);
 	}
 }
@@ -1888,331 +2063,7 @@ Sign get_sign(BuiltinType type_kind) {
 	}
 }
 
-int tabs = 0;
-void print_tabs() {
-	for (int i = 0; i < tabs; ++i)
-		print("    ");
-}
-
-struct {
-	void operator+=(auto fn) {
-		++tabs;
-		fn();
-		--tabs;
-	}
-} _tabber;
-
-#define tabbed _tabber += [&]
-
-void print_ast(Node *node);
-void print_ast(Value value) {
-	switch (value.kind) {
-		case ValueKind::lambda: print_ast(value.lambda); break;
-		default: print(value); break;
-	}
-}
-void print_ast_impl(Block *block) {
-	print("{");
-	if (block->breaks.count) {
-		print(" :{}", block->tag);
-	}
-	print('\n');
-	tabbed {
-		for (auto child : block->children) {
-			print_tabs();
-			print_ast(child);
-			println();
-		}
-	};
-	print_tabs();
-	println("}");
-}
-void print_ast_impl(Call *call) {
-	print_ast(call->callable);
-	print('(');
-	tabbed {
-		for (auto &argument : call->arguments) {
-			if (&argument != call->arguments.data) {
-				print(", ");
-			}
-			print_ast(argument.expression);
-		}
-	};
-	print(')');
-}
-void print_ast_impl(Definition *definition) {
-	switch (definition->mutability) {
-		case Mutability::constant: print("const"); break;
-		case Mutability::readonly: print("let"); break;
-		case Mutability::variable: print("var"); break;
-		default: invalid_code_path();
-	}
-	print(' ');
-	print(definition->name);
-	if (print_uids) {
-		print('_');
-		print(definition->uid);
-	}
-	print(": ");
-	print_ast(definition->type);
-	if (definition->constant_value) {
-		print(" = ");
-		print_ast(definition->constant_value.value());
-	} else if (definition->initial_value) {
-		print(" = ");
-		print_ast(definition->initial_value);
-	}
-}
-void print_ast_impl(IntegerLiteral *literal) {
-	print('{');
-	tabbed {
-		print(literal->value);
-		print(" as ");
-		print_ast(literal->type);
-	};
-	print('}');
-}
-void print_ast_impl(BooleanLiteral *literal) {
-	print(literal->value);
-}
-void print_ast_impl(NoneLiteral *) {
-	print("none");
-}
-void print_ast_impl(StringLiteral *literal) {
-	print("\"{}\"", EscapedString{literal->value});
-}
-void print_ast_impl(LambdaHead *head, bool print_braces = true) {
-	if (print_braces) {
-		print("{");
-		++tabs;
-	}
-	print("(");
-	tabbed {
-	#if 1
-		// Individual parameters
-		for (auto [index, parameter] : enumerate(head->parameters_block.definition_list)) {
-			if (index)
-				print(", ");
-
-			print(parameter->name);
-			print(": ");
-			print_ast(parameter->type);
-		}
-	#else
-		// Grouped parameters
-
-		List<List<Definition *>> grouped_parameters;
-
-		for (auto parameter : head->parameters_block.definition_list) {
-			if (grouped_parameters.count && types_match(grouped_parameters.back().front()->type, parameter->parsed_type)) {
-				grouped_parameters.back().add(parameter);
-			} else {
-				List<Definition *> group;
-				group.add(parameter);
-				grouped_parameters.add(group);
-			}
-		}
-
-		for (auto &group : grouped_parameters) {
-			if (&group != grouped_parameters.begin())
-				print(", ");
-
-			for (auto &parameter : group) {
-				if (&parameter != group.begin())
-					print(", ");
-
-				print(parameter->name);
-			}
-			print(": ");
-			print_ast(group[0]->type);
-		}
-	#endif
-	};
-	print("): ");
-	print_ast(head->return_type);
-	if (print_braces) {
-		--tabs;
-		print("}");
-	}
-}
-void print_ast_impl(Lambda *lambda) {
-	print("{");
-	tabbed {
-		switch (lambda->inline_status) {
-			case InlineStatus::always: print("inline "); break;
-			case InlineStatus::never: print("noinline "); break;
-		}
-		print_ast_impl(&lambda->head, false);
-		print(" => ");
-		if (lambda->is_intrinsic) 
-			print("#intrinsic");
-		if (lambda->is_extern) 
-			print("#extern \"{}\"", EscapedString(lambda->extern_library));
-		if (lambda->body) {
-			print_ast(lambda->body);
-		}
-	};
-	print_tabs();
-	print("}");
-}
-void print_ast_impl(Name *name) {
-	print(name->name);
-	if (print_uids) {
-		print('_');
-		assert(name->definition());
-		print(name->definition()->uid);
-	}
-}
-void print_ast_impl(Return *return_) {
-	print("return");
-	if (return_->value) {
-		print(' ');
-		print_ast(return_->value);
-	}
-}
-void print_ast_impl(IfStatement *If) {
-	print("if ");
-	print_ast(If->condition);
-	print(" then ");
-	print_ast(If->true_branch);
-	if (If->false_branch) {
-		print(" else ");
-		print_ast(If->false_branch);
-	}
-}
-void print_ast_impl(IfExpression *If) {
-	print("if ");
-	print_ast(If->condition);
-	print(" then ");
-	print_ast(If->true_branch);
-	print(" else ");
-	print_ast(If->false_branch);
-}
-void print_ast_impl(While *While) {
-	print("while ");
-	print_ast(While->condition);
-	print(" then ");
-	print_ast(While->body);
-}
-void print_ast_impl(BuiltinTypeName *type) {
-	switch (type->type_kind) {
-		#define x(name) case BuiltinType::name: print(#name); return;
-		#define y(name, value) x(name)
-		ENUMERATE_BUILTIN_TYPES(x)
-		#undef y
-		#undef x
-	}
-	invalid_code_path();
-}
-void print_ast_impl(Continue *) { print("continue"); }
-void print_ast_impl(Break *Break) {
-	print("break");
-	if (Break->value) {
-		print(" :{} ", Break->tag_block->tag);
-		print_ast(Break->value);
-	}
-}
-void print_ast_impl(Binary *binary) {
-	print('{');
-	tabbed {
-		print_ast(binary->left);
-		print(' ');
-		print(binary->operation);
-		print(' ');
-		print_ast(binary->right);
-	};
-	print('}');
-}
-void print_ast_impl(Match *match) {
-	print("match ");
-	print_ast(match->expression);
-	print(" {\n");
-	tabbed {
-		for (auto Case : match->cases) {
-			print_tabs();
-			if (Case.from) {
-				print_ast(Case.from);
-			} else {
-				print("else");
-			}
-			print(" => ");
-			print_ast(Case.to);
-			print("\n");
-		}
-	};
-	print_tabs();
-	print("}");
-}
-void print_ast_impl(Unary *unary) {
-	print('{');
-	tabbed {
-		print(unary->operation);
-		print_ast(unary->expression);
-	};
-	print('}');
-}
-void print_ast_impl(Struct *Struct) {
-	print("struct {\n");
-	tabbed {
-		for (auto member : Struct->members) {
-			print_ast(member);
-		}
-	};
-	print("}");
-}
-void print_ast_impl(ArrayType *Array) {
-	print("{[");
-	print(Array->count.value());
-	print("]");
-	print_ast(Array->element_type);
-	print("}");
-}
-void print_ast_impl(Subscript *Subscript) {
-	print("{");
-	print_ast(Subscript->subscriptable);
-	print("[");
-	print_ast(Subscript->index);
-	print("]}");
-}
-void print_ast_impl(ArrayConstructor *arr) {
-	print(".[");
-	if (arr->elements.count)
-		print_ast(arr->elements[0]);
-	for (auto element : arr->elements.skip(1)) {
-		print(", ");
-		print_ast(element);
-	}
-	print("]");
-}
-void print_ast_impl(Import *import) {
-	print("import \"{}\"", EscapedString{import->path});
-}
-void print_ast_impl(Defer *defer_) {
-	print("defer {\n");
-	tabbed {
-		print_tabs();
-		print_ast(defer_->body);
-		println();
-	};
-	print_tabs();
-	print("}");
-}
-void print_ast_impl(ZeroInitialized *zi) {
-	print("{none as ");
-	print_ast(zi->type);
-	print("}");
-}
-void print_ast(Node *node) {
-	if (!node) {
-		print("<NULL>");
-		return;
-	}
-	switch (node->kind) {
-#define x(name) case NodeKind::name: return print_ast_impl((name *)node);
-		ENUMERATE_NODE_KIND(x)
-#undef x
-	}
-}
+#include "print_ast.inl"
 
 inline umm append(StringBuilder &builder, Node *node) {
 	switch (node->kind) {
@@ -2425,6 +2276,10 @@ enum class YieldResult : u8 {
 };
 bool no_more_progress = false;
 
+struct {
+	Struct *String;
+} builtin_structs;
+
 ValueKind to_value_kind(Type type) {
 	type = direct(type);
 	switch (type->kind) {
@@ -2441,7 +2296,12 @@ ValueKind to_value_kind(Type type) {
 				case BuiltinType::S32:    return ValueKind::S32;
 				case BuiltinType::S64:    return ValueKind::S64;
 				case BuiltinType::Bool:   return ValueKind::Bool;
-				case BuiltinType::String: return ValueKind::String;
+			}
+			break;
+		}
+		case NodeKind::Struct: {
+			if (type == builtin_structs.String) {
+				return ValueKind::String;
 			}
 			break;
 		}
@@ -2512,7 +2372,6 @@ Unary *as_pointer(Type type) {
 	return 0;
 }
 
-
 Value zero_of_type(Type type) {
 	Value result = {};
 	auto direct_type = direct(type);
@@ -2530,13 +2389,29 @@ Value zero_of_type(Type type) {
 	else if (types_match(direct_type, BuiltinType::S16)) { result = Value((s16)0); }
 	else if (types_match(direct_type, BuiltinType::S32)) { result = Value((s32)0); }
 	else if (types_match(direct_type, BuiltinType::S64)) { result = Value((s64)0); }
-	else if (types_match(direct_type, BuiltinType::String)) { result = Value(String{}); }
-	else if (types_match(direct_type, BuiltinType::UnsizedInteger)) { result = Value(unsized_integer_tag, 0); }
+	else if (types_match(direct_type, builtin_structs.String)) { result = Value(String{}); }
+	else if (types_match(direct_type, BuiltinType::UnsizedInteger)) { result = Value(unsized_integer_tag, UnsizedInteger{}); }
 	else if (auto pointer = as_pointer(direct_type)) { result = Value((Value *)0); }
 	else {
 		invalid_code_path("zero_of_type({}) is invalid", direct_type);
 	}
 	return result;
+}
+
+Expression *is_pointer_to_none_comparison(Expression *left, Expression *right) {
+	auto dleft  = direct(left->type);
+	auto dright = direct(right->type);
+	if (auto left_pointer = as_pointer(dleft)) {
+		if (auto right_builtin = as<BuiltinTypeName>(dright); right_builtin && right_builtin->type_kind == BuiltinType::None) {
+			return left;
+		}
+	}
+	if (auto left_builtin = as<BuiltinTypeName>(dleft); left_builtin && left_builtin->type_kind == BuiltinType::None) {
+		if (auto right_pointer = as_pointer(dright)) {
+			return right;
+		}
+	}
+	return 0;
 }
 
 #include "node_interpreter.h"
@@ -2565,6 +2440,31 @@ std::tuple<Lambda *, LambdaHead *, Struct *> get_lambda_and_head_or_struct(Expre
 		head = direct_as<LambdaHead>(expression->type);
 	}
 	return {lambda, head, struct_};
+}
+
+Type make_pointer(Type type, Mutability mutability) {
+	auto pointer = Unary::create();
+	pointer->expression = type;
+	pointer->operation = UnaryOperation::pointer;
+	pointer->mutability = mutability;
+	pointer->type = get_builtin_type(BuiltinType::Type);
+	return pointer;
+}
+
+BuiltinTypeName *make_name(BuiltinType type, String location = {}) {
+	auto name = BuiltinTypeName::create();
+	name->type_kind = type;
+	name->location = location;
+	name->type = get_builtin_type(BuiltinType::Type);
+	return name;
+}
+Name *make_name(Definition *definition, String location = {}) {
+	auto name = Name::create();
+	name->possible_definitions.set(definition);
+	name->location = location;
+	name->type = definition->type;
+	name->name = definition->name;
+	return name;
 }
 
 #include "bytecode/builder.h"
@@ -2631,15 +2531,6 @@ Callback generate_callback(Lambda *lambda) {
 
 }
 
-
-Type make_pointer(Type type, Mutability mutability) {
-	auto pointer = Unary::create();
-	pointer->expression = type;
-	pointer->operation = UnaryOperation::pointer;
-	pointer->mutability = mutability;
-	pointer->type = get_builtin_type(BuiltinType::Type);
-	return pointer;
-}
 
 struct CheckResult {
 	bool result = {};
@@ -2846,7 +2737,20 @@ Result<Value, Node *> get_constant_value_impl(Definition *node) {
 	}
 	return node->constant_value.value();
 }
-Result<Value, Node *> get_constant_value_impl(IntegerLiteral *node) { return Value(((IntegerLiteral *)node)->value); }
+Result<Value, Node *> get_constant_value_impl(IntegerLiteral *node) { 
+	switch (as<BuiltinTypeName>(node->type)->type_kind) {
+		case BuiltinType::U8:  return Value((u8 )node->value);
+		case BuiltinType::U16: return Value((u16)node->value);
+		case BuiltinType::U32: return Value((u32)node->value);
+		case BuiltinType::U64: return Value((u64)node->value);
+		case BuiltinType::S8:  return Value((s8 )node->value);
+		case BuiltinType::S16: return Value((s16)node->value);
+		case BuiltinType::S32: return Value((s32)node->value);
+		case BuiltinType::S64: return Value((s64)node->value);
+		case BuiltinType::UnsizedInteger: return Value(unsized_integer_tag, node->value);
+		default: invalid_code_path();
+	}
+}
 Result<Value, Node *> get_constant_value_impl(BooleanLiteral *node) { return Value(((BooleanLiteral *)node)->value); }
 Result<Value, Node *> get_constant_value_impl(NoneLiteral *node) { return Value(ValueKind::none); }
 Result<Value, Node *> get_constant_value_impl(StringLiteral *node) { return Value(((StringLiteral *)node)->value); }
@@ -2906,7 +2810,7 @@ Result<s64, Node *> get_constant_integer(Node *node) {
 
 	auto value = result.value();
 	switch (value.kind) {
-		case ValueKind::UnsizedInteger: return value.UnsizedInteger;
+		case ValueKind::UnsizedInteger: return (s64)value.UnsizedInteger;
 		case ValueKind::U8:             return value.U8;
 		case ValueKind::U16:            return value.U16;
 		case ValueKind::U32:            return value.U32;
@@ -2935,7 +2839,7 @@ enum class TypecheckEntryStatus : u8 {
 };
 
 struct TypecheckEntry {
-	Node** node = 0;
+	Node* node = 0;
 	Typechecker* typechecker = 0;
 	TypecheckEntryStatus status = TypecheckEntryStatus::unstarted;
 
@@ -2967,8 +2871,8 @@ struct Copier {
 #define DEEP_COPY_INPLACE(x) deep_copy(&from->x, &to->x)
 #define LOOKUP_COPY(x)                               \
 	if (auto found = copied_nodes.find(from->x)) {   \
-		assert(found->value->kind == from->x->kind); \
-		to->x = autocast found->value;               \
+		assert((*found.value)->kind == from->x->kind);  \
+		to->x = autocast *found.value;               \
 	} else {                                         \
 		to->x = from->x;                             \
 	}
@@ -3334,16 +3238,25 @@ inline bool do_all_paths_return(Node *node) {
 	return false;
 }
 
-IntegerLiteral *make_integer(u64 value, String location, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
+IntegerLiteral *make_integer(UnsizedInteger value, String location, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
 	auto result = IntegerLiteral::create();
 	result->value = value;
 	result->type = type;
 	result->location = location;
 	return result;
 }
-IntegerLiteral *make_integer(u64 value, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
+IntegerLiteral *make_integer(UnsizedInteger value, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
 	return make_integer(value, {}, type);
 }
+#if UNSIZED_INTEGER_BITS != 64
+IntegerLiteral *make_integer(u64 value, String location, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
+	return make_integer(convert<UnsizedInteger>(value), location, type);
+}
+IntegerLiteral *make_integer(u64 value, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
+	return make_integer(convert<UnsizedInteger>(value), {}, type);
+}
+#endif
+
 BooleanLiteral *make_boolean(bool value, String location, Type type = get_builtin_type(BuiltinType::Bool)) {
 	auto result = BooleanLiteral::create();
 	result->value = value;
@@ -3357,7 +3270,7 @@ BooleanLiteral *make_boolean(bool value, Type type = get_builtin_type(BuiltinTyp
 StringLiteral *make_string(String value, String location) {
 	auto result = StringLiteral::create();
 	result->value = value;
-	result->type = get_builtin_type(BuiltinType::String);
+	result->type = make_name(builtin_structs.String->definition);
 	result->location = location;
 	return result;
 }
@@ -3454,6 +3367,22 @@ struct VectorizedBinaryValue {
 
 LockProtected<HashMap<VectorizedBinaryKey, VectorizedBinaryValue>, SpinLock> vectorized_binarys;
 
+template <class T>
+void debug_make_readonly(Span<T> span) {
+	auto rodata = VirtualAlloc(0, span.count * sizeof(T), MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+	memcpy(rodata, span.data, span.count * sizeof(T));
+	VirtualProtect(rodata, span.count * sizeof(T), PAGE_READONLY, 0);
+	span.data = (T *)rodata;
+}
+
+template <class T>
+void debug_make_readonly(T *&t) {
+	auto rodata = VirtualAlloc(0, sizeof(T), MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+	memcpy(rodata, t, sizeof(T));
+	VirtualProtect(rodata, sizeof(T), PAGE_READONLY, 0);
+	t = (T *)rodata;
+}
+
 enum class FailStrategy {
 	yield,
 	unwind,
@@ -3464,15 +3393,20 @@ struct CopyableJmpBuf {
 	jmp_buf buf;
 };
 
+Call *debugging_call;
+
+#define ENABLE_TYPECHECKED_REUSE 0
+
 struct Typechecker {
 	const u32 uid = atomic_add(&typechecker_uid_counter, 1);
 	u32 progress = 0;
 
-	static Typechecker *create(Node **node) {
+	static Typechecker *create(Node *node) {
 		assert(node);
 
 		Typechecker *typechecker = 0;
 		
+		#if ENABLE_TYPECHECKED_REUSE
 		if (auto popped = locked_use_it(retired_typecheckers, it.pop())) {
 			typechecker = popped.value();
 			// immediate_reporter.info("created cached typechecker {} for node {}", typechecker->uid, node->location);
@@ -3482,7 +3416,9 @@ struct Typechecker {
 			assert(typechecker->reporter.reports.count == 0);
 			assert(typechecker->initial_node == 0);
 			assert(typechecker->current_block == 0);
-		} else {
+		} else
+		#endif
+		{
 			typechecker = default_allocator.allocate<Typechecker>();
 			++allocated_fiber_count;
 			typechecker->fiber = create_fiber([](void *param) {
@@ -3540,18 +3476,36 @@ struct Typechecker {
 		parent_fiber = {};
 		yield_result = {};
 		reporter.reports.clear();
+		reporter.indentation = 0;
 		initial_node = 0;
 		current_block = 0;
+		current_container = 0;
+		current_loop = 0;
+		node_stack.clear();
+		entry = 0;
+		main_loop_unwind_point = {};
+		current_unwind_point = {};
+		can_generate_vectorized_lambdas = false;
+		template_instantiation_stack_for_reports.clear();
+		fail_strategy = FailStrategy::yield;
 
 		locked_use_it(retired_typecheckers, it.add(this));
 	}
 
 private:
+	struct TemplateInstantiationForReport {
+		Lambda *original_lambda;
+		Lambda *instantiated_lambda;
+		List<Definition *> template_parameters;
+	};
+	
+	static constexpr int fail_unwind_tag = 42;
+
 	Fiber parent_fiber = {};
 	Fiber fiber = {};
 	YieldResult yield_result = {};
 	Reporter reporter;
-	Node **initial_node = 0;
+	Node *initial_node = 0;
 	Block *current_block = 0;
 	Expression *current_container = 0;
 	While *current_loop = 0;
@@ -3560,10 +3514,22 @@ private:
 	CopyableJmpBuf main_loop_unwind_point = {};
 	CopyableJmpBuf current_unwind_point = {};
 	bool can_generate_vectorized_lambdas = true;
-
-	static constexpr int fail_unwind_tag = 42;
-
+	List<TemplateInstantiationForReport> template_instantiation_stack_for_reports;
 	FailStrategy fail_strategy = FailStrategy::yield;
+
+	u32 debug_thread_id = 0;
+	bool debug_stopped = false;
+
+	void debug_start() {
+		assert(debug_stopped, "attempt to start already started typechecker {}", uid);
+		debug_stopped = false;
+		// println("started typechecker {}", uid);
+	}
+	void debug_stop() {
+		assert(!debug_stopped, "attempt to stop already stopped typechecker {}", uid);
+		debug_stopped = true;
+		// println("stopped typechecker {}", uid);
+	}
 
 	void fail_impl() {
 		if (fail_strategy == FailStrategy::yield) {
@@ -3645,7 +3611,8 @@ private:
 			setjmp(main_loop_unwind_point.buf);
 			assert(initial_node);
 			can_generate_vectorized_lambdas = true;
-			*initial_node = typecheck(*initial_node, true);
+			auto result = typecheck(initial_node, true);
+			assert(result == initial_node);
 			yield(YieldResult::success);
 		}
 	}
@@ -3754,21 +3721,6 @@ private:
 					expression = make_cast(expression, target_type);
 				}
 				return true;
-			}
-		}
-
-		// String -> *U8
-		if (types_match(direct_source_type, BuiltinType::String)) {
-			if (auto target_pointer = as_pointer(direct_target_type)) {
-				if (types_match(target_pointer->expression, BuiltinType::U8)) {
-					if (apply) {
-						expression = make_cast(expression, target_type);
-					}
-					return true;
-				} else {
-					reporter->error(expression->location, "`String` can only be converted to `*U8`, but you provided `{}`", target_type);
-					return false;
-				}
 			}
 		}
 
@@ -3929,7 +3881,7 @@ private:
 			VectorizedLambda vectorized = {};
 			auto found = vectorized_lambdas.find({ original_lambda, vector_size });
 			if (found) {
-				vectorized = found->value;
+				vectorized = *found.value;
 			} else {
 				assert(original_lambda->definition, "Lambda requires a name to be vectorizable. Assign it to a definition.");
 
@@ -3943,7 +3895,8 @@ private:
 
 				StringBuilder source_builder;
 				append_format(source_builder, "\0const {} = fn ("s, lambda_name);
-				for (auto [i, parameter] : enumerate(original_lambda->head.parameters_block.definition_list)) {
+				foreach (it, original_lambda->head.parameters_block.definition_list) {
+					auto [i, parameter] = it.key_value();
 					if (i) {
 						append(source_builder, ", ");
 					}
@@ -3958,7 +3911,8 @@ private:
 					, vector_size, original_lambda->head.return_type, vector_size, original_lambda->head.return_type, vector_size, original_lambda->definition->name
 				);
 				
-				for (auto [i, parameter] : enumerate(original_lambda->head.parameters_block.definition_list)) {
+				foreach (it, original_lambda->head.parameters_block.definition_list) {
+					auto [i, parameter] = it.key_value();
 					if (i) {
 						append(source_builder, ", ");
 					}
@@ -3977,9 +3931,11 @@ private:
 
 				auto source = (Span<utf8>)to_string(source_builder);
 				source = source.subspan(1, source.count - 2);
+				
+				auto path = format(u8"{}\\{}.sp", generated_source_directory, lambda_name);
 
 				locked_use(content_start_to_file_name) {
-					content_start_to_file_name.get_or_insert(source.data) = lambda_name;
+					content_start_to_file_name.get_or_insert(source.data) = path;
 				};
 
 				Node *definition_node = 0;
@@ -3999,7 +3955,6 @@ private:
 
 				{
 					with(temporary_storage_checkpoint);
-					auto path = tformat(u8"{}\\{}.sp", generated_source_directory, lambda_name);
 					write_entire_file(path, as_bytes(source));
 
 					if (!success) {
@@ -4024,7 +3979,7 @@ private:
 
 			#if 0
 			if (auto found = vectorized_lambdas.find({ original_lambda, vector_size })) {
-				return found->value;
+				return *found.value;
 			}
 
 			auto original_param = original_lambda->head.parameters_block.definition_list[0];
@@ -4166,10 +4121,17 @@ private:
 			}
 		}
 
-		if (!options.allow_missing) {
-			for (umm i = 0; i < sorted_arguments.count; ++i) {
-				auto &argument = sorted_arguments[i];
-				auto &parameter = parameters[i];
+		for (umm i = 0; i < sorted_arguments.count; ++i) {
+			auto &argument = sorted_arguments[i];
+			auto &parameter = parameters[i];
+
+			if (!argument.expression) {
+				if (parameter->initial_value) {
+					argument.expression = Copier{}.deep_copy(parameter->initial_value);
+				}
+			}
+
+			if (!options.allow_missing) {
 				if (!argument.expression) {
 					reporter.error(call_location, "Too few arguments. Value for {} was not provided.", parameter->name);
 					reporter.info(lambda_head_or_struct->location, "Here's the {} list:", definition_element_name);
@@ -4181,14 +4143,6 @@ private:
 		arguments.set(sorted_arguments);
 	}
 	
-	struct TemplateInstantiationForReport {
-		Lambda *original_lambda;
-		Lambda *instantiated_lambda;
-		List<Definition *> template_parameters;
-	};
-
-	List<TemplateInstantiationForReport> template_instantiation_stack_for_reports;
-
 	bool match_one_template_parameter_type(Type expression_type, Type parameter_type, Block *template_parameters) {
 		if (auto pname = as<Name>(parameter_type)) {
 			// :performance: linear search
@@ -4204,7 +4158,7 @@ private:
 		return false;
 	}
 
-	Expression *instantiate_template(Call *original_call, Lambda *original_lambda) {
+	Expression *instantiate_lambda_template(Call *original_call, Lambda *original_lambda) {
 		// Keep passed in Call unmodified
 		auto call = Copier{}.deep_copy(original_call);
 		auto new_callable_name = Name::create();
@@ -4280,7 +4234,7 @@ private:
 		return typecheck_lambda_call(call, instantiated_lambda, &instantiated_lambda->head, true);
 	}
 
-	bool shold_inline(Call *call, Lambda *lambda) {
+	bool should_inline(Call *call, Lambda *lambda) {
 		if (call->inline_status != InlineStatus::unspecified) {
 			return call->inline_status == InlineStatus::always;
 		}
@@ -4295,6 +4249,17 @@ private:
 
 		return false;
 	}
+	
+	Struct *get_struct_template_instantiation(Struct *template_struct, Expression *argument) {
+		assert(template_struct->template_parameters_block.definition_list.count == 1, "Not implemented");
+
+		auto instantiated_struct = Copier{}.deep_copy(template_struct);
+
+		instantiated_struct->is_template = false;
+		instantiated_struct->template_parameters_block.definition_list[0]->initial_value = argument;
+
+		return instantiated_struct;
+	}
 
 	// `lambda` can be null if it's a function pointer call
 	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply = true) {
@@ -4303,7 +4268,8 @@ private:
 		auto &callable = call->callable;
 
 		if (lambda && lambda->head.is_template) {
-			return instantiate_template(call, lambda);
+			immediate_reporter.warning(lambda->location, "TODO: implement template instantiation caching");
+			return instantiate_lambda_template(call, lambda);
 		}
 
 		if (!yield_while_null(call->location, &head->return_type)) {
@@ -4357,7 +4323,7 @@ private:
 		}
 
 		if (lambda) {
-			if (apply && shold_inline(call, lambda)) {
+			if (apply && should_inline(call, lambda)) {
 				return inline_body(call, lambda);
 			} else {
 				return call;
@@ -4399,7 +4365,7 @@ private:
 		return call;
 	};
 
-	bool typecheck_binary_dot(Binary *binary, Reporter &reporter) {
+	Expression *typecheck_binary_dot(Binary *binary, Reporter &reporter) {
 		typecheck(&binary->left);
 		auto struct_ = direct_as<Struct>(binary->left->type);
 		if (!struct_) {
@@ -4409,12 +4375,34 @@ private:
 		}
 
 		if (!struct_) {
+			if (types_match(binary->left->type, builtin_structs.String)) {
+				auto member_name = as<Name>(binary->right);
+				if (!member_name) {
+					reporter.error(binary->right->location, "Expression after dot must be a name.");
+					fail();
+				}
+
+				if (member_name->name == "data") {
+					return make_cast(binary->left, make_pointer(make_name(BuiltinType::U8, member_name->location), Mutability::variable));
+				} else if (member_name->name == "count") {
+					return make_cast(binary->left, make_name(BuiltinType::U64, member_name->location));
+				} else {
+					reporter.error(binary->right->location, "Type `String` does not have member named `{}`.", member_name->name);
+					fail();
+				}
+			}
+		}
+
+		if (!struct_) {
 			reporter.error(binary->left->location, "Left of the dot must have struct or pointer to struct type.");
 			fail();
 		}
 
 		auto member_name = as<Name>(binary->right);
-		assert(member_name);
+		if (!member_name) {
+			reporter.error(binary->right->location, "Expression after dot must be a name.");
+			fail();
+		}
 
 		if (auto found = find_if(struct_->members, [&](auto member) { return member->name == member_name->name; })) {
 			auto definition = *found;
@@ -4425,7 +4413,7 @@ private:
 			fail();
 		}
 
-		return true;
+		return binary;
 	}
 
 	bool ensure_not_overloaded(Name *name) {
@@ -4472,9 +4460,12 @@ private:
 		return typecheck(&node, false) != 0;
 	}
 
-	[[nodiscard]] Node *typecheck(Node *node, bool can_substitute) {
+	[[nodiscard]] Node *             typecheck(Node *node, bool can_substitute) {
 		++progress;
 		defer { ++progress; };
+
+		//if (node->location == "-1 / 2")
+		//	debug_break();
 
 		if (auto expression = as<Expression>(node)) {
 			if (expression->type) {
@@ -4509,12 +4500,16 @@ private:
 					reporter.error(expression->location, "Could not compute the type of this expression.");
 					fail();
 				}
+				if (!expression->type->type) {
+					reporter.error(expression->location, "Type of type of this expression was not computed.");
+					fail();
+				}
 			}
 		}
 
 		return new_node;
 	}
-	[[nodiscard]] Expression *typecheck_impl(Block *block, bool can_substitute) {
+	[[nodiscard]] Expression *       typecheck_impl(Block *block, bool can_substitute) {
 		scoped_replace(current_block, block);
 		for (auto &old_child : block->children) {
 			auto new_child = typecheck(old_child, true);
@@ -4606,7 +4601,7 @@ private:
 
 		return block;
 	}
-	[[nodiscard]] Definition *typecheck_impl(Definition *definition, bool can_substitute) {
+	[[nodiscard]] Definition *       typecheck_impl(Definition *definition, bool can_substitute) {
 		if (definition->parsed_type) {
 			typecheck(&definition->parsed_type);
 		} else {
@@ -4660,7 +4655,17 @@ private:
 					fail();
 				}
 
-				definition->constant_value = execute(definition->initial_value);
+				bool should_execute = true;
+
+				if (auto Struct_ = as<Struct>(definition->initial_value)) {
+					if (Struct_->is_template) {
+						should_execute = false;
+					}
+				}
+
+				if (should_execute) {
+					definition->constant_value = execute(definition->initial_value);
+				}
 			}
 		} else {
 			if (definition->is_parameter) {
@@ -4688,23 +4693,23 @@ private:
 
 		return definition;
 	}
-	[[nodiscard]] IntegerLiteral *typecheck_impl(IntegerLiteral *literal, bool can_substitute) {
+	[[nodiscard]] IntegerLiteral *   typecheck_impl(IntegerLiteral *literal, bool can_substitute) {
 		literal->type = get_builtin_type(BuiltinType::UnsizedInteger);
 		return literal;
 	}
-	[[nodiscard]] BooleanLiteral *typecheck_impl(BooleanLiteral *literal, bool can_substitute) {
+	[[nodiscard]] BooleanLiteral *   typecheck_impl(BooleanLiteral *literal, bool can_substitute) {
 		literal->type = get_builtin_type(BuiltinType::Bool);
 		return literal;
 	}
-	[[nodiscard]] NoneLiteral *typecheck_impl(NoneLiteral *literal, bool can_substitute) {
+	[[nodiscard]] NoneLiteral *      typecheck_impl(NoneLiteral *literal, bool can_substitute) {
 		literal->type = get_builtin_type(BuiltinType::None);
 		return literal;
 	}
-	[[nodiscard]] StringLiteral *typecheck_impl(StringLiteral *literal, bool can_substitute) {
-		literal->type = get_builtin_type(BuiltinType::String);
+	[[nodiscard]] StringLiteral *    typecheck_impl(StringLiteral *literal, bool can_substitute) {
+		literal->type = make_name(builtin_structs.String->definition);
 		return literal;
 	}
-	[[nodiscard]] LambdaHead *typecheck_impl(LambdaHead *head, bool can_substitute) {
+	[[nodiscard]] LambdaHead *       typecheck_impl(LambdaHead *head, bool can_substitute) {
 		if (head->is_template) {
 			typecheck(head->template_parameters_block);
 		} else {
@@ -4729,7 +4734,7 @@ private:
 		head->type = get_builtin_type(BuiltinType::Type);
 		return head;
 	}
-	[[nodiscard]] Lambda *typecheck_impl(Lambda *lambda, bool can_substitute) {
+	[[nodiscard]] Lambda *           typecheck_impl(Lambda *lambda, bool can_substitute) {
 		if (lambda->is_intrinsic) {
 			if (lambda->inline_status != InlineStatus::unspecified) {
 				reporter.warning(lambda->location, "Inline specifiers for intrinsic lambda are meaningless.");
@@ -4925,12 +4930,12 @@ private:
 		}
 		return lambda;
 	}
-	[[nodiscard]] Expression *typecheck_impl(Name *name, bool can_substitute) {
+	[[nodiscard]] Expression *       typecheck_impl(Name *name, bool can_substitute) {
 		name->possible_definitions.clear();
 
 		for (auto block = current_block; block; block = block->parent) {
 			if (auto found_definitions = block->definition_map.find(name->name)) {
-				auto definitions = found_definitions->value;
+				auto definitions = *found_definitions.value;
 				
 				if (definitions.count == 0) {
 					continue;
@@ -4959,7 +4964,7 @@ private:
 
 					if (block == &global_block) {
 						for (auto &typecheck_entry : typecheck_entries) {
-							if (*typecheck_entry.node == definition) {
+							if (typecheck_entry.node == definition) {
 								entry->dependency = &typecheck_entry;
 								break;
 							}
@@ -5021,13 +5026,19 @@ private:
 		fail();
 		return 0;
 	}
-	[[nodiscard]] Expression *typecheck_impl(Call *call, bool can_substitute) {
+	[[nodiscard]] Expression *       typecheck_impl(Call *call, bool can_substitute) {
 		defer { assert(call->callable->type != 0); };
 		if (auto binary = as<Binary>(call->callable)) {
 			if (binary->operation == BinaryOperation::dot) {
 				if (auto lambda_name = as<Name>(binary->right)) {
 					Reporter reporter2;
-					if (with_unwind_strategy([&] { return typecheck_binary_dot(binary, reporter2); })) {
+					if (with_unwind_strategy([&] {
+						if (auto subst = typecheck_binary_dot(binary, reporter2)) {
+							call->callable = subst;
+							return true;
+						}
+						return false;
+					})) {
 						goto typecheck_dot_succeeded;
 					} else {
 						constexpr bool old_dotcall = true;
@@ -5189,7 +5200,8 @@ private:
 			}
 			if (matching_overloads.count == 0) {
 				reporter.error(call->location, "No matching overload was found.");
-				for (auto [i, overload] : enumerate(overloads)) {
+				foreach (it, overloads) {
+					auto [i, overload] = it.key_value();
 					scoped_replace(reporter.indentation, reporter.indentation + 1);
 					reporter.info("Overload #{}:", i);
 					scoped_replace(reporter.indentation, reporter.indentation + 1);
@@ -5201,7 +5213,8 @@ private:
 			}
 
 			reporter.error(call->location, "Multiple matching overload were found:");
-			for (auto [i, overload] : enumerate(matching_overloads)) {
+			foreach (it, matching_overloads) {
+				auto [i, overload] = it.key_value();
 				reporter.info(overload->definition->location, "Overload #{}:", i);
 			}
 			fail();
@@ -5213,7 +5226,7 @@ private:
 		fail();
 		return 0;
 	}
-	[[nodiscard]] Node *typecheck_impl(IfStatement *If, bool can_substitute) {
+	[[nodiscard]] Node *             typecheck_impl(IfStatement *If, bool can_substitute) {
 		typecheck(&If->condition);
 
 		typecheck(&If->true_branch);
@@ -5246,7 +5259,7 @@ private:
 
 		return If;
 	}
-	[[nodiscard]] Expression *typecheck_impl(IfExpression *If, bool can_substitute) {
+	[[nodiscard]] Expression *       typecheck_impl(IfExpression *If, bool can_substitute) {
 		typecheck(&If->condition);
 
 		typecheck(&If->true_branch);
@@ -5298,16 +5311,23 @@ private:
 
 		return If;
 	}
-	[[nodiscard]] BuiltinTypeName *typecheck_impl(BuiltinTypeName *type, bool can_substitute) { 
+	[[nodiscard]] BuiltinTypeName *  typecheck_impl(BuiltinTypeName *type, bool can_substitute) { 
 		type->type = get_builtin_type(BuiltinType::Type);
 		return type;
 	}
-	[[nodiscard]] Expression *typecheck_impl(Binary *binary, bool can_substitute) {
+	[[nodiscard]] Expression *       typecheck_impl(Binary *binary, bool can_substitute) {
 		if (binary->operation == BinaryOperation::dot) {
-			if (!with_unwind_strategy([&] { return typecheck_binary_dot(binary, reporter); })) {
+			Expression *result = binary;
+			if (!with_unwind_strategy([&] {
+				if (auto subst = typecheck_binary_dot(binary, reporter)) {
+					result = subst;
+					return true;
+				}
+				return false;
+			})) {
 				fail();
 			}
-			return binary;
+			return result;
 		} else {
 			typecheck(&binary->left);
 			typecheck(&binary->right);
@@ -5389,7 +5409,7 @@ private:
 			auto dright = direct(binary->right->type);
 
 			if (auto found = binary_typecheckers.find({ dleft, dright, binary->operation })) {
-				return (this->*(found->value))(binary);
+				return (this->*(*found.value))(binary);
 			}
 			if (auto left_array = as<ArrayType>(dleft)) {
 				if (auto right_array = as<ArrayType>(dright)) {
@@ -5414,7 +5434,7 @@ private:
 							locked_use(vectorized_binarys) {
 								auto found = vectorized_binarys.find({ dleft_element, dright_element, binary->operation, element_count });
 								if (found) {
-									vectorized = found->value;
+									vectorized = *found.value;
 								} else {
 									auto lambda_name = format(u8"__v_{}_{}_{}_{}"s, Nameable(binary->operation), element_count, Nameable(dleft_element), Nameable(dright_element));
 									auto source_list = format(u8"\0" R"(
@@ -5430,9 +5450,11 @@ const {} = fn (a: {}, b: {}) => {{
 )" "\0"s, lambda_name, left_array, right_array, left_array, element_count, binary->operation);
 							
 									auto source = source_list.subspan(1, source_list.count - 2);
+									
+									auto path = format(u8"{}\\{}.sp", generated_source_directory, lambda_name);
 
 									locked_use(content_start_to_file_name) {
-										content_start_to_file_name.get_or_insert(source.data) = lambda_name;
+										content_start_to_file_name.get_or_insert(source.data) = path;
 									};
 
 									Node *definition_node = 0;
@@ -5450,7 +5472,6 @@ const {} = fn (a: {}, b: {}) => {{
 									
 									{
 										with(temporary_storage_checkpoint);
-										auto path = tformat(u8"{}\\{}.sp", generated_source_directory, lambda_name);
 										write_entire_file(path, as_bytes(source));
 
 										if (!success) {
@@ -5481,12 +5502,27 @@ const {} = fn (a: {}, b: {}) => {{
 							call->arguments.add({.expression = binary->right, .parameter = vectorized.lambda->head.parameters_block.definition_list[1]});
 							call->type = vectorized.lambda->head.return_type;
 							call->call_kind = CallKind::lambda;
+							
+							debugging_call = call;
 
 							NOTE_LEAK(binary);
+							binary->left = 0;
+							binary->right = 0;
 
 							return call;
 						}
 					}
+				}
+			}
+
+			switch (binary->operation) {
+				case BinaryOperation::equ:
+				case BinaryOperation::neq: {
+					if (is_pointer_to_none_comparison(binary->left, binary->right)) {
+						binary->type = get_builtin_type(BuiltinType::Bool);
+						return binary;
+					}
+					break;
 				}
 			}
 
@@ -5496,7 +5532,7 @@ const {} = fn (a: {}, b: {}) => {{
 			return 0;
 		}
 	}
-	[[nodiscard]] Match *typecheck_impl(Match *match, bool can_substitute) {
+	[[nodiscard]] Match *            typecheck_impl(Match *match, bool can_substitute) {
 		typecheck(&match->expression);
 
 		make_concrete(match->expression);
@@ -5546,7 +5582,7 @@ const {} = fn (a: {}, b: {}) => {{
 
 		return match;
 	}
-	[[nodiscard]] Expression *typecheck_impl(Unary *unary, bool can_substitute) {
+	[[nodiscard]] Expression *       typecheck_impl(Unary *unary, bool can_substitute) {
 		typecheck(&unary->expression);
 		auto constant = get_constant_value(unary->expression);
 		switch (unary->operation) {
@@ -5648,13 +5684,13 @@ const {} = fn (a: {}, b: {}) => {{
 
 		return unary;
 	}
-	[[nodiscard]] Return *typecheck_impl(Return *return_, bool can_substitute) {
+	[[nodiscard]] Return *           typecheck_impl(Return *return_, bool can_substitute) {
 		if (return_->value)
 			typecheck(&return_->value);
 
 		return return_;
 	}
-	[[nodiscard]] While *typecheck_impl(While *While, bool can_substitute) {
+	[[nodiscard]] While *            typecheck_impl(While *While, bool can_substitute) {
 		typecheck(&While->condition);
 
 		scoped_replace(current_loop, While);
@@ -5668,12 +5704,12 @@ const {} = fn (a: {}, b: {}) => {{
 
 		return While;
 	}
-	[[nodiscard]] Continue *typecheck_impl(Continue *Continue, bool can_substitute) {
+	[[nodiscard]] Continue *         typecheck_impl(Continue *Continue, bool can_substitute) {
 		assert(current_loop);
 		Continue->loop = current_loop;
 		return Continue;
 	}
-	[[nodiscard]] Break *typecheck_impl(Break *Break, bool can_substitute) {
+	[[nodiscard]] Break *            typecheck_impl(Break *Break, bool can_substitute) {
 		if (Break->value) {
 			typecheck(&Break->value);
 		} else {
@@ -5682,26 +5718,31 @@ const {} = fn (a: {}, b: {}) => {{
 		}
 		return Break;
 	}
-	[[nodiscard]] Struct *typecheck_impl(Struct *Struct, bool can_substitute) {
-		defer {
-			assert(Struct->size != -1);
-		};
+	[[nodiscard]] Struct *           typecheck_impl(Struct *Struct, bool can_substitute) {
+		if (Struct->is_template) {
+			Struct->type = get_builtin_type(BuiltinType::Template);
+			return Struct;
+		} else {
+			defer {
+				assert(Struct->size != -1);
+			};
 
-		s64 struct_size = 0;
-		for (auto &member : Struct->members) {
-			typecheck(&member);
-			if (!is_type(member->type) || !is_concrete(member->type)) {
-				reporter.error(member->location, "Struct members must have concrete type. This type is `{}` which is not concrete.", member->type);
-				fail();
+			s64 struct_size = 0;
+			for (auto &member : Struct->members) {
+				typecheck(&member);
+				if (!is_type(member->type) || !is_concrete(member->type)) {
+					reporter.error(member->location, "Struct members must have concrete type. This type is `{}` which is not concrete.", member->type);
+					fail();
+				}
+				member->offset = struct_size;
+				struct_size += get_size(member->type);
 			}
-			member->offset = struct_size;
-			struct_size += get_size(member->type);
+			Struct->type = get_builtin_type(BuiltinType::Type);
+			Struct->size = struct_size;
+			return Struct;
 		}
-		Struct->type = get_builtin_type(BuiltinType::Type);
-		Struct->size = struct_size;
-		return Struct;
 	}
-	[[nodiscard]] ArrayType *typecheck_impl(ArrayType *arr, bool can_substitute) {
+	[[nodiscard]] ArrayType *        typecheck_impl(ArrayType *arr, bool can_substitute) {
 		typecheck(&arr->count_expression);
 		if (auto maybe_count = get_constant_value(arr->count_expression)) {
 			auto count_value = maybe_count.value();
@@ -5715,6 +5756,7 @@ const {} = fn (a: {}, b: {}) => {{
 				case ValueKind::S16: count = count_value.S16; break;
 				case ValueKind::S32: count = count_value.S32; break;
 				case ValueKind::S64: count = count_value.S64; break;
+				case ValueKind::UnsizedInteger: count = (s64)count_value.UnsizedInteger; break;
 				default: {
 					reporter.error(arr->count_expression->location, "Count expression must be an integer.");
 					fail();
@@ -5742,46 +5784,49 @@ const {} = fn (a: {}, b: {}) => {{
 		arr->type = get_builtin_type(BuiltinType::Type);
 		return arr;
 	}
-	[[nodiscard]] Expression *typecheck_impl(Subscript *Subscript, bool can_substitute) {
+	[[nodiscard]] Expression *       typecheck_impl(Subscript *Subscript, bool can_substitute) {
 		typecheck(&Subscript->subscriptable);
-		auto array_type = direct_as<ArrayType>(Subscript->subscriptable->type);
-		if (!array_type) {
-			reporter.error(Subscript->subscriptable->location, "This must be an array.");
-			fail();
-		}
 
-		typecheck(&Subscript->index);
-		make_concrete(Subscript->index);
-		if (!::is_concrete_integer(Subscript->index->type)) {
-			reporter.error(Subscript->index->location, "This must be an integer.");
-			fail();
-		}
+		if (auto array_type = direct_as<ArrayType>(Subscript->subscriptable->type)) {
+			typecheck(&Subscript->index);
+			make_concrete(Subscript->index);
+			if (!::is_concrete_integer(Subscript->index->type)) {
+				reporter.error(Subscript->index->location, "This must be an integer.");
+				fail();
+			}
 
-		Subscript->type = array_type->element_type;
+			Subscript->type = array_type->element_type;
 
-		if (can_substitute) {
-			if (auto index_value = get_constant_value(Subscript->index)) {
-				if (auto array = direct_as<ArrayConstructor>(Subscript->subscriptable)) {
-					NOTE_LEAK(Subscript);
-					auto index = index_value.value();
-					switch (index.kind) {
-						case ValueKind::U8: return array->elements[index.U8];
-						case ValueKind::U16: return array->elements[index.U16];
-						case ValueKind::U32: return array->elements[index.U32];
-						case ValueKind::U64: return array->elements[index.U64];
-						case ValueKind::S8: return array->elements[index.S8];
-						case ValueKind::S16: return array->elements[index.S16];
-						case ValueKind::S32: return array->elements[index.S32];
-						case ValueKind::S64: return array->elements[index.S64];
-						default: invalid_code_path("invalid index kind: {}", index.kind);
+			if (can_substitute) {
+				if (auto index_value = get_constant_value(Subscript->index)) {
+					if (auto array = direct_as<ArrayConstructor>(Subscript->subscriptable)) {
+						NOTE_LEAK(Subscript);
+						auto index = index_value.value();
+						switch (index.kind) {
+							case ValueKind::U8: return array->elements[index.U8];
+							case ValueKind::U16: return array->elements[index.U16];
+							case ValueKind::U32: return array->elements[index.U32];
+							case ValueKind::U64: return array->elements[index.U64];
+							case ValueKind::S8: return array->elements[index.S8];
+							case ValueKind::S16: return array->elements[index.S16];
+							case ValueKind::S32: return array->elements[index.S32];
+							case ValueKind::S64: return array->elements[index.S64];
+							default: invalid_code_path("invalid index kind: {}", index.kind);
+						}
 					}
 				}
 			}
-		}
 
-		return Subscript;
+			return Subscript;
+		} else if (auto Struct_ = direct_as<Struct>(Subscript->subscriptable->type); Struct_ && Struct_->is_template) {
+			return get_struct_template_instantiation(Struct_, Subscript->index);
+		} else {
+			reporter.error(Subscript->subscriptable->location, "This expression is not subscriptable.");
+			reporter.help("Subscriptable expressions are arrays and templates.");
+			fail();
+		}
 	}
-	[[nodiscard]] ArrayConstructor *typecheck_impl(ArrayConstructor *arr, bool can_substitute) {
+	[[nodiscard]] ArrayConstructor * typecheck_impl(ArrayConstructor *arr, bool can_substitute) {
 		for (auto &element : arr->elements) {
 			typecheck(&element);
 		}
@@ -5797,32 +5842,17 @@ const {} = fn (a: {}, b: {}) => {{
 
 		return arr;
 	}
-	[[nodiscard]] Import *typecheck_impl(Import *import, bool can_substitute) {
+	[[nodiscard]] Import *           typecheck_impl(Import *import, bool can_substitute) {
 		return import;
 	}
-	[[nodiscard]] Defer *typecheck_impl(Defer *defer_, bool can_substitute) {
+	[[nodiscard]] Defer *            typecheck_impl(Defer *defer_, bool can_substitute) {
 		typecheck(&defer_->body);
 		current_block->defers.add(defer_);
 		return defer_;
 	}
-	[[nodiscard]] ZeroInitialized *typecheck_impl(ZeroInitialized *zi, bool can_substitute) {
+	[[nodiscard]] ZeroInitialized *  typecheck_impl(ZeroInitialized *zi, bool can_substitute) {
 		invalid_code_path("ZeroInitialized cannot be typechecked.");
 	}
-
-	u32 debug_thread_id = 0;
-	bool debug_stopped = false;
-
-	void debug_start() {
-		assert(debug_stopped, "attempt to start already started typechecker {}", uid);
-		debug_stopped = false;
-		// println("started typechecker {}", uid);
-	}
-	void debug_stop() {
-		assert(!debug_stopped, "attempt to stop already stopped typechecker {}", uid);
-		debug_stopped = true;
-		// println("stopped typechecker {}", uid);
-	}
-
 public:
 	/////////////////////////
 	// Binary Typecheckers //
@@ -5864,29 +5894,27 @@ public:
 		return binary;
 	};
 	Expression *bt_unsized_int(Binary *binary) {
-		binary->left->type =
-		binary->right->type = get_builtin_type(BuiltinType::S64);
-
 		auto l = get_constant_value(binary->left).value();
 		auto r = get_constant_value(binary->right).value();
-
+		assert(l.kind == ValueKind::UnsizedInteger);
+		assert(r.kind == ValueKind::UnsizedInteger);
 		switch (binary->operation) {
-			case BinaryOperation::add: return make_integer(l.S64 + r.S64, binary->location);
-			case BinaryOperation::sub: return make_integer(l.S64 - r.S64, binary->location);
-			case BinaryOperation::mul: return make_integer(l.S64 * r.S64, binary->location);
-			case BinaryOperation::div: return make_integer(l.S64 / r.S64, binary->location);
-			case BinaryOperation::mod: return make_integer(l.S64 % r.S64, binary->location);
-			case BinaryOperation::bxo: return make_integer(l.S64 ^ r.S64, binary->location);
-			case BinaryOperation::ban: return make_integer(l.S64 & r.S64, binary->location);
-			case BinaryOperation::bor: return make_integer(l.S64 | r.S64, binary->location);
-			case BinaryOperation::bsl: return make_integer(l.S64 << r.S64, binary->location);
-			case BinaryOperation::bsr: return make_integer(l.S64 >> r.S64, binary->location);
-			case BinaryOperation::equ: return make_boolean(l.S64 == r.S64, binary->location);
-			case BinaryOperation::neq: return make_boolean(l.S64 != r.S64, binary->location);
-			case BinaryOperation::les: return make_boolean(l.S64 < r.S64, binary->location);
-			case BinaryOperation::grt: return make_boolean(l.S64 > r.S64, binary->location);
-			case BinaryOperation::leq: return make_boolean(l.S64 <= r.S64, binary->location);
-			case BinaryOperation::grq: return make_boolean(l.S64 >= r.S64, binary->location);
+			case BinaryOperation::add: return make_integer(l.UnsizedInteger + r.UnsizedInteger, binary->location);
+			case BinaryOperation::sub: return make_integer(l.UnsizedInteger - r.UnsizedInteger, binary->location);
+			case BinaryOperation::mul: return make_integer(l.UnsizedInteger * r.UnsizedInteger, binary->location);
+			case BinaryOperation::div: return make_integer(l.UnsizedInteger / r.UnsizedInteger, binary->location);
+			case BinaryOperation::mod: return make_integer(l.UnsizedInteger % r.UnsizedInteger, binary->location);
+			case BinaryOperation::bxo: return make_integer(l.UnsizedInteger ^ r.UnsizedInteger, binary->location);
+			case BinaryOperation::ban: return make_integer(l.UnsizedInteger & r.UnsizedInteger, binary->location);
+			case BinaryOperation::bor: return make_integer(l.UnsizedInteger | r.UnsizedInteger, binary->location);
+			case BinaryOperation::bsl: return make_integer(l.UnsizedInteger << r.UnsizedInteger, binary->location);
+			case BinaryOperation::bsr: return make_integer(l.UnsizedInteger >> r.UnsizedInteger, binary->location);
+			case BinaryOperation::equ: return make_boolean(l.UnsizedInteger == r.UnsizedInteger, binary->location);
+			case BinaryOperation::neq: return make_boolean(l.UnsizedInteger != r.UnsizedInteger, binary->location);
+			case BinaryOperation::les: return make_boolean(l.UnsizedInteger < r.UnsizedInteger, binary->location);
+			case BinaryOperation::grt: return make_boolean(l.UnsizedInteger > r.UnsizedInteger, binary->location);
+			case BinaryOperation::leq: return make_boolean(l.UnsizedInteger <= r.UnsizedInteger, binary->location);
+			case BinaryOperation::grq: return make_boolean(l.UnsizedInteger >= r.UnsizedInteger, binary->location);
 		}
 		invalid_code_path("Attempt to evaluate binary {} on unsized integers. This is not supported/implemented", binary->operation);
 	};
@@ -6139,6 +6167,8 @@ bool parse_arguments(Span<Span<utf8>> args) {
 	return true;
 }
 
+#include <cassert>
+
 void init_builtin_types() {
 	#define x(name) \
 		{ \
@@ -6148,6 +6178,40 @@ void init_builtin_types() {
 		}
 	ENUMERATE_BUILTIN_TYPES(x)
 	#undef x
+
+	auto s = Struct::create();
+	auto d = Definition::create();
+
+	auto data = Definition::create();
+	data->name = u8"data"s;
+	data->mutability = Mutability::variable;
+	data->offset = 0;
+	data->type = make_pointer(get_builtin_type(BuiltinType::U8), Mutability::variable);
+	data->container = s;
+	s->members.add(data);
+
+	auto count = Definition::create();
+	count->name = u8"count"s;
+	count->mutability = Mutability::variable;
+	count->offset = 8;
+	count->type = get_builtin_type(BuiltinType::S64);
+	count->container = s;
+	s->members.add(count);
+
+	s->definition = d;
+	s->is_template = false;
+	s->size = 16;
+	s->type = get_builtin_type(BuiltinType::Type);
+
+	d->initial_value = s;
+	d->constant_value = Value((Type)s);
+	d->mutability = Mutability::constant;
+	d->name = u8"String"s;
+	d->type = s->type;
+
+	builtin_structs.String = s;
+
+	global_block.add(d);
 }
 
 #if 0
@@ -6398,6 +6462,12 @@ s32 tl_main(Span<Span<utf8>> args) {
 			break;
 		}
 	}
+	
+	defer {
+		if (should_print_ast) {
+			print_ast(&global_block);
+		}
+	};
 
 	if (failed) {
 		LOG_ERROR_PATH("Parsing failed");
@@ -6410,8 +6480,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 		failed = false;
 
-		for (auto &node : global_block.children) {
-			typecheck_entries.add({.node = &node});
+		for (auto node : global_block.children) {
+			typecheck_entries.add({.node = node});
 		}
 
 
@@ -6562,7 +6632,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 				for (umm j = 0; j < cycle.count; ++j) {
 					auto &entry = *cycle[j];
 
-					if (auto definition = as<Definition>(*entry.node); definition && definition->initial_value) {
+					if (auto definition = as<Definition>(entry.node); definition && definition->initial_value) {
 						if (auto lambda = as<Lambda>(definition->initial_value)) {
 							if (!lambda->head.return_type) {
 								lambda_with_no_return_type = lambda;
@@ -6584,7 +6654,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 					auto &entry = *cycle[j];
 					auto &next_entry = *cycle[(j + 1) % cycle.count];
 
-					immediate_reporter.info((*entry.node)->location, "{} depends on {}.", (*entry.node)->location, (*next_entry.node)->location);
+					immediate_reporter.info(entry.node->location, "{} depends on {}.", entry.node->location, next_entry.node->location);
 				}
 			}
 		}
@@ -6596,10 +6666,6 @@ s32 tl_main(Span<Span<utf8>> args) {
 		if (failed) {
 			LOG_ERROR_PATH("Typechecking failed.");
 		}
-	}
-
-	if (should_print_ast) {
-		print_ast(&global_block);
 	}
 
 	if (failed)

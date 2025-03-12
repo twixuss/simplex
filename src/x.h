@@ -40,6 +40,15 @@ ENUMERATE_CHARS_HEX(x)
 	x('A') x('B') x('C') x('D') x('E') x('F') \
 
 /*
+#define x(ch)
+ENUMERATE_CHARS_OCTAL(x)
+#undef x
+*/
+#define ENUMERATE_CHARS_OCTAL(x) \
+	x('0') x('1') x('2') x('3') \
+	x('4') x('5') x('6') x('7') \
+
+/*
 #define x(string)
 ENUMERATE_DOUBLE_CHAR_TOKENS(x)
 #undef x
@@ -90,8 +99,14 @@ ENUMERATE_CONCRETE_BUILTIN_TYPES(x)
 	x(S32) \
 	x(S64) \
 	x(Bool) \
-	x(String) \
 	x(None) \
+/*
+#define x(name)
+ENUMERATE_BUILTIN_STRUCTS(x)
+#undef x
+*/
+#define ENUMERATE_BUILTIN_STRUCTS(x) \
+	x(String) \
 
 /*
 #define x(name)
@@ -119,6 +134,7 @@ ENUMERATE_KEYWORDS(x)
 */
 #define ENUMERATE_KEYWORDS(x) \
 	ENUMERATE_CONCRETE_BUILTIN_TYPES(x) \
+	ENUMERATE_BUILTIN_STRUCTS(x) \
 	x(const) \
 	x(let) \
 	x(var) \

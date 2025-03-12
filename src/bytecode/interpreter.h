@@ -96,7 +96,7 @@ struct Interpreter {
 			println("Call stack (old first):");
 			for (auto index : debug_call_stack) {
 				if (auto found = bytecode->first_instruction_to_lambda.find(index)) {
-					auto lambda = found->value;
+					auto lambda = *found.value;
 					auto loc = get_source_location(lambda->location);
 					println("{}:{}: {}", loc.file, loc.location_line_number, lambda->definition ? lambda->definition->name : u8"(unnamed)"s);
 				} else {
@@ -148,7 +148,8 @@ struct Interpreter {
 				if (enabled_windows & (DebugWindowFlag::locals | DebugWindowFlag::arguments | DebugWindowFlag::stack)) {
 					u64 max_lambda_first_instruction = 0;
 					if (current_instruction_index < bytecode->instructions.count - 3) { // Ignore initial instructions that don't belong to any lambda
-						for (auto [first_instruction, some_lambda] : bytecode->first_instruction_to_lambda) {
+						for (auto it = bytecode->first_instruction_to_lambda.iter(); it; it.next()) {
+							auto [first_instruction, some_lambda] = *it;
 							if (current_instruction_index >= first_instruction) {
 								if (first_instruction > max_lambda_first_instruction) {
 									max_lambda_first_instruction = first_instruction;
@@ -334,7 +335,7 @@ struct Interpreter {
 			if (types_match(type, BuiltinType::S16)) { return print_int<s16>(address, options); }
 			if (types_match(type, BuiltinType::S32)) { return print_int<s32>(address, options); }
 			if (types_match(type, BuiltinType::S64)) { return print_int<s64>(address, options); }
-			if (types_match(type, BuiltinType::String)) {
+			if (types_match(type, builtin_structs.String)) {
 				return print("\"{}\"", EscapedString(Span((utf8 *)val8(address), (umm)val8(address withx { it.offset += 8; }))));
 			}
 			auto directed = direct(type);

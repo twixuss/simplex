@@ -105,18 +105,34 @@ s32 tl_main(Span<String> arguments) {
 	bool all = true;
 	bool do_coverage = false;
 	bool loop_until_failure = false;
+	enum class State {
+		adding_tests,
+		adding_args,
+	};
+
+	State state = State::adding_tests;
+
 	for (int i = 1; i < arguments.count; ++i) {
-		if (arguments[i] == u8"nobox"s) {
-			show_box = false;
-		} else if (arguments[i] == u8"coverage"s) {
-			do_coverage = true;
-		} else if (arguments[i] == u8"testloop"s) {
-			loop_until_failure = true;
-		} else if (arguments[i][0] == '-') {
-			append_format(extra_options_builder, "{} ", arguments[i]);
-		} else if (arguments[i] != u8"all"s) {
-			all = false;
-			tests_to_run.add({.path = arguments[i]});
+		switch (state) {
+			case State::adding_tests: {
+				if (arguments[i] == u8"nobox"s) {
+					show_box = false;
+				} else if (arguments[i] == u8"coverage"s) {
+					do_coverage = true;
+				} else if (arguments[i] == u8"testloop"s) {
+					loop_until_failure = true;
+				} else if (arguments[i] == u8"--"s) {
+					state = State::adding_args;
+				} else if (arguments[i] != u8"all"s) {
+					all = false;
+					tests_to_run.add({.path = arguments[i]});
+				}
+				break;
+			}
+			case State::adding_args: {
+				append_format(extra_options_builder, "{} ", arguments[i]);
+				break;
+			}
 		}
 	}
 	auto extra_options = to_string(extra_options_builder);

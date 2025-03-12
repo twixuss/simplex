@@ -242,33 +242,9 @@ struct Lexer {
 
 				next();
 				
-				if (*cursor == 'x') {
+				while (is_digit((ascii)*cursor) || is_alpha((ascii)*cursor) || *cursor == '_') {
 					next();
-
-					while (true) {
-						switch (*cursor) {
-							ENUMERATE_CHARS_HEX(PASTE_CASE) {
-								next();
-								break;
-							}
-							default:
-								goto number_loop_end;
-						}
-					}
-
-				} else {
-					while (true) {
-						switch (*cursor) {
-							ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
-								next();
-								break;
-							}
-							default:
-								goto number_loop_end;
-						}
-					}
 				}
-			number_loop_end:;
 
 				token.string.set_end(cursor);
 				return token;

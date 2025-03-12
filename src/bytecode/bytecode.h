@@ -399,7 +399,8 @@ inline void print_instruction(umm index, Instruction instruction) {
 }
 
 inline void print_instructions(Span<Instruction> instructions) {
-	for (auto [index, instruction] : enumerate(instructions)) {
+	foreach (it, instructions) {
+		auto [index, instruction] = it.key_value();
 		print_instruction(index, instruction);
 	}
 	println();

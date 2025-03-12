@@ -89,7 +89,7 @@
     <ClInclude Include="src\mutability.h" />
     <ClInclude Include="src\node_interpreter.h" />
     <ClInclude Include="src\parser.h" />
-    <ClInclude Include="src\print_ast.h" />
+    <ClInclude Include="src\print_ast.inl" />
     <ClInclude Include="src\visit.h" />
     <ClInclude Include="x.h" />
   </ItemGroup>

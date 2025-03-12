@@ -81,33 +81,8 @@ struct Parser {
 		return true;
 	}
 
-	struct ParsedLambda {
-		Expression *lambda_or_head = 0;
-		String name = {};
-	};
-
-	ParsedLambda parse_lambda() {
-		auto lambda = Lambda::create();
-		lambda->location = token.string;
-		lambda->head.template_parameters_block.parent = current_block;
-
-		scoped_replace(current_block, &lambda->head.parameters_block);
-		scoped_replace(current_loop, 0);
-		scoped_replace(current_container, lambda);
-		assert(current_container->kind == NodeKind::Lambda);
-
-		String lambda_name = {};
-
-		next();
-		skip_lines();
-
-		if (token.kind == Token_name) {
-			lambda_name = token.string;
-			next();
-			skip_lines();
-		}
-		
-		lambda->head.is_template = parse_list('[', ',', ']', [&] {
+	bool parse_template_parameter_list(Expression *parent, Block *template_parameters_block) {
+		return parse_list('[', ',', ']', [&] {
 			expect(Token_name);
 
 			List<Definition *> template_parameter_group;
@@ -134,7 +109,6 @@ struct Parser {
 						
 			if (token.kind != ':') {
 				reporter.error(token.string, "Expected {}, but got {}", (TokenKind)':', token);
-				reporter.help(lambda->location, "We are currently parsing a lambda, because only lambdas start with `(`. If you want to wrap an operation, do that with a block `{}`");
 				yield(YieldResult::fail);
 			}
 
@@ -144,20 +118,50 @@ struct Parser {
 			auto parsed_type = parse_expression();
 
 			for (auto template_parameter : template_parameter_group) {
-				template_parameter->container = lambda;
+				template_parameter->container = parent;
 				template_parameter->parsed_type = parsed_type;
 				template_parameter->is_template_parameter = true;
 				template_parameter->mutability = Mutability::constant;
 
-				if (auto found = lambda->head.template_parameters_block.definition_map.find(template_parameter->name); found && found->value.count) {
+				if (auto found = template_parameters_block->definition_map.find(template_parameter->name); found && found.value->count) {
 					reporter.error(template_parameter->location, "Redefinition of template_parameter '{}'", template_parameter->name);
-					reporter.info(found->value[0]->location, "First definition here:");
+					reporter.info((*found.value)[0]->location, "First definition here:");
 					yield(YieldResult::fail);
 				}
 
-				lambda->head.template_parameters_block.add(template_parameter);
+				template_parameters_block->add(template_parameter);
 			}
 		});
+
+	}
+
+	struct ParsedLambda {
+		Expression *lambda_or_head = 0;
+		String name = {};
+	};
+
+	ParsedLambda parse_lambda() {
+		auto lambda = Lambda::create();
+		lambda->location = token.string;
+		lambda->head.template_parameters_block.parent = current_block;
+
+		scoped_replace(current_block, &lambda->head.parameters_block);
+		scoped_replace(current_loop, 0);
+		scoped_replace(current_container, lambda);
+		assert(current_container->kind == NodeKind::Lambda);
+
+		String lambda_name = {};
+
+		next();
+		skip_lines();
+
+		if (token.kind == Token_name) {
+			lambda_name = token.string;
+			next();
+			skip_lines();
+		}
+		
+		lambda->head.is_template = parse_template_parameter_list(lambda, &lambda->head.template_parameters_block);
 
 		expect('(');
 		parse_list('(', ',', ')', [&] {
@@ -178,26 +182,14 @@ struct Parser {
 
 			List<Definition *> parameter_group;
 
-			auto create_and_add_parameter = [&] {
-				auto parameter = Definition::create();
-				parameter->name = token.string;
-				parameter->location = token.string;
-				parameter_group.add(parameter);
-			};
-
-			create_and_add_parameter();
+			auto parameter = Definition::create();
+			parameter->name = token.string;
+			parameter->location = token.string;
+			parameter_group.add(parameter);
 
 			next();
 			skip_lines();
 
-			while (token.kind == ',') {
-				next();
-				skip_lines();
-				expect(Token_name);
-				create_and_add_parameter();
-				next();
-			}
-						
 			if (token.kind != ':') {
 				reporter.error(token.string, "Expected {}, but got {}", (TokenKind)':', token);
 				reporter.help(lambda->location, "We are currently parsing a lambda, because only lambdas start with `(`. If you want to wrap an operation, do that with a block `{}`");
@@ -207,22 +199,28 @@ struct Parser {
 			next();
 			skip_lines();
 
-			auto parsed_type = parse_expression();
+			auto parsed_type = parse_expression_2(); // NOTE: don't parse default value
 
-			for (auto parameter : parameter_group) {
-				parameter->container = lambda;
-				parameter->parsed_type = parsed_type;
-				parameter->is_parameter = true;
-				parameter->mutability = mutability;
+			skip_lines();
+			if (token.kind == '=') {
+				next();
+				skip_lines();
 
-				if (auto found = lambda->head.parameters_block.definition_map.find(parameter->name); found && found->value.count) {
-					reporter.error(parameter->location, "Redefinition of parameter '{}'", parameter->name);
-					reporter.info(found->value[0]->location, "First definition here:");
-					yield(YieldResult::fail);
-				}
-
-				lambda->head.parameters_block.add(parameter);
+				parameter->initial_value = parse_expression();
 			}
+
+			parameter->container = lambda;
+			parameter->parsed_type = parsed_type;
+			parameter->is_parameter = true;
+			parameter->mutability = mutability;
+
+			if (auto found = lambda->head.parameters_block.definition_map.find(parameter->name); found && found.value->count) {
+				reporter.error(parameter->location, "Redefinition of parameter '{}'", parameter->name);
+				reporter.info((*found.value)[0]->location, "First definition here:");
+				yield(YieldResult::fail);
+			}
+
+			lambda->head.parameters_block.add(parameter);
 		});
 
 		bool body_required = true;
@@ -300,6 +298,47 @@ struct Parser {
 		return {finish_node(&lambda->head), lambda_name};
 	}
 
+	bool fail_due_to_unseparated_ambiguous_expression(Expression *expression, String separator) {
+		if (auto root_binary = as<Binary>(expression)) {
+			if (is_ass(root_binary->operation)) {
+				if (auto left_binary = as<Binary>(root_binary->left)) {
+					if (could_be_unary(left_binary->operation)) {
+						reporter.error(expression->location, "This failed to parse. You most likely didn't separate the condition from the body. Use `{}` or a new-line between them.", separator);
+
+						utf8 *line_begin = expression->location.begin();
+						while (1) {
+							--line_begin;
+							if (*line_begin == '\0' || *line_begin == '\n') {
+								++line_begin;
+								break;
+							}
+						}
+
+						utf8 *line_end = expression->location.end();
+						while (1) {
+							if (*line_end == '\0' || *line_end == '\n') {
+								break;
+							}
+							++line_end;
+						}
+
+						StringBuilder builder;
+						append(builder, Span(line_begin, left_binary->left->location.end()));
+						append(builder, ' ');
+						append(builder, separator);
+						append(builder, ' ');
+						append(builder, left_binary->operation);
+						append(builder, Span(left_binary->right->location.begin(), line_end));
+						reporter.help("Use `{}` keyword like this:", separator);
+						reporter.help("{}", to_string(builder));
+						return false;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
 	// Parses parse_expression_2 with binary operators and definitions.
 	Expression *parse_expression(bool whitespace_is_skippable_before_binary_operator = false, int right_precedence = 0) {
 		switch (token.kind) {
@@ -363,7 +402,7 @@ struct Parser {
 					//	yield(YieldResult::fail);
 					//}
 
-					expect({Token_eol, Token_eof});
+					expect({Token_eol, Token_eof, ';'});
 				}
 
 				return finish_node(definition);
@@ -635,6 +674,10 @@ struct Parser {
 				next();
 				return finish_node(none);
 			}
+
+			#define x(name) case Token_##name:
+			ENUMERATE_BUILTIN_STRUCTS(x)
+			#undef x
 			case Token_name: {
 				auto name = Name::create();
 				name->location = token.string;
@@ -657,8 +700,8 @@ struct Parser {
 			case Token_number: {
 				auto literal = IntegerLiteral::create();
 				literal->location = token.string;
-
-				auto hex_digit_to_int = [](utf8 c) -> u8 {
+				
+				auto digit_char_to_int = [](utf8 c) -> u8 {
 					u32 u = c;
 					if (u - '0' < 10) {
 						return u - '0';
@@ -669,24 +712,71 @@ struct Parser {
 					if (u - 'a' < 6) {
 						return u - 'a' + 10;
 					}
-					invalid_code_path();
+					return -1;
 				};
+				
+				u64 base = 10;
+				String base_name = u8"decimal"s;
+				String number_string = token.string;
 
-				if (token.string.count >= 2 && token.string.data[1] == 'x') {
-					u64 result = 0;
-					for (int i = 2; i < token.string.count; ++i) {
-						result = (result << 4) | hex_digit_to_int(token.string.data[i]);
+				if (token.string.count >= 2) {
+					auto &first_char = token.string.data[0];
+					auto &base_char = token.string.data[1];
+
+					if (first_char == '0') {
+						switch (to_lower(base_char)) {
+							case 'x':
+								base = 16;
+								base_name = u8"hexadecimal"s;
+								number_string = token.string.skip(2);
+								break;
+							case 'o':
+								base = 8;
+								base_name = u8"octal"s;
+								number_string = token.string.skip(2);
+								break;
+							case 'b':
+								base = 2;
+								base_name = u8"binary"s;
+								number_string = token.string.skip(2);
+								break;
+
+							case '0':case '1':case '2':case '3':case '4':
+							case '5':case '6':case '7':case '8':case '9': {
+								reporter.error(token.string, "If an integer literal starts with zero, the second character determines the base. To make an octal literal use `0o`.");
+								reporter.help(Span(&base_char, (umm)1), "Allowed bases are: b - binary, o - octal, x - hexadecimal.");
+								yield(YieldResult::fail);
+								break;
+							}
+
+							default: {
+								reporter.error(Span(&base_char, (umm)1), "Invalid base '{}' in integer literal.", base_char);
+								reporter.help(Span(&base_char, (umm)1), "Allowed bases are: b - binary, o - octal, x - hexadecimal.");
+								yield(YieldResult::fail);
+							}
+						}
 					}
-					literal->value = result;
-				} else {
-					auto parsed = parse_u64(token.string);
-					if (!parsed) {
-						reporter.error(token.string, "Could not parse number {}", token.string);
+				}
+
+				UnsizedInteger result = {};
+				for (auto &ch : number_string) {
+					if (ch == '_')
+						continue;
+
+					u64 digit = digit_char_to_int(ch);
+					if (digit >= base) {
+						reporter.error(Span(&ch, (umm)1), "Invalid character '{}' in {} integer literal", ch, base_name);
 						yield(YieldResult::fail);
 					}
 
-					literal->value = parsed.value();
+					UnsizedInteger prev = result;
+					result = result * base + digit;
+					if ((result - digit) / base != prev) {
+						reporter.error(Span(&ch, (umm)1), "{} integer literal is too big", Capitalized{base_name});
+						yield(YieldResult::fail);
+					}
 				}
+				literal->value = result;
 
 				next();
 
@@ -716,6 +806,10 @@ struct Parser {
 				{
 					scoped_replace(currently_parsing_if_condition_location, If->location);
 					If->condition = parse_expression();
+					
+					if (fail_due_to_unseparated_ambiguous_expression(If->condition, u8"then"s)) {
+						yield(YieldResult::fail);
+					}
 				}
 
 				skip_lines();
@@ -830,6 +924,9 @@ struct Parser {
 					next();
 					skip_lines();
 				}
+
+				Struct->is_template = parse_template_parameter_list(Struct, &Struct->template_parameters_block);
+
 				expect('{');
 				next();
 				skip_lines();
@@ -1049,6 +1146,10 @@ struct Parser {
 				{
 					scoped_replace(currently_parsing_if_condition_location, location);
 					condition = parse_expression();
+
+					if (fail_due_to_unseparated_ambiguous_expression(condition, u8"then"s)) {
+						yield(YieldResult::fail);
+					}
 				}
 
 				skip_lines();

@@ -17,9 +17,9 @@ const main = fn () => {
     class.cbSize = 80
     class.lpfnWndProc = wnd_proc as *None
     class.hInstance = GetModuleHandleA(none)
-    class.lpszClassName = class_name
+    class.lpszClassName = class_name.data
     RegisterClassExA(&class as *let WNDCLASSEXA)
-    CreateWindowExA(0, class_name, "My Window", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, none, none, class.hInstance, none)
+    CreateWindowExA(0, class_name.data, "My Window".data, WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, none, none, class.hInstance, none)
 
     var msg: MSG
     while true {

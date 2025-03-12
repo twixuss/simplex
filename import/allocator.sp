@@ -20,6 +20,8 @@ const Allocator = struct {
     state: *None
 }
 
+var current_allocator: Allocator
+
 fn allocate(allocator: Allocator, new: Allocation): Allocation => allocator.func(allocator.state, AA_ALLOCATE, Allocation(), new)
 fn reallocate(allocator: Allocator, old: Allocation, new: Allocation): Allocation => allocator.func(allocator.state, AA_REALLOCATE, old, new)
 fn deallocate(allocator: Allocator, old: Allocation): None => allocator.func(allocator.state, AA_DEALLOCATE, old, Allocation())

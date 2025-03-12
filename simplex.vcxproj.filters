@@ -5,7 +5,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="x.h" />
-    <ClInclude Include="src\print_ast.h" />
+    <ClInclude Include="src\print_ast.inl" />
     <ClInclude Include="src\visit.h" />
     <ClInclude Include="src\c_parser.h" />
     <ClInclude Include="src\meaning.h" />

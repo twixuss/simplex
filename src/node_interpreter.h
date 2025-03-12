@@ -151,7 +151,7 @@ private:
 	Value load_address_impl(Definition *definition) {
 		for (auto &scope : reversed(scope_stack)) {
 			if (auto found = scope.variables.find(definition)) {
-				return Value(&found->value);
+				return Value(found.value);
 			}
 		}
 		invalid_code_path();
@@ -238,7 +238,7 @@ private:
 				case BuiltinType::S16: return Value((s16)literal->value);
 				case BuiltinType::S32: return Value((s32)literal->value);
 				case BuiltinType::S64: return Value((s64)literal->value);
-				case BuiltinType::UnsizedInteger: return Value(unsized_integer_tag, (s64)literal->value);
+				case BuiltinType::UnsizedInteger: return Value(unsized_integer_tag, literal->value);
 			}
 		}
 
@@ -308,7 +308,7 @@ private:
 			// Globals may need to be waited for.
 			auto &scope = scope_stack[0];
 			if (auto found = scope.variables.find(definition)) {
-				return found->value;
+				return *found.value;
 			} else {
 				if (!yield_while_null(definition->location, &definition->type)) {
 					yield(YieldResult::fail);
@@ -323,7 +323,7 @@ private:
 
 		for (auto &scope : reversed(scope_stack)) {
 			if (auto found = scope.variables.find(definition)) {
-				return found->value;
+				return *found.value;
 			}
 		}
 		invalid_code_path();
@@ -397,7 +397,7 @@ private:
 
 				Dll dll = {};
 				if (auto found = loaded_extern_libraries.find(lambda->extern_library)) {
-					dll = found->value;
+					dll = *found.value;
 				} else {
 					dll = load_dll(lambda->extern_library);
 					if (!dll) {
@@ -696,6 +696,10 @@ private:
 		}
 	}
 	Value execute_impl(Struct *Struct) { 
+		if (Struct->is_template) {
+			immediate_reporter.error(Struct->location, "Interpreting a template struct is not valid.");
+			yield(YieldResult::fail);
+		}
 		return Value(Type(Struct));
 	}
 	Value execute_impl(ArrayType *array) {

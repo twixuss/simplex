@@ -13,6 +13,7 @@ const LRESULT = S64
 
 const HWND = *None
 const LPCSTR = *U8
+const HANDLE = *None
 const HMENU = *None
 const HMODULE = *None
 const HINSTANCE = *None
@@ -50,6 +51,13 @@ const MSG = struct {
     time:    DWORD
     pt:      POINT
 }
+const SECURITY_ATTRIBUTES = struct {
+    nLength: DWORD
+    lpSecurityDescriptor: LPVOID
+    bInheritHandle: BOOL
+}
+
+const LPSECURITY_ATTRIBUTES = *SECURITY_ATTRIBUTES
 
 const WM_NULL                         = 0x0000
 const WM_CREATE                       = 0x0001
@@ -388,6 +396,11 @@ const MEM_DECOMMIT                    = 0x00004000
 const MEM_RELEASE                     = 0x00008000  
 const MEM_FREE                        = 0x00010000  
 
+const GENERIC_READ    = 0x80000000
+const GENERIC_WRITE   = 0x40000000
+const GENERIC_EXECUTE = 0x20000000
+const GENERIC_ALL     = 0x10000000
+
 #extern "user32"
 fn RegisterClassExA(class: *WNDCLASSEXA): *None => #extern
 
@@ -445,3 +458,13 @@ fn VirtualFree(
 ): BOOL => #extern
 
 fn GetLastError(): DWORD => #extern;
+
+fn CreateFileA(
+    lpFileName: LPCSTR,
+    dwDesiredAccess: DWORD,
+    dwShareMode: DWORD,
+    lpSecurityAttributes: LPSECURITY_ATTRIBUTES,
+    dwCreationDisposition: DWORD,
+    dwFlagsAndAttributes: DWORD,
+    hTemplateFile: HANDLE                
+  ): HANDLE => #extern;

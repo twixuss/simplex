@@ -599,7 +599,7 @@ struct Builder {
 							auto parameter_type = parameters[0]->type;
 							if (types_match(parameter_type, BuiltinType::S64)) {
 								I(intrinsic, Intrinsic::print_S64, {});
-							} else if (types_match(parameter_type, BuiltinType::String)) {
+							} else if (types_match(parameter_type, builtin_structs.String)) {
 								I(intrinsic, Intrinsic::print_String, {});
 							} else {
 								invalid_code_path(definition->location, "Unsupported parameter type '{}' in 'print' intrinsic", parameter_type);
@@ -677,7 +677,7 @@ struct Builder {
 		umm offset = -1;
 		auto found = string_literal_offsets.find(literal->value);
 		if (found) {
-			offset = found->value;
+			offset = *found.value;
 		} else {
 			offset = output_bytecode.global_readonly_data.count;
 			output_bytecode.global_readonly_data.add((Span<u8>)literal->value);
@@ -716,8 +716,38 @@ struct Builder {
 		I(copy, destination, (s64)node->type_kind, 8);
 	} 
 	void output_impl(Site destination, Binary *binary) {
+		//switch (binary->low_operation) {
+		//	case LowBinaryOperation::equ8:
+		//	case LowBinaryOperation::equ16:
+		//	case LowBinaryOperation::equ32:
+		//	case LowBinaryOperation::equ64:
+		//	case LowBinaryOperation::neq8:
+		//	case LowBinaryOperation::neq16:
+		//	case LowBinaryOperation::neq32:
+		//	case LowBinaryOperation::neq64: {
+		//		tmpreg(left);
+		//		output(left, binary->left);
+		//		tmpreg(right);
+		//		output(right, binary->right);
+		//		switch (binary->low_operation) {
+		//			case LowBinaryOperation::equ8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
+		//			case LowBinaryOperation::equ16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
+		//			case LowBinaryOperation::equ32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
+		//			case LowBinaryOperation::equ64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
+		//			case LowBinaryOperation::neq8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
+		//			case LowBinaryOperation::neq16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
+		//			case LowBinaryOperation::neq32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
+		//			case LowBinaryOperation::neq64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
+		//		}
+		//		break;
+		//	}
+		//}
+		
+		auto dleft  = binary->left->type ? direct(binary->left->type) : 0;
+		auto dright = binary->right->type ? direct(binary->right->type) : 0;
+
 		if (binary->operation == BinaryOperation::dot) {
-			auto Struct = direct_as<::Struct>(binary->left->type);
+			auto Struct = as<::Struct>(dleft);
 			auto member_size = get_size(binary->type);
 			auto member = as<Name>(binary->right)->definition();
 			if (Struct) {
@@ -728,7 +758,7 @@ struct Builder {
 				member_address.offset += member->offset;
 				I(copy, destination, member_address, member_size);
 			} else {
-				assert(as_pointer(binary->left->type));
+				assert(as_pointer(dleft));
 				tmpreg(struct_addr_reg);
 				output(struct_addr_reg, binary->left);
 				I(copy, destination, Address { .base = struct_addr_reg, .offset = (s64)member->offset }, member_size);
@@ -753,8 +783,8 @@ struct Builder {
 			case BinaryOperation::bsl:
 			case BinaryOperation::bsr: {
 				auto result_size = get_size(binary->type);
-				auto left_size = get_size(binary->left->type);
-				auto right_size = get_size(binary->right->type);
+				auto left_size = get_size(dleft);
+				auto right_size = get_size(dright);
 				assert(result_size == left_size);
 				assert(result_size == right_size);
 				assert(result_size <= 8);
@@ -777,7 +807,7 @@ struct Builder {
 			case BinaryOperation::bor: I(or##n,  .d = destination, .a = left, .b = right);  break; \
 			case BinaryOperation::bsl: I(sll##n, .d = destination, .a = left, .b = right);  break; \
 			case BinaryOperation::bsr: {                                                           \
-				if (is_signed_integer(binary->left->type))                                         \
+				if (is_signed_integer(dleft))                                                      \
 					I(sra##n, .d = destination, .a = left, .b = right);                            \
 				else                                                                               \
 					I(srl##n, .d = destination, .a = left, .b = right);                            \
@@ -801,35 +831,49 @@ struct Builder {
 			case BinaryOperation::grt:
 			case BinaryOperation::leq:
 			case BinaryOperation::grq: {
-				auto left_size = get_size(binary->left->type);
-				auto right_size = get_size(binary->right->type);
-				assert(right_size == left_size);
-				assert(right_size <= 8);
+				if (is_concrete_integer(dleft) && is_concrete_integer(dright)) {
+					auto left_size = get_size(dleft);
+					auto right_size = get_size(dright);
+					assert(right_size == left_size);
+					assert(right_size <= 8);
 
-				tmpreg(left);
-				output(left, binary->left);
-				tmpreg(right);
-				output(right, binary->right);
+					tmpreg(left);
+					output(left, binary->left);
+					tmpreg(right);
+					output(right, binary->right);
 
-				if (::is_signed_integer(binary->left->type)) {
-					switch (binary->operation) {
-						case BinaryOperation::equ: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals    );  break;
-						case BinaryOperation::neq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals);  break;
-						case BinaryOperation::les: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less          );  break;
-						case BinaryOperation::grt: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater       );  break;
-						case BinaryOperation::leq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less_equals   );  break;
-						case BinaryOperation::grq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater_equals);  break;
-						default: not_implemented();
+					if (::is_signed_integer(dleft)) {
+						switch (binary->operation) {
+							case BinaryOperation::equ: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals    );  break;
+							case BinaryOperation::neq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals);  break;
+							case BinaryOperation::les: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less          );  break;
+							case BinaryOperation::grt: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater       );  break;
+							case BinaryOperation::leq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less_equals   );  break;
+							case BinaryOperation::grq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater_equals);  break;
+							default: not_implemented();
+						}
+					} else {
+						switch (binary->operation) {
+							case BinaryOperation::equ: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals    );  break;
+							case BinaryOperation::neq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals);  break;
+							case BinaryOperation::les: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less          );  break;
+							case BinaryOperation::grt: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater       );  break;
+							case BinaryOperation::leq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less_equals   );  break;
+							case BinaryOperation::grq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater_equals);  break;
+							default: not_implemented();
+						}
 					}
-				} else {
-					switch (binary->operation) {
-						case BinaryOperation::equ: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals    );  break;
-						case BinaryOperation::neq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals);  break;
-						case BinaryOperation::les: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less          );  break;
-						case BinaryOperation::grt: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater       );  break;
-						case BinaryOperation::leq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less_equals   );  break;
-						case BinaryOperation::grq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater_equals);  break;
-						default: not_implemented();
+					return;
+				}
+				switch (binary->operation) {
+					case BinaryOperation::equ:
+					case BinaryOperation::neq: {
+						if (auto pointer_expr = is_pointer_to_none_comparison(binary->left, binary->right)) {
+							tmpreg(ptr);
+							output(ptr, pointer_expr);
+							I(cmp8, .d = destination, .a = ptr, .b = 0, .cmp = binary->operation == BinaryOperation::equ ? Comparison::equals : Comparison::not_equals);
+						}
+						break;
 					}
 				}
 				break;
@@ -851,7 +895,7 @@ struct Builder {
 				break;
 			}
 			case BinaryOperation::as: {
-				auto source_type = direct(binary->left->type);
+				auto source_type = direct(dleft);
 				auto target_type = direct(binary->right);
 
 				// From none
@@ -876,17 +920,6 @@ struct Builder {
 							I(copy, destination, (s64)callback.start_address, pointer_size);
 							break;
 						}
-					}
-				}
-
-				// From string
-				if (types_match(source_type, BuiltinType::String)) {
-					// To pointer
-					if (auto right_pointer = as_pointer(target_type)) {
-						tmpaddr(tmpstr, get_size(BuiltinType::String));
-						output(tmpstr, binary->left);
-						I(copy, destination, tmpstr, pointer_size);
-						break;
 					}
 				}
 
@@ -985,7 +1018,7 @@ struct Builder {
 				StringLiteral message;
 				message.value = tformat(u8"{}: failed to execute `match` expression with no default case", get_source_location(match->location));
 				message.location = match->location;
-				message.type = get_builtin_type(BuiltinType::String);
+				message.type = make_name(builtin_structs.String->definition);
 				output(Address{.base = Register::stack}, &message);
 				I(intrinsic, Intrinsic::print_String, {});
 				I(add8, Register::stack, Register::stack, 16);
@@ -1094,7 +1127,7 @@ struct Builder {
 	} 
 	void output_impl(Break *node) {
 		if (node->tag_block) {
-			auto &info = block_infos.find(node->tag_block)->value;
+			auto &info = *block_infos.find(node->tag_block).value;
 			output(info.destination, node->value);
 			
 			output_defers_up_until(node->tag_block);
