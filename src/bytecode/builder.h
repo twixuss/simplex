@@ -486,7 +486,7 @@ struct Builder {
 	}
 
 	Address get_definition_address(Definition *definition) {
-		assert(definition->offset != invalid_definition_offset);
+		assert(definition->offset != Definition::invalid_offset);
 		if (definition->is_parameter) {
 			return Address{.base = Register::arguments, .offset = (s64)definition->offset};
 		} else if (!definition->container) {
@@ -582,7 +582,7 @@ struct Builder {
 					auto argument = call->arguments[i];
 					assert(argument.parameter);
 					auto offset = (s64)argument.parameter->offset;
-					assert(offset != invalid_definition_offset);
+					assert(offset != Definition::invalid_offset);
 
 					Site destination = Address{.base = Register::stack, .offset = offset};
 

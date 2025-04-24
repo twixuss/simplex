@@ -76,27 +76,46 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\binary_operation.cpp" />
     <ClCompile Include="src\escape.cpp" />
+    <ClCompile Include="src\fiber.cpp" />
     <ClCompile Include="src\lexer.cpp" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\mutability.cpp" />
+    <ClCompile Include="src\nodes.cpp" />
+    <ClCompile Include="src\parser.cpp" />
     <ClCompile Include="src\reporter.cpp" />
     <ClCompile Include="src\token.cpp" />
+    <ClCompile Include="src\type.cpp" />
+    <ClCompile Include="src\unary_operation.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\binary_operation.h" />
     <ClInclude Include="src\bytecode\builder.h" />
     <ClInclude Include="src\bytecode\bytecode.h" />
     <ClInclude Include="src\bytecode\interpreter.h" />
+    <ClInclude Include="src\capitalized.h" />
     <ClInclude Include="src\common.h" />
     <ClInclude Include="src\c_parser.h" />
+    <ClInclude Include="src\fiber.h" />
+    <ClInclude Include="src\paths.h" />
     <ClInclude Include="src\escape.h" />
     <ClInclude Include="src\lexer.h" />
     <ClInclude Include="src\meaning.h" />
     <ClInclude Include="src\mutability.h" />
+    <ClInclude Include="src\nameable.h" />
+    <ClInclude Include="src\node.h" />
+    <ClInclude Include="src\nodes.h" />
+    <ClInclude Include="src\nodes_fwd.h" />
     <ClInclude Include="src\node_interpreter.h" />
     <ClInclude Include="src\parser.h" />
     <ClInclude Include="src\print_ast.inl" />
     <ClInclude Include="src\reporter.h" />
     <ClInclude Include="src\token.h" />
+    <ClInclude Include="src\type.h" />
+    <ClInclude Include="src\unary_operation.h" />
+    <ClInclude Include="src\unsized_integer.h" />
+    <ClInclude Include="src\value.h" />
     <ClInclude Include="src\visit.h" />
     <ClInclude Include="x.h" />
   </ItemGroup>

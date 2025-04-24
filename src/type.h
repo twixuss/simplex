@@ -1,0 +1,87 @@
+#pragma once
+#include "common.h"
+#include "node.h"
+#include "nodes_fwd.h"
+#include "token.h"
+
+#define CHECK_THAT_TYPES_ARE_TYPES 1//BUILD_DEBUG
+
+enum class BuiltinType : u8 {
+	#define x(name) name,
+	ENUMERATE_BUILTIN_TYPES(x)
+	#undef x
+	count,
+};
+
+umm append(StringBuilder &builder, BuiltinType type_kind);
+BuiltinType to_builtin_type_kind(TokenKind kind);
+
+bool is_type(Expression *expression);
+
+#if CHECK_THAT_TYPES_ARE_TYPES
+struct Type {
+	Expression *expression = 0;
+	Type() = default;
+	Type(Expression *expression) : expression(expression) {
+		if (expression) {
+			assert(is_type(expression));
+		}
+	}
+	operator Expression *() { return expression; }
+	Expression *operator->() { return expression; }
+	Expression &operator*() { return *expression; }
+	template <class Expr>
+	operator Expr*();
+};
+#else
+using Type = Expression *;
+#endif
+
+
+// NOTE: Do not use this for types in the source code. These do not have a location.
+BuiltinTypeName *get_builtin_type(BuiltinType kind);
+
+Expression *direct(Expression *node);
+
+template <class T>
+T *direct_as(Expression *node) {
+	node = direct(node);
+	if (((Node *)node)->kind == NodeTypeToKind<T>::kind) {
+		return (T *)node;
+	}
+
+	return 0;
+}
+
+struct CheckResult2 {
+	bool result = {};
+	Node *failed_node1 = {};
+	Node *failed_node2 = {};
+
+	CheckResult2(bool result) : result(result) {}
+	CheckResult2(bool result, Node *failed_node1, Node *failed_node2) : result(result), failed_node1(failed_node1), failed_node2(failed_node2) {}
+
+	operator bool() { return result; }
+};
+
+CheckResult2 types_match(Type a, Type b);
+CheckResult2 types_match(Expression *a, BuiltinType b);
+CheckResult2 types_match(BuiltinType a, Expression *b);
+
+bool is_concrete_integer(Type type);
+bool is_signed_integer(Type type);
+bool is_unsigned_integer(Type type);
+bool is_concrete(Type type);
+void propagate_concrete_type(Expression *expression, Type type);
+void make_concrete(Expression *expression);
+
+u64 get_size(BuiltinType type_kind);
+
+u64 get_size(Type type);
+
+enum class Sign : u8 {
+	Unsigned,
+	Signed
+};
+ 
+Sign get_sign(BuiltinType type_kind);

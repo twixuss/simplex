@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "fiber.h"
 
 struct NodeInterpreter {
 	struct Scope {

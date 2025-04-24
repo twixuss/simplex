@@ -6,6 +6,13 @@
     <ClCompile Include="src\reporter.cpp" />
     <ClCompile Include="src\escape.cpp" />
     <ClCompile Include="src\token.cpp" />
+    <ClCompile Include="src\parser.cpp" />
+    <ClCompile Include="src\type.cpp" />
+    <ClCompile Include="src\binary_operation.cpp" />
+    <ClCompile Include="src\unary_operation.cpp" />
+    <ClCompile Include="src\mutability.cpp" />
+    <ClCompile Include="src\nodes.cpp" />
+    <ClCompile Include="src\fiber.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="x.h" />
@@ -24,5 +31,17 @@
     <ClInclude Include="src\token.h" />
     <ClInclude Include="src\reporter.h" />
     <ClInclude Include="src\escape.h" />
+    <ClInclude Include="src\nodes.h" />
+    <ClInclude Include="src\value.h" />
+    <ClInclude Include="src\unsized_integer.h" />
+    <ClInclude Include="src\type.h" />
+    <ClInclude Include="src\nodes_fwd.h" />
+    <ClInclude Include="src\node.h" />
+    <ClInclude Include="src\binary_operation.h" />
+    <ClInclude Include="src\nameable.h" />
+    <ClInclude Include="src\unary_operation.h" />
+    <ClInclude Include="src\capitalized.h" />
+    <ClInclude Include="src\paths.h" />
+    <ClInclude Include="src\fiber.h" />
   </ItemGroup>
 </Project>
