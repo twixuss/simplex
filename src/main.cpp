@@ -18,6 +18,11 @@
 #include <tl/signed_int.h>
 #endif
 
+#include "x.h"
+#include "reporter.h"
+#include "token.h"
+#include "escape.h"
+
 OsLock stdout_mutex;
 
 #define ENABLE_STRING_HASH_COUNT 0
@@ -39,11 +44,6 @@ forceinline constexpr u64 read_u64(utf8 *data) {
 		return *(u64 *)data;
 	}
 }
-
-inline bool operator==(String a, char const *b) {
-	return a == as_utf8(as_span(b));
-}
-
 
 #if ENABLE_STRING_HASH_COUNT
 u32 string_hash_count;
@@ -148,144 +148,6 @@ umm append(StringBuilder &builder, Capitalized<T> capitalized) {
 	return result;
 }
 
-inline StaticList<char, 4> escape_character(char ch) {
-	StaticList<char, 4> result;
-	switch (ch) {
-		case '\x0': result.add("\\x0"s); break;
-		case '\x1': result.add("\\x1"s); break;
-		case '\x2': result.add("\\x2"s); break;
-		case '\x3': result.add("\\x3"s); break;
-		case '\x4': result.add("\\x4"s); break;
-		case '\x5': result.add("\\x5"s); break;
-		case '\x6': result.add("\\x6"s); break;
-		case '\a': result.add("\\a"s); break;
-		case '\b': result.add("\\b"s); break;
-		case '\t': result.add("\\t"s); break;
-		case '\n': result.add("\\n"s); break;
-		case '\v': result.add("\\v"s); break;
-		case '\f': result.add("\\f"s); break;
-		case '\r': result.add("\\r"s); break;
-		case '\x0e': result.add("\\x0e"s); break;
-		case '\x0f': result.add("\\x0f"s); break;
-		case '\x10': result.add("\\x10"s); break;
-		case '\x11': result.add("\\x11"s); break;
-		case '\x12': result.add("\\x12"s); break;
-		case '\x13': result.add("\\x13"s); break;
-		case '\x14': result.add("\\x14"s); break;
-		case '\x15': result.add("\\x15"s); break;
-		case '\x16': result.add("\\x16"s); break;
-		case '\x17': result.add("\\x17"s); break;
-		case '\x18': result.add("\\x18"s); break;
-		case '\x19': result.add("\\x19"s); break;
-		case '\x1a': result.add("\\x1a"s); break;
-		case '\x1b': result.add("\\x1b"s); break;
-		case '\x1c': result.add("\\x1c"s); break;
-		case '\x1d': result.add("\\x1d"s); break;
-		case '\x1e': result.add("\\x1e"s); break;
-		case '\x1f': result.add("\\x1f"s); break;
-		case '\\': result.add("\\\\"s); break;
-		default:
-			result.add(ch);
-			break;
-	}
-	return result;
-}
-
-inline umm escape_string(Span<utf8> string, auto write) {
-	StaticList<utf8, 4096> buffer;
-	umm count = 0;
-	for (auto ch : string) {
-		auto escaped = escape_character((char)ch);
-		for (auto ch : escaped) {
-			buffer.add(ch); 
-			if (buffer.count == buffer.capacity) {
-				write(buffer.span());
-				count += buffer.count;
-				buffer.clear();
-			}
-		}
-	}
-	write(buffer.span());
-	count += buffer.count;
-	return count;
-}
-
-struct EscapedString {
-	String unescaped_string;
-};
-
-inline umm append(StringBuilder &builder, EscapedString string) {
-	return escape_string(string.unescaped_string, [&](auto s) { append(builder, s); });
-}
-
-struct UnescapeResult {
-	List<utf8> string;
-	String failed_at;
-	String fail_reason;
-
-	operator bool() { return failed_at.count == 0; }
-};
-UnescapeResult unescape_string(Span<utf8> string) {
-	if (string.count == 0) {
-		return { .string = to_list(string) };
-	}
-
-	List<utf8> result;
-
-	UnescapeResult unfinished_result = {
-		.failed_at = {&string.back(), 1},
-		.fail_reason = u8"Unfinished escape sequence"s,
-	}; 
-
-#define NEXT() if (++cursor == string.end()) return unfinished_result
-
-	for (auto cursor = string.begin(); cursor != string.end(); ++cursor) {
-		if (*cursor == '\\') {
-			NEXT();
-			switch (*cursor) {
-				case 'a': result.add('\a'); break;
-				case 'b': result.add('\b'); break;
-				case 'f': result.add('\f'); break;
-				case 'v': result.add('\v'); break;
-				case 'n': result.add('\n'); break;
-				case 't': result.add('\t'); break;
-				case 'r': result.add('\r'); break;
-				case '\\': result.add('\\'); break;
-				case 'x': {
-					u32 digits[2];
-					
-					for (auto &digit : digits) {
-						NEXT();
-						digit = *cursor;
-						/**/ if ('0' <= digit && digit <= '9') digit -= '0';
-						else if ('a' <= digit && digit <= 'f') digit = digit - 'a' + 10;
-						else if ('A' <= digit && digit <= 'F') digit = digit - 'A' + 10;
-						else return {
-							.failed_at = {cursor, 1},
-							.fail_reason = u8"Invalid hex digit"s,
-						};
-					}
-
-					result.add(digits[0] * 16 + digits[1]);
-
-					break;
-				}
-				default: 
-					return {
-						.failed_at = {cursor, 1},
-						.fail_reason = u8"Unknown escape sequence"s,
-					};
-			}
-		} else {
-			result.add(*cursor);
-		}
-	}
-
-#undef NEXT
-
-	return {result};
-}
-
 /*
 struct GlobalAllocator : AllocatorBase<GlobalAllocator> {
 
@@ -345,442 +207,17 @@ private:
 };
 */
 
-template <class T>
-using GList = tl::List<T, DefaultAllocator>;
-
-template <class Key, class Value, class Traits = DefaultHashTraits<Key>>
-using GHashMap = tl::ContiguousHashMap<Key, Value, Traits, DefaultAllocator>;
-
-template <class Value, class Traits = DefaultHashTraits<Value>>
-using GHashSet = tl::ContiguousHashMap<Value, Empty, Traits, DefaultAllocator>;
-
-#include "x.h"
-
-consteval u64 const_string_to_token_kind(Span<char> string) {
-	assert(string.count <= 8);
-	u64 result = 0;
-	for (umm i = string.count - 1; i != -1; --i) {
-		result <<= 8;
-		result |= string.data[i];
-	}
-	return result;
-}
-consteval u32 const_string_to_token_kind(char a, char b) {
-	char buffer[] { a, b };
-	return const_string_to_token_kind(array_as_span(buffer));
-}
-consteval u32 const_string_to_token_kind(char a, char b, char c) {
-	char buffer[] { a, b, c };
-	return const_string_to_token_kind(array_as_span(buffer));
-}
-
-enum TokenKind : u64 {
-	#define x(name) Token_##name = const_string_to_token_kind(#name##s),
-	#define y(name, value) Token_##name = value,
-	ENUMERATE_TOKEN_KIND(x, y)
-	#undef y
-	#undef x
-};
-
-String enum_name(TokenKind k) {
-	switch (k) {
-		#define x(name) case Token_##name: return u8 ## #name ## s;
-		#define y(name, value) x(name)
-			ENUMERATE_TOKEN_KIND(x, y)
-		#undef y
-		#undef x
-	}
-	List<utf8, TemporaryAllocator> s;
-	if (k >= 256) {
-		s.add((utf8)(k >> 8));
-	}
-	s.add((utf8)k);
-	return s;
-}
-
-inline umm append(StringBuilder &builder, TokenKind kind) {
-	switch (kind) {
-		case Token_eof:    return append(builder, "end of file");
-		case Token_eol:    return append(builder, "end of line");
-		case Token_name:   return append(builder, "name");
-		case Token_number: return append(builder, "number");
-		case Token_string: return append(builder, "string");
-	}
-
-	if ((u32)kind <= 0xff)
-		return append(builder, (char)kind);
-
-	switch (kind) {
-#define x(name) case Token_##name: return append(builder, #name);
-#define y(name, value) x(name)
-		ENUMERATE_TOKEN_KIND(x, y)
-#undef y
-#undef x
-	}
-
-	return append_format(builder, "(unknown TokenKind 0x{} \"{}\")", FormatInt{.value=(u64)kind, .radix=16}, as_chars(value_as_bytes(kind)));
-}
-
-struct Token {
-	TokenKind kind = {};
-	String string;
-};
-
-inline umm append(StringBuilder &builder, Token token) {
-	switch (token.kind) {
-		case Token_eof: return append(builder, "end of file");
-		case Token_eol: return append(builder, "end of line");
-	}
-
-	return append(builder, token.string);
-}
-
-#define PASTE_CASE(x) case x:
-#define PASTE_CASE_0(x) case x[0]:
-
-struct SourceLine {
-	String string;
-	u32 number = 0;
-};
-
-struct SourceLocation {
-	String location;
-	String file;
-	u32 location_line_number = 0;
-	u32 location_column_number = 0;
-
-	u32 lines_start_number = 0;
-	List<String> lines;
-};
-
-LockProtected<GHashMap<utf8 *, String>, SpinLock> content_start_to_file_name;
-
-struct GetSourceLocationOptions {
-	int lines_before = 0;
-	int lines_after = 0;
-};
-
-SourceLocation get_source_location(String location, GetSourceLocationOptions options = {}) {
-	SourceLocation result;
-	result.location = location;
-	result.location_column_number = 0;
-
-	utf8 *chunk_start = location.begin();
-	utf8 *chunk_end = location.end();
-
-	if (location == u8"\n"s) {
-		// Show preceding line in this case
-		chunk_start--;
-		chunk_end--;
-	}
-
-	while (*chunk_start && *chunk_start != '\n') {
-		--chunk_start;
-		++result.location_column_number;
-	}
-	++chunk_start;
-	// Now chunk_start it is at the beggining of first line of `location`
-
-	while (*chunk_end && *chunk_end != '\n') {
-		++chunk_end;
-	}
-	// Now chunk_end it is at the end of last line of `location`
-
-	// chunk_* now points at line(s) with `location`. Extend to desired line count.
-	
-	int missing_lines_before = 0;
-	for (int i = 0; i < options.lines_before; ++i) {
-		--chunk_start;
-		if (*chunk_start == 0) {
-			missing_lines_before = options.lines_before - i;
-			break;
-		}
-		assert(*chunk_start == '\n');
-		--chunk_start;
-		
-		while (*chunk_start && *chunk_start != '\n') {
-			--chunk_start;
-		}
-		++chunk_start;
-	}
-	
-	int missing_lines_after = 0;
-	for (int i = 0; i < options.lines_after; ++i) {
-		if (*chunk_end == 0) {
-			missing_lines_after = options.lines_after - i;
-			break;
-		}
-
-		++chunk_end;
-		while (*chunk_end && *chunk_end != '\n') {
-			++chunk_end;
-		}
-	}
-
-	for (int i = 0; i < missing_lines_before; ++i) {
-		result.lines.add(Span(chunk_start, (umm)0));
-	}
-	split_by_one(Span(chunk_start, chunk_end), u8'\n', [&](String line) {
-		result.lines.add(line);
-	});
-	for (int i = 0; i < missing_lines_after; ++i) {
-		result.lines.add(Span(chunk_end, (umm)0));
-	}
-
-	assert(result.lines.count);
-	assert(result.lines.front().begin() <= location.begin());
-	if (location != u8"\n"s) {
-		assert(result.lines.back().end() >= location.end());
-	}
-
-	result.lines_start_number = 1;
-	utf8 *cursor = chunk_start;
-	while (*cursor != '\0') {
-		if (*cursor == '\n') 
-			++result.lines_start_number;
-		--cursor;
-	}
-
-	result.location_line_number = result.lines_start_number + options.lines_before;
-
-	auto found_file_name = locked_use(content_start_to_file_name) { return content_start_to_file_name.find(cursor + 1); };
-	assert(found_file_name);
-	result.file = *found_file_name.value;
-
-	return result;
-}
-
-inline umm append(StringBuilder &builder, SourceLocation location) {
-	return append_format(builder, "{}:{}:{}", location.file, location.location_line_number, location.location_column_number);
-}
-
-void print_replacing_tabs_with_spaces(String string) {
-	const umm n_spaces = 4;
-	for (auto c : string) {
-		if (c == '\t')
-			for (umm i = 0; i < n_spaces; ++i)
-				print(' ');
-		else 
-			print(c);
-	}
-}
-void print_with_length_of(char r, umm count) {
-	for (umm i = 0; i < count; ++i) {
-		print(r);
-	}
-}
-void print_with_length_of(char r, String string) {
-	for (auto c : string) {
-		if (c == '\t')
-			for (umm i = 0; i < 4;++i) 
-				tl::print(r);
-		else 
-			print(r);
-	}
-}
-
-enum class ReportKind : u8 {
-	info,
-	warning,
-	error,
-	help,
-};
-
-void print_report_indentation(int indentation) {
-	for (u32 i = indentation; i--;) {
-		tl::print(u8"|   "s);
-	}
-}
-
-void print_source_chunk(SourceLocation source_location, int indentation, ConsoleColor highlight_color) {
-	auto log10_ceil = [](int x) {
-		if (x < 1) return 0;
-		if (x < 10) return 1;
-		if (x < 100) return 2;
-		if (x < 1000) return 3;
-		if (x < 10000) return 4;
-		if (x < 100000) return 5;
-		if (x < 1000000) return 6;
-		return 7;
-	};
-
-	auto max_line_number = source_location.lines_start_number + source_location.lines.count - 1;
-	auto line_number_width = log10_ceil(max_line_number);
-	auto line_number_alignment = align_right(line_number_width, ' ');
-
-	auto output_line = [&](u32 line_number, String line, String highlight) {
-		print_report_indentation(indentation);
-		umm chars_pre_source = print(u8" {} | ", Format(line_number, line_number_alignment));
-
-		highlight.set_begin(clamp(highlight.begin(), line.begin(), line.end()));
-		highlight.set_end(clamp(highlight.end(), line.begin(), line.end()));
-		if (highlight.count) {
-			auto prefix = String(line.begin(), highlight.begin());
-			auto postfix = String(highlight.end(), line.end());
-
-			print_replacing_tabs_with_spaces(prefix);
-			with(highlight_color, print_replacing_tabs_with_spaces(highlight));
-			print_replacing_tabs_with_spaces(postfix);
-			println();
-			if (!is_stdout_console()) {
-				withs(highlight_color) {
-					print_with_length_of(' ', chars_pre_source);
-					print_with_length_of(' ', prefix);
-					print_with_length_of('~', highlight);
-					print_with_length_of(' ', postfix);
-					println();
-				};
-			}
-		} else {
-			print_replacing_tabs_with_spaces(line);
-			println();
-			if (source_location.location == u8"\n"s) {
-				withs(highlight_color) {
-					print_with_length_of(' ', chars_pre_source);
-					print_with_length_of(' ', line);
-					println('~');
-				};
-			}
-		}
-
-	};
-
-	for (int i = 0; i < source_location.lines.count; ++i) {
-		output_line(source_location.lines_start_number + i, source_location.lines[i], source_location.location);
-	}
-}
-
-struct Report {
-	ReportKind kind = {};
-	String location = {};
-	String message = {};
-	u32 indentation = 0;
-
-	static Report create(ReportKind kind, u32 indentation, String location, auto const &message) {
-		return {
-			.kind = kind,
-			.location = location,
-			.message = (String)to_string(message),
-			.indentation = indentation,
-		};
-	}
-	static Report create(ReportKind kind, u32 indentation, String location, char const *format, auto const &arg, auto const &...args) {
-		return {
-			.kind = kind,
-			.location = location,
-			.message = (String)tl::format(format, arg, args...),
-			.indentation = indentation,
-		};
-	}
-
-	ConsoleColor get_color(ReportKind kind) {
-		switch (kind) {
-			case ReportKind::info:    return ConsoleColor::cyan;
-			case ReportKind::warning: return ConsoleColor::yellow;
-			case ReportKind::error:   return ConsoleColor::red;
-			case ReportKind::help:    return ConsoleColor::green;
-		}
-		return {};
-	}
-
-	umm print_report_kind(ReportKind kind) {
-		switch (kind) {
-			case ReportKind::info:    return with(get_color(kind), ::print("Info"));
-			case ReportKind::warning: return with(get_color(kind), ::print("Warning"));
-			case ReportKind::error:   return with(get_color(kind), ::print("Error"));
-			case ReportKind::help:    return with(get_color(kind), ::print("Help"));
-		}
-		return 0;
-	}
-
-	void print() {
-		scoped(temporary_allocator_and_checkpoint);
-
-		bool verbose = indentation < nested_reports_verbosity;
-		
-		if (verbose) {
-			print_report_indentation(indentation);
-			println();
-		}
-
-		if (location.data) {
-			auto source_location = get_source_location(location);
-
-			print_report_indentation(indentation);
-			tl::print("{}: ", source_location);
-
-			if (verbose) {
-				println();
-				print_report_indentation(indentation);
-				print_report_kind(kind);
-				println(": {}",  message);
-
-				print_source_chunk(source_location, indentation, get_color(kind));
-			} else {
-				print_report_kind(kind);
-				println(": {}",  message);
-			}
-		} else {
-			print_report_indentation(indentation);
-			print_report_kind(kind);
-			println(": {}", message);
-		}
-	}
-};
-
-struct ReporterBase {
-	u32 indentation = 0;
-	void info   (this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::info,    self.indentation, location, args...)); }
-	void warning(this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::warning, self.indentation, location, args...)); }
-	void error  (this auto &&self, String location, auto const &...args) {
-		if (break_on_error) {
-			debug_break();
-		}
-		self.on_report(Report::create(ReportKind::error, self.indentation, location, args...));
-	}
-	void help   (this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::help, self.indentation, location, args...)); }
-	void info   (this auto &&self, auto const &...args) { return self.info   (String{}, args...); }
-	void warning(this auto &&self, auto const &...args) { return self.warning(String{}, args...); }
-	void error  (this auto &&self, auto const &...args) { return self.error  (String{}, args...); }
-	void help   (this auto &&self, auto const &...args) { return self.help   (String{}, args...); }
-};
-
-struct Reporter : ReporterBase {
-	List<Report> reports;
-
-	void add(Report report) {
-		report.indentation = indentation;
-		reports.add(report);
-	}
-	void on_report(Report report) {
-		reports.add(report);
-	}
-	void print_all() {
-		scoped(stdout_mutex);
-		for (auto &report : reports) {
-			report.print();
-		}
-	}
-};
-
-struct ImmediateReporter : ReporterBase {
-	void on_report(Report report) {
-		scoped(stdout_mutex);
-		report.print();
-	}
-} immediate_reporter;
-
 thread_local String debug_current_location;
 
 void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, Span<char> message) {
+	scoped(stdout_mutex);
+
 	if (!location.data)
 		location = debug_current_location;
 	immediate_reporter.error(debug_current_location, "COMPILER ERROR: {} {} at {}:{} in function {}", cause_string, expression, file, line, function);
 	if (message.count)
 		println("Message: {}", message);
-}
 
-void print_crash_info() {
 	println("Call stack:");
 	println(resolve_names(get_call_stack().skip(1).skip(-7)));
 }
@@ -793,23 +230,6 @@ auto chars_as_int(utf8 const *chars) {
 	return result;
 }
 
-
-void print_token(umm i, Token token) {
-	print("{}) {} ", i, enum_name(token.kind));
-
-	switch (token.kind) {
-		case Token_number:
-		case Token_name: 
-		case Token_directive: 
-			print("\"{}\"", EscapedString{token.string}); 
-			break;
-		case Token_string: 
-			print("{}", EscapedString{token.string}); 
-			break;
-	}
-
-	println();
-}
 
 constexpr u32 custom_precedence = 4;
 
@@ -3949,6 +3369,9 @@ private:
 
 				can_generate_vectorized_lambdas = false;
 				success &= with_unwind_strategy([&] {
+					scoped_replace(current_block, &global_block);
+					scoped_replace(current_container, 0);
+					scoped_replace(current_loop, 0);
 					return typecheck(&definition_node);
 				});
 				can_generate_vectorized_lambdas = true;
@@ -4691,6 +4114,12 @@ private:
 			}
 		}
 
+		if (!current_container || !as<Struct>(current_container)) {
+			assert(find(current_block->children, definition));
+			assert(find(current_block->definition_list, definition));
+			assert(current_block->definition_map.find(definition->name));
+		}
+
 		return definition;
 	}
 	[[nodiscard]] IntegerLiteral *   typecheck_impl(IntegerLiteral *literal, bool can_substitute) {
@@ -4943,7 +4372,7 @@ private:
 
 				for (auto definition : definitions) {
 					auto definition_index = find_index_of(block->children, definition);
-					assert(definition_index < block->children.count);
+					assert_less(definition_index, block->children.count);
 
 					if (block->container && as<Lambda>(block->container)) {
 						// Find our parent node in found definition's block
@@ -5467,6 +4896,9 @@ const {} = fn (a: {}, b: {}) => {{
 									});
 
 									success &= with_unwind_strategy([&] {
+										scoped_replace(current_block, &global_block);
+										scoped_replace(current_container, 0);
+										scoped_replace(current_loop, 0);
 										return typecheck(&definition_node);
 									});
 									
@@ -5726,6 +5158,8 @@ const {} = fn (a: {}, b: {}) => {{
 			defer {
 				assert(Struct->size != -1);
 			};
+
+			scoped_replace(current_container, Struct);
 
 			s64 struct_size = 0;
 			for (auto &member : Struct->members) {
@@ -6167,8 +5601,6 @@ bool parse_arguments(Span<Span<utf8>> args) {
 	return true;
 }
 
-#include <cassert>
-
 void init_builtin_types() {
 	#define x(name) \
 		{ \
@@ -6601,7 +6033,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 								cycle.add(p);
 								p = vertices.get_or_insert(p).parent;
 							}
-							flip_order(cycle); // reverse to get correct order
+							reverse_in_place(cycle); // reverse to get correct order
 							cycles.add(cycle);
 							cycle.clear();
 							break;

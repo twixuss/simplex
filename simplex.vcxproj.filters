@@ -2,6 +2,10 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\lexer.cpp" />
+    <ClCompile Include="src\reporter.cpp" />
+    <ClCompile Include="src\escape.cpp" />
+    <ClCompile Include="src\token.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="x.h" />
@@ -17,5 +21,8 @@
     <ClInclude Include="src\lexer.h" />
     <ClInclude Include="src\common.h" />
     <ClInclude Include="src\node_interpreter.h" />
+    <ClInclude Include="src\token.h" />
+    <ClInclude Include="src\reporter.h" />
+    <ClInclude Include="src\escape.h" />
   </ItemGroup>
 </Project>

@@ -149,7 +149,7 @@ struct Interpreter {
 					u64 max_lambda_first_instruction = 0;
 					if (current_instruction_index < bytecode->instructions.count - 3) { // Ignore initial instructions that don't belong to any lambda
 						for (auto it = bytecode->first_instruction_to_lambda.iter(); it; it.next()) {
-							auto [first_instruction, some_lambda] = *it;
+							auto [first_instruction, some_lambda] = it.key_value();
 							if (current_instruction_index >= first_instruction) {
 								if (first_instruction > max_lambda_first_instruction) {
 									max_lambda_first_instruction = first_instruction;

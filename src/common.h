@@ -20,8 +20,6 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 template <class ...Args>
 void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, char const *format, Args ...args);
 
-void print_crash_info();
-
 #if OS_WINDOWS
 #define CURRENT_FUNCTION __FUNCSIG__
 #else
@@ -30,7 +28,6 @@ void print_crash_info();
 
 #define ASSERTION_FAILURE(cause_string, expression, ...) (\
 	::assertion_failure(cause_string, expression, __FILE__, __LINE__, CURRENT_FUNCTION __VA_OPT__(,) __VA_ARGS__), \
-	print_crash_info(), \
 	(BUILD_DEBUG || debugger_attached()) ? (debug_break(), 0) : (exit(-1), 0) \
 )
 
@@ -40,12 +37,11 @@ void print_crash_info();
 #define assert(...)
 #endif
 #define TL_DEBUG BUILD_DEBUG
-#define TL_DEFAULT_HASH_MAP ContiguousHashMap
 #include <tl/file.h>
 #include <tl/thread.h>
 #include <tl/string.h>
 #include <tl/cpu.h>
-#include <tl/hash_map.h>
+#include <tl/contiguous_hash_map.h>
 #include <tl/hash_set.h>
 #include <tl/reusable_fiber.h>
 #include <tl/time.h>
@@ -114,3 +110,27 @@ inline umm append(StringBuilder &builder, Comparison c) {
 	}
 	return append_format(builder, "(unknown Comparison {})", (u64)c);
 }
+
+template <class Key, class Value, class Traits = DefaultHashTraits<Key>, class Allocator = Allocator>
+using HashMap = tl::ContiguousHashMap<Key, Value, Traits, Allocator>;
+
+template <class Value, class Traits = DefaultHashTraits<Value>>
+using HashSet = tl::ContiguousHashMap<Value, Empty, Traits, Allocator>;
+
+template <class T>
+using GList = tl::List<T, DefaultAllocator>;
+
+template <class Key, class Value, class Traits = DefaultHashTraits<Key>>
+using GHashMap = HashMap<Key, Value, Traits, DefaultAllocator>;
+
+template <class Value, class Traits = DefaultHashTraits<Value>>
+using GHashSet = HashMap<Value, Empty, Traits, DefaultAllocator>;
+
+inline bool operator==(String a, char const *b) {
+	return a == as_utf8(as_span(b));
+}
+
+#define PASTE_CASE(x) case x:
+#define PASTE_CASE_0(x) case x[0]:
+
+extern OsLock stdout_mutex;

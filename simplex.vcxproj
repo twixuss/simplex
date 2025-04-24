@@ -76,7 +76,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\escape.cpp" />
+    <ClCompile Include="src\lexer.cpp" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\reporter.cpp" />
+    <ClCompile Include="src\token.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\bytecode\builder.h" />
@@ -84,12 +88,15 @@
     <ClInclude Include="src\bytecode\interpreter.h" />
     <ClInclude Include="src\common.h" />
     <ClInclude Include="src\c_parser.h" />
+    <ClInclude Include="src\escape.h" />
     <ClInclude Include="src\lexer.h" />
     <ClInclude Include="src\meaning.h" />
     <ClInclude Include="src\mutability.h" />
     <ClInclude Include="src\node_interpreter.h" />
     <ClInclude Include="src\parser.h" />
     <ClInclude Include="src\print_ast.inl" />
+    <ClInclude Include="src\reporter.h" />
+    <ClInclude Include="src\token.h" />
     <ClInclude Include="src\visit.h" />
     <ClInclude Include="x.h" />
   </ItemGroup>

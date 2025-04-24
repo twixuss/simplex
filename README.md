@@ -1,30 +1,14 @@
 <style>
     .wip {
-        color: #FF0
+        color: #F80
     }
 </style>
 
 # Simplex
 ## --- This project is unfinished ---
-## Stuff in this readme that is not yet implemented is colored with <div class="wip">yellow</div>
+## Stuff in this readme that is not yet implemented is colored with <div class="wip">this color</div>
 
 # Syntax
-## Whitespace, semicolons and separators
-Spaces and tabs are not significant, however newlines are. Semicolons are optional. Less-noisy syntax made parsing ambiguous in some cases. For that you can use expression separators like `then` and `do`.
-
-Ambiguity example:
-```simplex
-if condition  *pointer = 42
-    // Here `*` could mean dereference or multiplication.
-
-    // To disambiguate you can do one of two things:
-    // Use `then` keyword
-if condition then *pointer = 42
-
-    // Or put body on new line
-if condition
-    *pointer = 42
-```
 ## Comments
 They are just like in C, except nestable.
 ```simplex
@@ -32,6 +16,37 @@ They are just like in C, except nestable.
 /* Multiline comment */
 /* /* Nested multiline comment */ */
 ```
+## Whitespace, semicolons and separators
+Spaces and tabs are not significant, however newlines are. Semicolons are optional. Less-noisy syntax made parsing ambiguous in some cases. For that you can use expression separators like `then` and `do`.
+
+<details><summary><b>Ambiguity example</b></summary>
+Here `*` could mean dereference or multiplication:
+
+<!--
+"<pre data-role="codeBlock" data-info="simplex" class="language-simplex simplex"><code>if condition  *pointer = 42
+</code></pre>"
+-->
+
+```simplex
+if condition  *pointer = 42
+```
+
+To disambiguate you can:
+* Use `then` keyword:
+  ```simplex
+  if condition then *pointer = 42
+  ```
+* Use braces:
+  ```simplex
+  if condition { *pointer = 42 }
+  ```
+* Put body on new line:
+  ```simplex
+  if condition
+      *pointer = 42
+  ```
+</details>
+
 ## Expressions
 ### Level 0
 #### None literal
@@ -42,7 +57,7 @@ It is implicitly convertible to:
 * Pointers
 * <div class="wip">Options</div>
 <div class="wip">
-Explicitly it is convertible to any type, resulting in everything being set to zero, equivalent to <code>memset(&value, 0, sizeof(value))</code>
+Explicitly it is convertible to any type, resulting in all bytes being set to zero, equivalent to <code>memset(&value, 0, sizeof(value))</code>
 </div>
 
 ---
@@ -68,7 +83,13 @@ Type: `UnsizedInteger`, which is implicitly convertible to any sized integer typ
 I don't know if it is worth for the number of bits to be bigger or unlimited.
 </details>
 
-----
+---
+#### String literal
+```simplex
+"Hello, world!\n"
+```
+
+---
 #### Definition
 ```simplex
 var x = 42
@@ -80,12 +101,34 @@ let condition = true
 `let` - runtime immutable.
 `const` - compile time constant.
 
+<p class="wip">
+Definitions are *expressions*, meaning you can place them in unusual places, for example in `if` conditions:
+</p>
+
+```simplex
+if let found = find(array, needle) {
+    println(*found)
+}
+```
+
 ---
 #### Block
-```simplex
-{statement1; statement2; result_expression}
-```
 Block is a list of statements, last of which can be an expression. Statements are executed in order. Value of last expression is the result.
+```simplex
+{
+    statement1;
+    statement2;
+    result_expression;
+}
+```
+If last statement of a block is an expression, the block itself becomes an expression:
+```simplex
+let foo = {
+    println("something")
+    42
+}
+```
+Here "something" is printed, then `42` is assigned to `foo`.
 
 ## Types
 ### `Type`
@@ -143,3 +186,8 @@ const String = Range[*U8]
 ---
 ### Aliases
 `Int` = `S64`
+
+
+
+# TODO
+implicit cast from `Range[T]` to `*T`?

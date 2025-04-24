@@ -83,28 +83,22 @@ struct Parser {
 
 	bool parse_template_parameter_list(Expression *parent, Block *template_parameters_block) {
 		return parse_list('[', ',', ']', [&] {
-			expect(Token_name);
-
 			List<Definition *> template_parameter_group;
 
-			auto create_and_add_template_parameter = [&] {
+			auto parse_name_and_add_to_group = [&] {
 				auto template_parameter = Definition::create();
-				template_parameter->name = token.string;
-				template_parameter->location = token.string;
+				parse_name(&template_parameter->location, &template_parameter->name);
 				template_parameter_group.add(template_parameter);
 			};
 
-			create_and_add_template_parameter();
+			parse_name_and_add_to_group();
 
-			next();
 			skip_lines();
 
 			while (token.kind == ',') {
 				next();
 				skip_lines();
-				expect(Token_name);
-				create_and_add_template_parameter();
-				next();
+				parse_name_and_add_to_group();
 			}
 						
 			if (token.kind != ':') {
@@ -156,8 +150,10 @@ struct Parser {
 		skip_lines();
 
 		if (token.kind == Token_name) {
-			lambda_name = token.string;
-			next();
+			String dummy_location;
+
+			parse_name(&dummy_location, &lambda_name);
+
 			skip_lines();
 		}
 		
@@ -180,12 +176,10 @@ struct Parser {
 					break;
 			}
 
-			List<Definition *> parameter_group;
 
 			auto parameter = Definition::create();
 			parameter->name = token.string;
 			parameter->location = token.string;
-			parameter_group.add(parameter);
 
 			next();
 			skip_lines();
@@ -339,6 +333,59 @@ struct Parser {
 		return false;
 	}
 
+	bool is_valid_name_part(TokenKind kind) {
+		switch (kind) {
+			#define x(name) case Token_##name:
+			ENUMERATE_CONCRETE_BUILTIN_TYPES(x)
+			ENUMERATE_BUILTIN_STRUCTS(x)
+			#undef x
+			case Token_name:
+				return true;
+		}
+		return false;
+	}
+
+	void parse_name(String *location, String *name) {
+		if (!is_valid_name_part(token.kind)) {
+			reporter.error(token.string, "Expected a name, but got {}", token.kind);
+			yield(YieldResult::fail);
+		}
+
+		*location = token.string;
+		*name = token.string;
+
+		next();
+
+		#if 1
+		if (is_valid_name_part(token.kind)) {
+			StringBuilder builder;
+			defer { tl::free(builder); };
+
+			append(builder, *name);
+
+			do {
+				append(builder, ' ');
+				append(builder, token.string);
+				*location = {location->begin(), token.string.end()};
+				next();
+			} while (is_valid_name_part(token.kind));
+
+			*name = as_utf8(to_string(builder));
+		}
+		#else
+		if (token.kind == Token_name) {
+			reporter.error({previous_token.string.begin(), token.string.end()}, "Two consecutive names is invalid syntax.");
+			if (currently_parsing_if_condition_location.count) {
+				reporter.help(currently_parsing_if_condition_location, "We are parsing `if` condition right now. If you want to have it on the same line as the branch, you need to use `then` keyword between them");
+			}
+			if (currently_parsing_while_condition_location.count) {
+				reporter.help(currently_parsing_while_condition_location, "We are parsing `while` condition right now. If you want to have it on the same line as the body, you need to use `do` keyword between them");
+			}
+			yield(YieldResult::fail);
+		}
+		#endif
+	}
+
 	// Parses parse_expression_2 with binary operators and definitions.
 	Expression *parse_expression(bool whitespace_is_skippable_before_binary_operator = false, int right_precedence = 0) {
 		switch (token.kind) {
@@ -358,12 +405,8 @@ struct Parser {
 				next();
 				skip_lines();
 
-				expect(Token_name);
+				parse_name(&definition->location, &definition->name);
 
-				definition->name = token.string;
-				definition->location = token.string;
-
-				next();
 				skip_lines();
 
 				expect({':', '='});
@@ -598,6 +641,9 @@ struct Parser {
 
 				if (token.kind == ':') {
 					next();
+
+					// :MULTIWORD BLOCK NAME:
+					// Can't name a block with multiple words because theres no delimiter.
 					expect(Token_name);
 
 					block->tag = token.string;
@@ -680,21 +726,7 @@ struct Parser {
 			#undef x
 			case Token_name: {
 				auto name = Name::create();
-				name->location = token.string;
-				name->name = token.string;
-
-				next();
-				if (token.kind == Token_name) {
-					reporter.error({previous_token.string.begin(), token.string.end()}, "Two consecutive names is invalid syntax.");
-					if (currently_parsing_if_condition_location.count) {
-						reporter.help(currently_parsing_if_condition_location, "We are parsing `if` condition right now. If you want to have it on the same line as the branch, you need to use `then` keyword between them");
-					}
-					if (currently_parsing_while_condition_location.count) {
-						reporter.help(currently_parsing_while_condition_location, "We are parsing `while` condition right now. If you want to have it on the same line as the body, you need to use `do` keyword between them");
-					}
-					yield(YieldResult::fail);
-				}
-
+				parse_name(&name->location, &name->name);
 				return finish_node(name);
 			}
 			case Token_number: {
@@ -932,23 +964,19 @@ struct Parser {
 				skip_lines();
 
 				while (token.kind != '}') {
-					expect(Token_name);
-					auto name = token.string;
-					next();
+					auto definition = Definition::create();
+
+					parse_name(&definition->location, &definition->name);
 
 					expect(':');
 					next();
-					auto type = parse_expression();
+					definition->parsed_type = parse_expression();
 
 					expect('\n');
 					skip_lines();
 
-					auto definition = Definition::create();
-					definition->location = name;
-					definition->name = name;
 					definition->container = Struct;
 					definition->mutability = Mutability::variable;
-					definition->parsed_type = type;
 					Struct->members.add(definition);
 				}
 				next();
@@ -1072,6 +1100,9 @@ struct Parser {
 
 				if (token.kind == ':') {
 					next();
+
+					// :MULTIWORD BLOCK NAME:
+					// Multi-word names not supported here. Need a delimiter. E.g. `with` Like `break foo with 42`;
 					expect(Token_name);
 
 					auto tag = token.string;

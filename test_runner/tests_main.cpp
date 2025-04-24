@@ -31,9 +31,13 @@ List<utf8> unescape_string(Span<utf8> string) {
 
 struct RanProcess {
 	u32 exit_code = {};
-	String output = {};
+	List<utf8> output = {};
 	bool timed_out = {};
 };
+
+void free(RanProcess &p) {
+	free(p.output);
+}
 
 SpinLock stdout_lock;
 
@@ -51,6 +55,8 @@ RanProcess run_process(String command) {
 	u8 buf[256];
 
 	StringBuilder output_builder;
+	defer { free(output_builder); };
+
 	while (1) {
 		auto bytes_read = process.standard_out->read(array_as_span(buf));
 		if (!bytes_read)
@@ -66,7 +72,7 @@ RanProcess run_process(String command) {
 
 	RanProcess result {
 		.exit_code = get_exit_code(process),
-		.output = as_utf8(to_string(output_builder)),
+		.output = (List<utf8>)to_string(output_builder),
 		.timed_out = timed_out,
 	};
 
@@ -157,18 +163,23 @@ s32 tl_main(Span<String> arguments) {
 		add_tests_from_directory(examples_directory);
 	}
 
-reloop:
-	u32 n_failed = 0;
-	u32 n_succeeded = 0;
-
 	TaskQueueThreadPool thread_pool;
 	thread_pool.init(get_cpu_info().logical_processor_count - 1);
 	defer { thread_pool.deinit(); };
+
+	u32 testloop_index = 0;
+
+reloop:
+	u32 n_failed = 0;
+	u32 n_succeeded = 0;
 
 	u32 volatile test_counter = 0;
 
 	for (auto test : tests_to_run) {
 		thread_pool += [=, &n_failed, &n_succeeded, &test_counter] {
+			scoped(current_temporary_allocator);
+			defer { current_temporary_allocator.clear(); };
+
 			auto test_index = atomic_add(&test_counter, 1);
 
 			bool fail = false;
@@ -213,6 +224,7 @@ reloop:
 
 			List<String> expected_compiler_output = find_all_params(u8"// COMPILER OUTPUT "s);
 			List<String> not_expected_compiler_output = find_all_params(u8"// NO COMPILER OUTPUT "s);
+
 			not_expected_compiler_output.add(u8"Time limit of "s); // time limit exceeded
 			String expected_program_output = find_param(u8"// PROGRAM OUTPUT "s);
 			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
@@ -229,6 +241,7 @@ reloop:
 			if (do_coverage) {
 				auto coverage_command = format(u8"opencppcoverage --sources {}\\src\\ --export_type=binary:codecov\\{}.cov -- {}"s, root_directory, test_index, compile_command);
 				auto result = run_process(coverage_command);
+				defer { free(result); };
 				withs(stdout_lock) {
 					println(result.output);
 				};
@@ -236,6 +249,7 @@ reloop:
 			}
 
 			auto actual_compiler = run_process(compile_command);
+			defer { free(actual_compiler); };
 
 			if (actual_compiler.timed_out) {
 				do_fail([&] {
@@ -365,6 +379,7 @@ reloop:
 	if (loop_until_failure) {
 		if (!n_failed) {
 			system("cls");
+			println("# {}", ++testloop_index);
 			goto reloop;
 		}
 	}
