@@ -1,6 +1,9 @@
 #pragma once
 #include "common.h"
 
+extern thread_local String debug_current_location;
+
+/*
 template <class T>
 void debug_make_readonly(Span<T> &span) {
 	auto rodata = VirtualAlloc(0, span.count * sizeof(T), MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
@@ -16,3 +19,4 @@ void debug_make_readonly(T *&t) {
 	VirtualProtect(rodata, sizeof(T), PAGE_READONLY, 0);
 	t = (T *)rodata;
 }
+*/

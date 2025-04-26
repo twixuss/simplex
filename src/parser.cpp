@@ -5,8 +5,7 @@
 #include "capitalized.h"
 #include "paths.h"
 #include "fiber.h"
-
-thread_local String debug_current_location;
+#include "debug.h"
 
 LockProtected<Imports, SpinLock> imports;
 

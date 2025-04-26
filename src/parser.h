@@ -3,8 +3,7 @@
 #include "lexer.h"
 #include "nodes.h"
 #include "reporter.h"
-
-extern thread_local String debug_current_location;
+#include "debug.h"
 
 struct Imports {
 	struct FileToImport {

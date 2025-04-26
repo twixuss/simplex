@@ -19,6 +19,10 @@
 #include "capitalized.h"
 #include "builtin_structs.h"
 #include "make_node.h"
+#include "node_interpreter.h"
+#include "bytecode/builder.h"
+#include "bytecode/interpreter.h"
+
 
 OsLock stdout_mutex;
 
@@ -327,97 +331,6 @@ enum class YieldResult : u8 {
 	wait,
 };
 bool no_more_progress = false;
-
-ValueKind to_value_kind(Type type) {
-	type = direct(type);
-	switch (type->kind) {
-		case NodeKind::BuiltinTypeName: {
-			REDECLARE_VAL(type, (BuiltinTypeName *)type);
-			switch (type->type_kind) {
-				case BuiltinType::Type:   return ValueKind::Type;
-				case BuiltinType::U8:     return ValueKind::U8;
-				case BuiltinType::U16:    return ValueKind::U16;
-				case BuiltinType::U32:    return ValueKind::U32;
-				case BuiltinType::U64:    return ValueKind::U64;
-				case BuiltinType::S8:     return ValueKind::S8;
-				case BuiltinType::S16:    return ValueKind::S16;
-				case BuiltinType::S32:    return ValueKind::S32;
-				case BuiltinType::S64:    return ValueKind::S64;
-				case BuiltinType::Bool:   return ValueKind::Bool;
-			}
-			break;
-		}
-		case NodeKind::Struct: {
-			if (type == builtin_structs.String) {
-				return ValueKind::String;
-			}
-			break;
-		}
-		case NodeKind::ArrayType: { return ValueKind::array; }
-	}
-	invalid_code_path("to_value_kind: can't convert from {}", type->kind);
-}
-
-void default_initialize(Value *value, Type type) {
-	value->kind = to_value_kind(type);
-	switch (value->kind) {
-		case ValueKind::none: { return; }
-		case ValueKind::U8: { value->U8 = 0; return; }
-		case ValueKind::U16: { value->U16 = 0; return; }
-		case ValueKind::U32: { value->U32 = 0; return; }
-		case ValueKind::U64: { value->U64 = 0; return; }
-		case ValueKind::S8: { value->S8 = 0; return; }
-		case ValueKind::S16: { value->S16 = 0; return; }
-		case ValueKind::S32: { value->S32 = 0; return; }
-		case ValueKind::S64: { value->S64 = 0; return; }
-		case ValueKind::Bool: { value->Bool = false; return; }
-		case ValueKind::String: { value->String = {}; return; }
-		case ValueKind::lambda: { value->lambda = {}; return; }
-		case ValueKind::Type: { value->Type = {}; return; }
-		case ValueKind::pointer: { value->pointer = {}; return; }
-		case ValueKind::struct_: { 
-			auto struct_ = direct_as<Struct>(type);
-			assert(struct_);
-			value->elements = {};
-			value->elements.resize(struct_->members.count);
-			for (umm i = 0; i < struct_->members.count; ++i) {
-				default_initialize(&value->elements[i], struct_->members[i]->type);
-			}
-			return; 
-		}
-		case ValueKind::array: {
-			auto array = direct_as<ArrayType>(type);
-			assert(array);
-			value->elements = {};
-			value->elements.resize(array->count.value());
-			for (umm i = 0; i < array->count.value(); ++i) {
-				default_initialize(&value->elements[i], array->element_type);
-			}
-			return;
-		}
-	}
-	invalid_code_path("default_initialize: invalid value kind {}", value->kind);
-}
-
-decltype(auto) element_at(auto &&collection, Value index) {
-	switch (index.kind) {
-		case ValueKind::U8: return collection[index.U8];
-		case ValueKind::U16: return collection[index.U16];
-		case ValueKind::U32: return collection[index.U32];
-		case ValueKind::U64: return collection[index.U64];
-		case ValueKind::S8: return collection[index.S8];
-		case ValueKind::S16: return collection[index.S16];
-		case ValueKind::S32: return collection[index.S32];
-		case ValueKind::S64: return collection[index.S64];
-		default: invalid_code_path("invalid index kind: {}", index.kind);
-	}
-}
-
-#include "node_interpreter.h"
-
-#include "bytecode/builder.h"
-#include "bytecode/interpreter.h"
-
 
 struct CheckResult {
 	bool result = {};
@@ -1659,12 +1572,12 @@ private:
 			}
 
 			switch (result.error()) {
-				case YieldResult::fail: {
+				case NodeInterpreter::YieldResult::fail: {
 					reporter.error(node->location, "Failed to evaluate value.");
 					yield(YieldResult::fail);
 					break;
 				}
-				case YieldResult::wait: {
+				case NodeInterpreter::YieldResult::wait: {
 					yield(YieldResult::wait);
 					break;
 				}

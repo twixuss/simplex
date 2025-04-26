@@ -2,6 +2,36 @@
 #include "builtin_structs.h"
 #include "make_node.h"
 
+ValueKind to_value_kind(Type type) {
+	type = direct(type);
+	switch (type->kind) {
+		case NodeKind::BuiltinTypeName: {
+			REDECLARE_VAL(type, (BuiltinTypeName *)type);
+			switch (type->type_kind) {
+				case BuiltinType::Type:   return ValueKind::Type;
+				case BuiltinType::U8:     return ValueKind::U8;
+				case BuiltinType::U16:    return ValueKind::U16;
+				case BuiltinType::U32:    return ValueKind::U32;
+				case BuiltinType::U64:    return ValueKind::U64;
+				case BuiltinType::S8:     return ValueKind::S8;
+				case BuiltinType::S16:    return ValueKind::S16;
+				case BuiltinType::S32:    return ValueKind::S32;
+				case BuiltinType::S64:    return ValueKind::S64;
+				case BuiltinType::Bool:   return ValueKind::Bool;
+			}
+			break;
+		}
+		case NodeKind::Struct: {
+			if (type == builtin_structs.String) {
+				return ValueKind::String;
+			}
+			break;
+		}
+		case NodeKind::ArrayType: { return ValueKind::array; }
+	}
+	invalid_code_path("to_value_kind: can't convert from {}", type->kind);
+}
+
 umm append(StringBuilder &builder, Value value) {
 	switch (value.kind) {
 		case ValueKind::none: return 0;
@@ -74,4 +104,45 @@ Value zero_of_type(Type type) {
 		invalid_code_path("zero_of_type({}) is invalid", direct_type);
 	}
 	return result;
+}
+
+void default_initialize(Value *value, Type type) {
+	value->kind = to_value_kind(type);
+	switch (value->kind) {
+		case ValueKind::none: { return; }
+		case ValueKind::U8: { value->U8 = 0; return; }
+		case ValueKind::U16: { value->U16 = 0; return; }
+		case ValueKind::U32: { value->U32 = 0; return; }
+		case ValueKind::U64: { value->U64 = 0; return; }
+		case ValueKind::S8: { value->S8 = 0; return; }
+		case ValueKind::S16: { value->S16 = 0; return; }
+		case ValueKind::S32: { value->S32 = 0; return; }
+		case ValueKind::S64: { value->S64 = 0; return; }
+		case ValueKind::Bool: { value->Bool = false; return; }
+		case ValueKind::String: { value->String = {}; return; }
+		case ValueKind::lambda: { value->lambda = {}; return; }
+		case ValueKind::Type: { value->Type = {}; return; }
+		case ValueKind::pointer: { value->pointer = {}; return; }
+		case ValueKind::struct_: { 
+			auto struct_ = direct_as<Struct>(type);
+			assert(struct_);
+			value->elements = {};
+			value->elements.resize(struct_->members.count);
+			for (umm i = 0; i < struct_->members.count; ++i) {
+				default_initialize(&value->elements[i], struct_->members[i]->type);
+			}
+			return; 
+		}
+		case ValueKind::array: {
+			auto array = direct_as<ArrayType>(type);
+			assert(array);
+			value->elements = {};
+			value->elements.resize(array->count.value());
+			for (umm i = 0; i < array->count.value(); ++i) {
+				default_initialize(&value->elements[i], array->element_type);
+			}
+			return;
+		}
+	}
+	invalid_code_path("default_initialize: invalid value kind {}", value->kind);
 }

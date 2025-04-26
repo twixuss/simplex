@@ -79,6 +79,7 @@
     <ClCompile Include="src\binary_operation.cpp" />
     <ClCompile Include="src\builtin_structs.cpp" />
     <ClCompile Include="src\bytecode\builder.cpp" />
+    <ClCompile Include="src\debug.cpp" />
     <ClCompile Include="src\escape.cpp" />
     <ClCompile Include="src\fiber.cpp" />
     <ClCompile Include="src\bytecode\interpreter.cpp" />
@@ -88,6 +89,7 @@
     <ClCompile Include="src\mutability.cpp" />
     <ClCompile Include="src\nameable.cpp" />
     <ClCompile Include="src\nodes.cpp" />
+    <ClCompile Include="src\node_interpreter.cpp" />
     <ClCompile Include="src\parser.cpp" />
     <ClCompile Include="src\reporter.cpp" />
     <ClCompile Include="src\token.cpp" />

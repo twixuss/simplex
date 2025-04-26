@@ -19,6 +19,8 @@ inline umm append(StringBuilder &builder, ValueKind kind) {
 	return append_format(builder, "(unknown ValueKind {})", (u32)kind);
 }
 
+ValueKind to_value_kind(Type type);
+
 inline struct StructTag {} struct_tag;
 inline struct ArrayTag {} array_tag;
 inline struct UnsizedIntegerTag {} unsized_integer_tag;
@@ -110,3 +112,19 @@ umm append(StringBuilder &builder, Value value);
 Expression *to_node(Value value);
 
 Value zero_of_type(Type type);
+
+decltype(auto) element_at(auto &&collection, Value index) {
+	switch (index.kind) {
+		case ValueKind::U8: return collection[index.U8];
+		case ValueKind::U16: return collection[index.U16];
+		case ValueKind::U32: return collection[index.U32];
+		case ValueKind::U64: return collection[index.U64];
+		case ValueKind::S8: return collection[index.S8];
+		case ValueKind::S16: return collection[index.S16];
+		case ValueKind::S32: return collection[index.S32];
+		case ValueKind::S64: return collection[index.S64];
+		default: invalid_code_path("invalid index kind: {}", index.kind);
+	}
+}
+
+void default_initialize(Value *value, Type type);
