@@ -104,3 +104,7 @@ struct Value {
 		}
 	}
 };
+
+umm append(StringBuilder &builder, Value value);
+
+Value zero_of_type(Type type);

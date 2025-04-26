@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "nodes_fwd.h"
 #include "mutability.h"
 #include "value.h"
 #include "x.h"

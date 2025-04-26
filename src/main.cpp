@@ -17,11 +17,11 @@
 #include "binary_operation.h"
 #include "paths.h"
 #include "capitalized.h"
+#include "builtin_structs.h"
 
 OsLock stdout_mutex;
 
 #define ENABLE_STRING_HASH_COUNT 0
-#define __FILE_NAME__ ([]{auto e = __FILE__;while (*e) ++e;while (*e != '\\') --e;return e + 1;}())
 
 forceinline constexpr u64 read_u64(utf8 *data) {
 	if (std::is_constant_evaluated()) {
@@ -94,35 +94,6 @@ enum class InterpretMode {
 String input_source_path;
 u32 requested_thread_count = 0;
 InterpretMode interpret_mode = {};
-
-void log_error_path(char const *file, int line, auto &&...args) {
-	with(ConsoleColor::dark_yellow, print("{}:{}: ", file, line));
-	println(args...);
-}
-
-#define LOG_ERROR_PATH(...) \
-	if (enable_log_error_path) { \
-		log_error_path(__FILE__, __LINE__ __VA_OPT__(,) __VA_ARGS__); \
-	}
-
-#define dbgln(...) (is_debugging ? println(__VA_ARGS__) : 0)
-
-#define timed_block(name) \
-	if (enable_time_log) println("{} ...", name); \
-	auto timer = create_precise_timer(); \
-	defer { if (enable_time_log) timed_results.add({name, elapsed_time(timer)}); }
-
-#define timed_function() \
-	static constexpr auto funcname = __FUNCTION__; \
-	timed_block(funcname)
-
-#define timed_expression_named(name, expression) \
-	[&] { \
-		timed_block(name); \
-		return expression; \
-	}()
-
-#define timed_expression(expression) timed_expression_named(#expression, expression)
 
 /*
 struct GlobalAllocator : AllocatorBase<GlobalAllocator> {
@@ -204,31 +175,6 @@ auto chars_as_int(utf8 const *chars) {
 	return result;
 }
 
-
-inline umm append(StringBuilder &builder, Nameable<String> str) {
-	char c = str.value[0];
-	if (c == '_' || isalpha(c)) {
-		append(builder, c);
-	} else {
-		append(builder, '_');
-	}
-	for (auto c : str.value.skip(1)) {
-		if (c == '_' || isalnum(c)) {
-			append(builder, c);
-		} else {
-			append(builder, '_');
-		}
-	}
-	return str.value.count;
-}
-
-
-inline umm append(StringBuilder &builder, Node *node);
-
-inline umm append(StringBuilder &builder, Type type) {
-	return append(builder, (Node *)type);
-}
-
 auto switch_(Node *node, auto &&visitor) {
 	switch (node->kind) {
 		#define x(name) case NodeKind::name: return visitor((name *)node);
@@ -253,38 +199,6 @@ void Block::add(Node *child) {
 			break;
 		}
 	}
-}
-
-inline umm append(StringBuilder &builder, Node *node);
-
-inline umm append(StringBuilder &builder, Value value) {
-	switch (value.kind) {
-		case ValueKind::none: return 0;
-		case ValueKind::U8: return append(builder, value.U8);
-		case ValueKind::U16: return append(builder, value.U16);
-		case ValueKind::U32: return append(builder, value.U32);
-		case ValueKind::U64: return append(builder, value.U64);
-		case ValueKind::S8: return append(builder, value.S8);
-		case ValueKind::S16: return append(builder, value.S16);
-		case ValueKind::S32: return append(builder, value.S32);
-		case ValueKind::S64: return append(builder, value.S64);
-		case ValueKind::UnsizedInteger: return append(builder, value.UnsizedInteger);
-		case ValueKind::Bool: return append(builder, value.Bool);
-		case ValueKind::Type:    return append(builder, value.Type);
-		case ValueKind::lambda:  return append(builder, value.lambda);
-		case ValueKind::array: {
-			umm result = 0;
-			result += append(builder, ".[");
-			result += append(builder, value.elements[0]);
-			for (auto element : value.elements.skip(1)) {
-				result += append(builder, ", ");
-				result += append(builder, element);
-			}
-			result += append(builder, "]");
-			return result;
-		}
-	}
-	return append_format(builder, "(unknown Value {})", value.kind);
 }
 
 inline umm append(StringBuilder &builder, Nameable<Block *> expr) { not_implemented("Block"); }
@@ -339,72 +253,6 @@ inline umm append(StringBuilder &builder, Nameable<Statement *> node) {
 #include "visit.h"
 
 #include "print_ast.inl"
-
-inline umm append(StringBuilder &builder, Node *node) {
-	switch (node->kind) {
-		case NodeKind::Name: {
-			return append(builder, ((Name *)node)->name);
-		}
-		case NodeKind::BuiltinTypeName: {
-			switch (((BuiltinTypeName *)node)->type_kind) {
-#define x(name) case BuiltinType::name: return append(builder, #name);
-				ENUMERATE_BUILTIN_TYPES(x)
-#undef x
-			}
-			return append(builder, "(unknown BuiltinTypeName)");
-		}
-		case NodeKind::LambdaHead: {
-			auto head = (LambdaHead *)node;
-
-			umm result = 0;
-			auto write = [&] (auto &&...args) {
-				result += append(builder, args...);
-			};
-
-			write('(');
-			for (auto &parameter : head->parameters_block.definition_list) {
-				if (&parameter != head->parameters_block.definition_list.data) {
-					write(", ");
-				}
-
-				write(parameter->name);
-				write(": ");
-				write(parameter->type);
-			}
-			write(") ");
-			write(head->return_type);
-
-			return result;
-		}
-		case NodeKind::Unary: {
-			auto unary = (Unary *)node;
-			if (unary->operation == UnaryOperation::pointer) {
-				return append_format(builder, "*{} {}", unary->mutability, unary->expression);
-			}
-			break;
-		}
-		case NodeKind::Struct: {
-			auto Struct = (::Struct *)node;
-			if (Struct->definition)
-				return append(builder, Struct->definition->name);
-			else
-				return append(builder, "struct");
-			break;
-		}
-		case NodeKind::ArrayType: {
-			auto arr = (ArrayType *)node;
-			
-			return 
-				append(builder, '[') +
-				append(builder, arr->count.value()) +
-				append(builder, ']') +
-				append(builder, arr->element_type);
-
-			break;
-		}
-	}
-	return append(builder, "(unknown)");
-}
 
 Block global_block;
 SpinLock global_block_lock;
@@ -478,10 +326,6 @@ enum class YieldResult : u8 {
 	wait,
 };
 bool no_more_progress = false;
-
-struct {
-	Struct *String;
-} builtin_structs;
 
 ValueKind to_value_kind(Type type) {
 	type = direct(type);
@@ -568,171 +412,10 @@ decltype(auto) element_at(auto &&collection, Value index) {
 	}
 }
 
-Unary *as_pointer(Type type) {
-	if (auto unary = as<Unary>(type); unary && unary->operation == UnaryOperation::pointer) {
-		return unary;
-	}
-	return 0;
-}
-
-Value zero_of_type(Type type) {
-	Value result = {};
-	auto direct_type = direct(type);
-	if (auto struct_ = as<Struct>(direct_type)) {
-		for (int i = 0; i < struct_->members.count; ++i) {
-			result.elements.add(zero_of_type(struct_->members[i]->type));
-		}
-	} 
-	else if (types_match(direct_type, BuiltinType::Bool)) { result = Value(false); }
-	else if (types_match(direct_type, BuiltinType::U8)) { result = Value((u8)0); }
-	else if (types_match(direct_type, BuiltinType::U16)) { result = Value((u16)0); }
-	else if (types_match(direct_type, BuiltinType::U32)) { result = Value((u32)0); }
-	else if (types_match(direct_type, BuiltinType::U64)) { result = Value((u64)0); }
-	else if (types_match(direct_type, BuiltinType::S8)) { result = Value((s8)0); }
-	else if (types_match(direct_type, BuiltinType::S16)) { result = Value((s16)0); }
-	else if (types_match(direct_type, BuiltinType::S32)) { result = Value((s32)0); }
-	else if (types_match(direct_type, BuiltinType::S64)) { result = Value((s64)0); }
-	else if (types_match(direct_type, builtin_structs.String)) { result = Value(String{}); }
-	else if (types_match(direct_type, BuiltinType::UnsizedInteger)) { result = Value(unsized_integer_tag, UnsizedInteger{}); }
-	else if (auto pointer = as_pointer(direct_type)) { result = Value((Value *)0); }
-	else {
-		invalid_code_path("zero_of_type({}) is invalid", direct_type);
-	}
-	return result;
-}
-
-Expression *is_pointer_to_none_comparison(Expression *left, Expression *right) {
-	auto dleft  = direct(left->type);
-	auto dright = direct(right->type);
-	if (auto left_pointer = as_pointer(dleft)) {
-		if (auto right_builtin = as<BuiltinTypeName>(dright); right_builtin && right_builtin->type_kind == BuiltinType::None) {
-			return left;
-		}
-	}
-	if (auto left_builtin = as<BuiltinTypeName>(dleft); left_builtin && left_builtin->type_kind == BuiltinType::None) {
-		if (auto right_pointer = as_pointer(dright)) {
-			return right;
-		}
-	}
-	return 0;
-}
-
 #include "node_interpreter.h"
-
-std::pair<Lambda *, LambdaHead *> get_lambda_and_head(Expression *expression) {
-	auto directed = direct(expression);
-	auto lambda = as<Lambda>(directed);
-	LambdaHead *head = 0;
-	if (lambda) {
-		head = &lambda->head;
-	} else {
-		if (auto definition = as<Definition>(directed)) {
-			head = direct_as<LambdaHead>(definition->type);
-		}
-	}
-	return {lambda, head};
-}
-std::tuple<Lambda *, LambdaHead *, Struct *> get_lambda_and_head_or_struct(Expression *expression) {
-	auto directed = direct(expression);
-	auto lambda = as<Lambda>(directed);
-	auto struct_ = as<Struct>(directed);
-	LambdaHead *head = 0;
-	if (lambda) {
-		head = &lambda->head;
-	} else {
-		head = direct_as<LambdaHead>(expression->type);
-	}
-	return {lambda, head, struct_};
-}
-
-Type make_pointer(Type type, Mutability mutability) {
-	auto pointer = Unary::create();
-	pointer->expression = type;
-	pointer->operation = UnaryOperation::pointer;
-	pointer->mutability = mutability;
-	pointer->type = get_builtin_type(BuiltinType::Type);
-	return pointer;
-}
-
-BuiltinTypeName *make_name(BuiltinType type, String location = {}) {
-	auto name = BuiltinTypeName::create();
-	name->type_kind = type;
-	name->location = location;
-	name->type = get_builtin_type(BuiltinType::Type);
-	return name;
-}
-Name *make_name(Definition *definition, String location = {}) {
-	auto name = Name::create();
-	name->possible_definitions.set(definition);
-	name->location = location;
-	name->type = definition->type;
-	name->name = definition->name;
-	return name;
-}
 
 #include "bytecode/builder.h"
 #include "bytecode/interpreter.h"
-
-namespace Bytecode {
-
-Callback generate_callback(Lambda *lambda) {
-	// arg0 - rcx
-	// arg1 - rdx
-	// arg2 - r8
-	// arg3 - r9
-	assert(lambda->head.parameters_block.definition_list.count == 4, "Other count of arguments not implemented");
-	List<u8> bytes;
-	
-	constexpr u8 stack_size = 40;
-	// sub rsp, 40 // 8 bytes for lambda, 32 bytes for shadow space -----, 8 dummy bytes to keep stack aligned
-	bytes.add({0x48, 0x83, 0xec, stack_size});
-
-	// mov r10, lambda
-	bytes.add({0x49, 0xba});
-	bytes.add(value_as_bytes(lambda));
-
-	// mov r11, ffi_callback
-	bytes.add({0x49, 0xbb});
-	bytes.add(value_as_bytes(&ffi_callback));
-	
-	// mov qword ptr[rsp+32], r10
-	bytes.add({0x4c, 0x89, 0x54, 0x24, 32});
-
-	// call r11
-	bytes.add({0x41, 0xff, 0xd3});
-	
-	// add rsp, 40
-	bytes.add({0x48, 0x83, 0xc4, stack_size});
-
-	// ret
-	bytes.add({0xc3});
-
-
-	#if OS_WINDOWS
-	void *page = VirtualAlloc(0, bytes.count, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-	#elif OS_LINUX
-	void *page = mmap(NULL, bytes.count, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	#endif
-
-	memcpy(page, bytes.data, bytes.count);
-	memset((char *)page + bytes.count, 0xcc, ceil(bytes.count, (umm)4096) - bytes.count);
-
-	#if OS_WINDOWS
-	DWORD old_protect;
-	if (!VirtualProtect(page, bytes.count, PAGE_EXECUTE_READ, &old_protect)) {
-		immediate_reporter.error(lambda->location, "FATAL: VirtualProtect failed: {}", win32_error());
-		exit(-1);
-	}
-	#elif OS_LINUX
-    if (mprotect(page, bytes.count, PROT_READ | PROT_EXEC) == -1) {
-		immediate_reporter.error(lambda->location, "FATAL: mprotect failed: {}", strerror(errno));
-    }
-	#endif
-
-	return {page};
-}
-
-}
 
 
 struct CheckResult {
@@ -1569,22 +1252,6 @@ struct VectorizedBinaryValue {
 };
 
 LockProtected<HashMap<VectorizedBinaryKey, VectorizedBinaryValue>, SpinLock> vectorized_binarys;
-
-template <class T>
-void debug_make_readonly(Span<T> span) {
-	auto rodata = VirtualAlloc(0, span.count * sizeof(T), MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-	memcpy(rodata, span.data, span.count * sizeof(T));
-	VirtualProtect(rodata, span.count * sizeof(T), PAGE_READONLY, 0);
-	span.data = (T *)rodata;
-}
-
-template <class T>
-void debug_make_readonly(T *&t) {
-	auto rodata = VirtualAlloc(0, sizeof(T), MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-	memcpy(rodata, t, sizeof(T));
-	VirtualProtect(rodata, sizeof(T), PAGE_READONLY, 0);
-	t = (T *)rodata;
-}
 
 enum class FailStrategy {
 	yield,
@@ -4540,6 +4207,11 @@ bool find_main_and_run() {
 					case InterpretMode::bytecode: {
 						dbgln("\nBytecode:\n");
 						Bytecode::Builder builder;
+
+						auto target_platform = Bytecode::Interpreter::target_platform();
+
+						builder.target_platform = &target_platform;
+
 						for (auto definition : global_block.definition_list) {
 							builder.append_global_definition(definition);
 						}

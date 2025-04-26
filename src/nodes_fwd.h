@@ -34,3 +34,5 @@ void note_leak(String expression, Node *node, String message = {}, std::source_l
 #define NOTE_LEAK(node, ...)
 
 #endif
+
+umm append(StringBuilder &builder, Node *node);

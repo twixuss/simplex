@@ -23,6 +23,10 @@ BuiltinType to_builtin_type_kind(TokenKind kind) {
 	return {};
 }
 
+umm append(StringBuilder &builder, Type type) {
+	return append(builder, (Node *)type);
+}
+
 BuiltinTypeName builtin_types[(u32)BuiltinType::count];
 
 BuiltinTypeName *get_builtin_type(BuiltinType kind) {
@@ -321,4 +325,78 @@ Sign get_sign(BuiltinType type_kind) {
 			return Sign::Signed;
 		default: invalid_code_path("Invalid BuiltinType {}", type_kind);
 	}
+}
+
+Unary *as_pointer(Type type) {
+	if (auto unary = as<Unary>(type); unary && unary->operation == UnaryOperation::pointer) {
+		return unary;
+	}
+	return 0;
+}
+
+Expression *is_pointer_to_none_comparison(Expression *left, Expression *right) {
+	auto dleft  = direct(left->type);
+	auto dright = direct(right->type);
+	if (auto left_pointer = as_pointer(dleft)) {
+		if (auto right_builtin = as<BuiltinTypeName>(dright); right_builtin && right_builtin->type_kind == BuiltinType::None) {
+			return left;
+		}
+	}
+	if (auto left_builtin = as<BuiltinTypeName>(dleft); left_builtin && left_builtin->type_kind == BuiltinType::None) {
+		if (auto right_pointer = as_pointer(dright)) {
+			return right;
+		}
+	}
+	return 0;
+}
+
+std::pair<Lambda *, LambdaHead *> get_lambda_and_head(Expression *expression) {
+	auto directed = direct(expression);
+	auto lambda = as<Lambda>(directed);
+	LambdaHead *head = 0;
+	if (lambda) {
+		head = &lambda->head;
+	} else {
+		if (auto definition = as<Definition>(directed)) {
+			head = direct_as<LambdaHead>(definition->type);
+		}
+	}
+	return {lambda, head};
+}
+std::tuple<Lambda *, LambdaHead *, Struct *> get_lambda_and_head_or_struct(Expression *expression) {
+	auto directed = direct(expression);
+	auto lambda = as<Lambda>(directed);
+	auto struct_ = as<Struct>(directed);
+	LambdaHead *head = 0;
+	if (lambda) {
+		head = &lambda->head;
+	} else {
+		head = direct_as<LambdaHead>(expression->type);
+	}
+	return {lambda, head, struct_};
+}
+
+Type make_pointer(Type type, Mutability mutability) {
+	auto pointer = Unary::create();
+	pointer->expression = type;
+	pointer->operation = UnaryOperation::pointer;
+	pointer->mutability = mutability;
+	pointer->type = get_builtin_type(BuiltinType::Type);
+	return pointer;
+}
+
+BuiltinTypeName *make_name(BuiltinType type, String location) {
+	auto name = BuiltinTypeName::create();
+	name->type_kind = type;
+	name->location = location;
+	name->type = get_builtin_type(BuiltinType::Type);
+	return name;
+}
+Name *make_name(Definition *definition, String location) {
+	auto name = Name::create();
+	name->possible_definitions.set(definition);
+	name->location = location;
+	name->type = definition->type;
+	name->name = definition->name;
+	return name;
 }

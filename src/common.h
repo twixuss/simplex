@@ -134,3 +134,38 @@ inline bool operator==(String a, char const *b) {
 #define PASTE_CASE_0(x) case x[0]:
 
 extern OsLock stdout_mutex;
+extern bool enable_log_error_path;
+extern bool enable_time_log;
+extern bool is_debugging;
+
+#define __FILE_NAME__ ([]{auto e = __FILE__;while (*e) ++e;while (*e != '\\') --e;return e + 1;}())
+
+
+inline void log_error_path(char const *file, int line, auto &&...args) {
+	with(ConsoleColor::dark_yellow, print("{}:{}: ", file, line));
+	println(args...);
+}
+
+#define LOG_ERROR_PATH(...) \
+	if (enable_log_error_path) { \
+		log_error_path(__FILE__, __LINE__ __VA_OPT__(,) __VA_ARGS__); \
+	}
+
+#define dbgln(...) (is_debugging ? println(__VA_ARGS__) : 0)
+
+#define timed_block(name) \
+	if (enable_time_log) println("{} ...", name); \
+	auto timer = create_precise_timer(); \
+	defer { if (enable_time_log) timed_results.add({name, elapsed_time(timer)}); }
+
+#define timed_function() \
+	static constexpr auto funcname = __FUNCTION__; \
+	timed_block(funcname)
+
+#define timed_expression_named(name, expression) \
+	[&] { \
+		timed_block(name); \
+		return expression; \
+	}()
+
+#define timed_expression(expression) timed_expression_named(#expression, expression)
