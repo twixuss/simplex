@@ -2,6 +2,7 @@
 #include "../nodes.h"
 #include "../reporter.h"
 #include "../builtin_structs.h"
+#include "../make_node.h"
 
 namespace Bytecode {
 

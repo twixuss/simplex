@@ -107,4 +107,6 @@ struct Value {
 
 umm append(StringBuilder &builder, Value value);
 
+Expression *to_node(Value value);
+
 Value zero_of_type(Type type);

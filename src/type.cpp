@@ -1,5 +1,6 @@
 #include "type.h"
 #include "nodes.h"
+#include "builtin_structs.h"
 
 umm append(StringBuilder &builder, BuiltinType type_kind) {
 	switch (type_kind) {
@@ -374,29 +375,4 @@ std::tuple<Lambda *, LambdaHead *, Struct *> get_lambda_and_head_or_struct(Expre
 		head = direct_as<LambdaHead>(expression->type);
 	}
 	return {lambda, head, struct_};
-}
-
-Type make_pointer(Type type, Mutability mutability) {
-	auto pointer = Unary::create();
-	pointer->expression = type;
-	pointer->operation = UnaryOperation::pointer;
-	pointer->mutability = mutability;
-	pointer->type = get_builtin_type(BuiltinType::Type);
-	return pointer;
-}
-
-BuiltinTypeName *make_name(BuiltinType type, String location) {
-	auto name = BuiltinTypeName::create();
-	name->type_kind = type;
-	name->location = location;
-	name->type = get_builtin_type(BuiltinType::Type);
-	return name;
-}
-Name *make_name(Definition *definition, String location) {
-	auto name = Name::create();
-	name->possible_definitions.set(definition);
-	name->location = location;
-	name->type = definition->type;
-	name->name = definition->name;
-	return name;
 }

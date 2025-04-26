@@ -1,6 +1,6 @@
 #include "value.h"
 #include "builtin_structs.h"
-#include "nodes.h"
+#include "make_node.h"
 
 umm append(StringBuilder &builder, Value value) {
 	switch (value.kind) {
@@ -30,6 +30,24 @@ umm append(StringBuilder &builder, Value value) {
 		}
 	}
 	return append_format(builder, "(unknown Value {})", value.kind);
+}
+
+Expression *to_node(Value value) {
+	switch (value.kind) {
+		case ValueKind::U8:  return make_integer(value.U8,  get_builtin_type(BuiltinType::U8));
+		case ValueKind::U16: return make_integer(value.U16, get_builtin_type(BuiltinType::U16));
+		case ValueKind::U32: return make_integer(value.U32, get_builtin_type(BuiltinType::U32));
+		case ValueKind::U64: return make_integer(value.U64, get_builtin_type(BuiltinType::U64));
+		case ValueKind::S8:  return make_integer(value.S8,  get_builtin_type(BuiltinType::S8));
+		case ValueKind::S16: return make_integer(value.S16, get_builtin_type(BuiltinType::S16));
+		case ValueKind::S32: return make_integer(value.S32, get_builtin_type(BuiltinType::S32));
+		case ValueKind::S64: return make_integer(value.S64, get_builtin_type(BuiltinType::S64));
+		case ValueKind::UnsizedInteger: return make_integer(value.UnsizedInteger, get_builtin_type(BuiltinType::UnsizedInteger));
+		case ValueKind::Bool: return make_boolean(value.Bool);
+		case ValueKind::String: return make_string(value.String);
+		case ValueKind::Type: return value.Type;
+		default: invalid_code_path();
+	}
 }
 
 Value zero_of_type(Type type) {

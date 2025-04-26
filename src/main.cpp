@@ -18,6 +18,7 @@
 #include "paths.h"
 #include "capitalized.h"
 #include "builtin_structs.h"
+#include "make_node.h"
 
 OsLock stdout_mutex;
 
@@ -1124,82 +1125,6 @@ inline bool do_all_paths_return(Node *node) {
 	return false;
 }
 
-IntegerLiteral *make_integer(UnsizedInteger value, String location, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
-	auto result = IntegerLiteral::create();
-	result->value = value;
-	result->type = type;
-	result->location = location;
-	return result;
-}
-IntegerLiteral *make_integer(UnsizedInteger value, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
-	return make_integer(value, {}, type);
-}
-#if UNSIZED_INTEGER_BITS != 64
-IntegerLiteral *make_integer(u64 value, String location, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
-	return make_integer(convert<UnsizedInteger>(value), location, type);
-}
-IntegerLiteral *make_integer(u64 value, Type type = get_builtin_type(BuiltinType::UnsizedInteger)) {
-	return make_integer(convert<UnsizedInteger>(value), {}, type);
-}
-#endif
-
-BooleanLiteral *make_boolean(bool value, String location, Type type = get_builtin_type(BuiltinType::Bool)) {
-	auto result = BooleanLiteral::create();
-	result->value = value;
-	result->type = type;
-	result->location = location;
-	return result;
-}
-BooleanLiteral *make_boolean(bool value, Type type = get_builtin_type(BuiltinType::Bool)) {
-	return make_boolean(value, {}, type);
-}
-StringLiteral *make_string(String value, String location) {
-	auto result = StringLiteral::create();
-	result->value = value;
-	result->type = make_name(builtin_structs.String->definition);
-	result->location = location;
-	return result;
-}
-StringLiteral *make_string(String value) {
-	return make_string(value, {});
-}
-
-ArrayType *make_array_type(Type element_type, u64 count) {
-	auto result = ArrayType::create();
-	result->element_type = element_type;
-	result->count = count;
-	result->type = get_builtin_type(BuiltinType::Type);
-	return result;
-}
-
-Expression *to_node(Value value) {
-	switch (value.kind) {
-		case ValueKind::U8:  return make_integer(value.U8,  get_builtin_type(BuiltinType::U8));
-		case ValueKind::U16: return make_integer(value.U16, get_builtin_type(BuiltinType::U16));
-		case ValueKind::U32: return make_integer(value.U32, get_builtin_type(BuiltinType::U32));
-		case ValueKind::U64: return make_integer(value.U64, get_builtin_type(BuiltinType::U64));
-		case ValueKind::S8:  return make_integer(value.S8,  get_builtin_type(BuiltinType::S8));
-		case ValueKind::S16: return make_integer(value.S16, get_builtin_type(BuiltinType::S16));
-		case ValueKind::S32: return make_integer(value.S32, get_builtin_type(BuiltinType::S32));
-		case ValueKind::S64: return make_integer(value.S64, get_builtin_type(BuiltinType::S64));
-		case ValueKind::UnsizedInteger: return make_integer(value.UnsizedInteger, get_builtin_type(BuiltinType::UnsizedInteger));
-		case ValueKind::Bool: return make_boolean(value.Bool);
-		case ValueKind::String: return make_string(value.String);
-		case ValueKind::Type: return value.Type;
-		default: invalid_code_path();
-	}
-}
-
-Binary *make_cast(Expression *expression, Type type) {
-	auto as = Binary::create();
-	as->operation = BinaryOperation::as;
-	as->left = expression;
-	as->right = type;
-	as->type = type;
-	as->location = expression->location;
-	return as;
-}
-
 struct VectorizedLambdaKey {
 	Lambda *lambda;
 	u64 vector_size;
@@ -1265,7 +1190,7 @@ struct CopyableJmpBuf {
 
 Call *debugging_call;
 
-#define ENABLE_TYPECHECKED_REUSE 0
+#define ENABLE_TYPECHECKER_REUSE 0
 
 struct Typechecker {
 	const u32 uid = atomic_add(&typechecker_uid_counter, 1);
@@ -1276,7 +1201,7 @@ struct Typechecker {
 
 		Typechecker *typechecker = 0;
 		
-		#if ENABLE_TYPECHECKED_REUSE
+		#if ENABLE_TYPECHECKER_REUSE
 		if (auto popped = locked_use_it(retired_typecheckers, it.pop())) {
 			typechecker = popped.value();
 			// immediate_reporter.info("created cached typechecker {} for node {}", typechecker->uid, node->location);

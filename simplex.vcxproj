@@ -84,6 +84,7 @@
     <ClCompile Include="src\bytecode\interpreter.cpp" />
     <ClCompile Include="src\lexer.cpp" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\make_node.cpp" />
     <ClCompile Include="src\mutability.cpp" />
     <ClCompile Include="src\nameable.cpp" />
     <ClCompile Include="src\nodes.cpp" />
@@ -105,6 +106,7 @@
     <ClInclude Include="src\c_parser.h" />
     <ClInclude Include="src\debug.h" />
     <ClInclude Include="src\fiber.h" />
+    <ClInclude Include="src\make_node.h" />
     <ClInclude Include="src\paths.h" />
     <ClInclude Include="src\escape.h" />
     <ClInclude Include="src\lexer.h" />

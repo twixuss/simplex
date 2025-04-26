@@ -4,6 +4,7 @@
 #include "nodes_fwd.h"
 #include "token.h"
 #include "mutability.h"
+#include "unsized_integer.h"
 
 #define CHECK_THAT_TYPES_ARE_TYPES 1//BUILD_DEBUG
 
@@ -93,6 +94,3 @@ Expression *is_pointer_to_none_comparison(Expression *left, Expression *right);
 
 std::pair<Lambda *, LambdaHead *> get_lambda_and_head(Expression *expression);
 std::tuple<Lambda *, LambdaHead *, Struct *> get_lambda_and_head_or_struct(Expression *expression);
-Type make_pointer(Type type, Mutability mutability);
-BuiltinTypeName *make_name(BuiltinType type, String location = {});
-Name *make_name(Definition *definition, String location = {});
