@@ -7,6 +7,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <PreprocessorDefinitions>BUILD_DEBUG=1;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <SDLCheck>true</SDLCheck>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup />

@@ -66,9 +66,9 @@ struct Interpreter {
 		auto v = (T)val(address);
 		if (options.hex) {
 			print("0x");
-			return print(format_hex(v));
+			return (int)print(format_hex(v));
 		} else {
-			return print(v);
+			return (int)print(v);
 		}
 	}
 

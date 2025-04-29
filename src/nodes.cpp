@@ -1,5 +1,8 @@
 #include "nodes.h"
 
+Block global_block;
+SpinLock global_block_lock;
+
 umm append(StringBuilder &builder, Node *node) {
 	switch (node->kind) {
 		case NodeKind::Name: {

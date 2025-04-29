@@ -155,7 +155,7 @@ DEFINE_EXPRESSION(Block) {
 	GHashMap<String, GList<Definition *>> definition_map;
 
 	String tag;
-	List<Break *> breaks;
+	GList<Break *> breaks;
 
 	GList<Defer *> defers;
 
@@ -166,12 +166,15 @@ DEFINE_EXPRESSION(Block) {
 		definition_map.free();
 	}
 };
+
+struct CallArgument {
+	String name = {};
+	Expression *expression = 0;
+	Definition *parameter = 0;
+};
+
 DEFINE_EXPRESSION(Call) {
-	struct Argument {
-		String name = {};
-		Expression *expression = 0;
-		Definition *parameter = 0;
-	};
+	using Argument = CallArgument;
 
 	Expression *callable = 0;
 	GList<Argument> arguments;
@@ -336,27 +339,6 @@ DEFINE_STATEMENT(Import) {
 DEFINE_STATEMENT(Defer) {
 	Node *body = 0;
 };
-
-template <class T>
-concept CNode = OneOf<T, Expression, Statement
-#define x(name) , name
-	ENUMERATE_NODE_KIND(x)
-#undef x
->;
-
-template <class T>
-concept CExpression = OneOf<T, Expression
-#define x(name) , name
-	ENUMERATE_EXPRESSION_KIND(x)
-#undef x
->;
-
-template <class T>
-concept CStatement = OneOf<T, Statement
-#define x(name) , name
-	ENUMERATE_STATEMENT_KIND(x)
-#undef x
->;
 
 #if CHECK_THAT_TYPES_ARE_TYPES
 template <class Expr>

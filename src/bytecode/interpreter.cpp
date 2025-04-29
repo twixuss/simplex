@@ -218,7 +218,7 @@ void Interpreter::run_one_instruction() {
 						print("{}: ", local->name);
 						Address address = {
 							.base = Register::base,
-							.offset = (s64)(-lambda->locals_size + local->offset),
+							.offset = -(s64)lambda->locals_size + (s64)local->offset,
 						};
 						print_value(address, local->type);
 						println();

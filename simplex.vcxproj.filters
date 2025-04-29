@@ -21,6 +21,12 @@
     <ClCompile Include="src\make_node.cpp" />
     <ClCompile Include="src\node_interpreter.cpp" />
     <ClCompile Include="src\debug.cpp" />
+    <ClCompile Include="src\typechecker.cpp" />
+    <ClCompile Include="src\copier.cpp" />
+    <ClCompile Include="src\get_constant_value.cpp" />
+    <ClCompile Include="src\is_constant.cpp" />
+    <ClCompile Include="src\is_mutable.cpp" />
+    <ClCompile Include="src\do_all_paths_return.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="x.h" />
@@ -56,5 +62,11 @@
     <ClInclude Include="src\target_platform.h" />
     <ClInclude Include="src\x.h" />
     <ClInclude Include="src\make_node.h" />
+    <ClInclude Include="src\typechecker.h" />
+    <ClInclude Include="src\copier.h" />
+    <ClInclude Include="src\get_constant_value.h" />
+    <ClInclude Include="src\is_constant.h" />
+    <ClInclude Include="src\is_mutable.h" />
+    <ClInclude Include="src\do_all_paths_return.h" />
   </ItemGroup>
 </Project>

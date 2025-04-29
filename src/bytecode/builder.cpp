@@ -3,6 +3,7 @@
 #include "../reporter.h"
 #include "../builtin_structs.h"
 #include "../make_node.h"
+#include "../get_constant_value.h"
 
 namespace Bytecode {
 
@@ -84,7 +85,6 @@ void Builder::append_global_definition(Definition *definition) {
 		if (is_type(definition->initial_value))
 			return;
 
-		Result<Value, Node *> get_constant_value(Node *);
 		auto value = get_constant_value(definition->initial_value).value();
 
 		write(section, definition->constant_value.value(), definition->type);

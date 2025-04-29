@@ -79,10 +79,15 @@
     <ClCompile Include="src\binary_operation.cpp" />
     <ClCompile Include="src\builtin_structs.cpp" />
     <ClCompile Include="src\bytecode\builder.cpp" />
+    <ClCompile Include="src\copier.cpp" />
     <ClCompile Include="src\debug.cpp" />
+    <ClCompile Include="src\do_all_paths_return.cpp" />
     <ClCompile Include="src\escape.cpp" />
     <ClCompile Include="src\fiber.cpp" />
     <ClCompile Include="src\bytecode\interpreter.cpp" />
+    <ClCompile Include="src\get_constant_value.cpp" />
+    <ClCompile Include="src\is_constant.cpp" />
+    <ClCompile Include="src\is_mutable.cpp" />
     <ClCompile Include="src\lexer.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\make_node.cpp" />
@@ -94,6 +99,7 @@
     <ClCompile Include="src\reporter.cpp" />
     <ClCompile Include="src\token.cpp" />
     <ClCompile Include="src\type.cpp" />
+    <ClCompile Include="src\typechecker.cpp" />
     <ClCompile Include="src\unary_operation.cpp" />
     <ClCompile Include="src\value.cpp" />
   </ItemGroup>
@@ -105,9 +111,14 @@
     <ClInclude Include="src\bytecode\interpreter.h" />
     <ClInclude Include="src\capitalized.h" />
     <ClInclude Include="src\common.h" />
+    <ClInclude Include="src\copier.h" />
     <ClInclude Include="src\c_parser.h" />
     <ClInclude Include="src\debug.h" />
+    <ClInclude Include="src\do_all_paths_return.h" />
     <ClInclude Include="src\fiber.h" />
+    <ClInclude Include="src\get_constant_value.h" />
+    <ClInclude Include="src\is_constant.h" />
+    <ClInclude Include="src\is_mutable.h" />
     <ClInclude Include="src\make_node.h" />
     <ClInclude Include="src\paths.h" />
     <ClInclude Include="src\escape.h" />
@@ -125,6 +136,7 @@
     <ClInclude Include="src\target_platform.h" />
     <ClInclude Include="src\token.h" />
     <ClInclude Include="src\type.h" />
+    <ClInclude Include="src\typechecker.h" />
     <ClInclude Include="src\unary_operation.h" />
     <ClInclude Include="src\unsized_integer.h" />
     <ClInclude Include="src\value.h" />

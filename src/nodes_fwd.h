@@ -10,6 +10,8 @@ struct Statement;
 #define x(name) struct name;
 ENUMERATE_NODE_KIND(x)
 #undef x
+
+struct CallArgument;
 		
 template <class T>
 struct NodeTypeToKind;
@@ -36,3 +38,27 @@ void note_leak(String expression, Node *node, String message = {}, std::source_l
 #endif
 
 umm append(StringBuilder &builder, Node *node);
+
+template <class T>
+concept CNode = OneOf<T, Expression, Statement
+#define x(name) , name
+	ENUMERATE_NODE_KIND(x)
+#undef x
+>;
+
+template <class T>
+concept CExpression = OneOf<T, Expression
+#define x(name) , name
+	ENUMERATE_EXPRESSION_KIND(x)
+#undef x
+>;
+
+template <class T>
+concept CStatement = OneOf<T, Statement
+#define x(name) , name
+	ENUMERATE_STATEMENT_KIND(x)
+#undef x
+>;
+
+extern Block global_block;
+extern SpinLock global_block_lock;

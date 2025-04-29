@@ -17,7 +17,6 @@
     <ClCompile>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
-      <SDLCheck>false</SDLCheck>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <ControlFlowGuard>false</ControlFlowGuard>
       <FloatingPointExceptions>false</FloatingPointExceptions>
@@ -33,7 +32,6 @@
       <BuildStlModules>false</BuildStlModules>
       <PreprocessToFile>false</PreprocessToFile>
       <UseStandardPreprocessor>true</UseStandardPreprocessor>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup />

@@ -1,7 +1,7 @@
 #pragma once
 #include "common.h"
 #include "lexer.h"
-#include "nodes.h"
+#include "nodes_fwd.h"
 #include "reporter.h"
 #include "debug.h"
 
@@ -137,3 +137,27 @@ struct Parser {
 
 	void free();
 };
+
+bool parse_source(String source, auto on_parse_global_node) {
+	#if ENABLE_ASSERTIONS
+	locked_use(content_start_to_file_name) {
+		assert(content_start_to_file_name.find(source.data));
+	};
+	#endif
+
+	Parser parser = {};
+	parser.init(source);
+	defer { 
+		parser.reporter.print_all(); 
+		parser.free();
+	};
+
+	Node *node = 0;
+	while (node = parser.parse_next_node()) {
+		on_parse_global_node(node);
+	}
+
+	return parser.last_yield_result == Parser::YieldResult::success;
+}
+
+bool read_file_and_parse_into_global_block(String import_location, String path);

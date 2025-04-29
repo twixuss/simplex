@@ -1,5 +1,6 @@
 #pragma once
 #include "parser.h"
+#include "nodes.h"
 #include "escape.h"
 #include "mutability.h"
 #include "capitalized.h"
@@ -1386,4 +1387,36 @@ void Parser::init(String source) {
 void Parser::free() {
 	add_fiber_to_reuse(fiber);
 	fiber = {};
+}
+
+bool read_file_and_parse_into_global_block(String import_location, String path) {
+	timed_function();
+
+	if (!file_exists(path)) {
+		immediate_reporter.error(import_location, "File {} does not exist", path);
+		return false;
+	}
+
+	// Will be used after function exits, don't free.
+	auto source_buffer = read_entire_file(path, {.extra_space_before = 1, .extra_space_after = 1});
+
+	// Null-terminate from both sides.
+	// At the end to
+	auto source = (String)source_buffer.subspan(1, source_buffer.count - 2);
+	
+	locked_use(content_start_to_file_name) {
+		content_start_to_file_name.get_or_insert(source.data) = path;
+	};
+
+	bool success = parse_source(source, [&](Node *node) {
+		scoped(global_block_lock);
+		global_block.add(node);
+	});
+	
+	if (!success) {
+		LOG_ERROR_PATH("Failed to parse this file: {}", path);
+		return false;
+	}
+
+	return true;
 }

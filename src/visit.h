@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "nodes.h"
 
 #define VISIT(node)                                      \
 	do {                                                 \
@@ -167,21 +168,21 @@ ForEachDirective visit(Node **node, auto &&visitor) {
 
 	// Visit the actual node. It might be replaced, so do two separate switches.
 	switch ((*node)->kind) {
-#define x(name)                                              \
-	case NodeKind::name:                                     \
-		if (visitor_wrapper((name **)node) == ForEach_break) \
-			return ForEach_break;                            \
-		break;
+		#define x(name)                                              \
+			case NodeKind::name:                                     \
+				if (visitor_wrapper((name **)node) == ForEach_break) \
+					return ForEach_break;                            \
+				break;
 
 		ENUMERATE_NODE_KIND(x)
-#undef x
+		#undef x
 		default: invalid_code_path();
 	}
 
 	switch ((*node)->kind) {
-#define x(name) case NodeKind::name: return visit_impl((name *)*node, visitor);
+		#define x(name) case NodeKind::name: return visit_impl((name *)*node, visitor);
 		ENUMERATE_NODE_KIND(x)
-#undef x
+		#undef x
 		default: invalid_code_path();
 	}
 	return ForEach_continue;

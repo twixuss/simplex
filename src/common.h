@@ -153,6 +153,13 @@ inline void log_error_path(char const *file, int line, auto &&...args) {
 
 #define dbgln(...) (is_debugging ? println(__VA_ARGS__) : 0)
 
+struct TimedResult {
+	char const *name = 0;
+	f64 seconds = 0;
+};
+
+inline GList<TimedResult> timed_results;
+
 #define timed_block(name) \
 	if (enable_time_log) println("{} ...", name); \
 	auto timer = create_precise_timer(); \
@@ -169,3 +176,5 @@ inline void log_error_path(char const *file, int line, auto &&...args) {
 	}()
 
 #define timed_expression(expression) timed_expression_named(#expression, expression)
+
+#define locked_use_it(protected, expr) protected.use([&](auto &it) { return expr; })
