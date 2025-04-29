@@ -48,28 +48,15 @@ struct Address {
 inline umm append(StringBuilder &builder, Address a) {
 	umm result = 0;
 	result += append(builder, '[');
-	if (a.base)
-		if (a.element_size)
-			if (a.offset)
-				result += append_format(builder, "{}+{}*{}{}{}", a.base.value(), a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
-			else
-				result += append_format(builder, "{}+{}*{}", a.base.value(), a.element_index, a.element_size);
-		else
-			if (a.offset)
-				result += append_format(builder, "{}{}{}", a.base.value(), a.offset < 0 ? "-" : "+", abs(a.offset));
-			else
-				result += append_format(builder, "{}", a.base.value());
-	else
-		if (a.element_size)
-			if (a.offset)
-				result += append_format(builder, "{}*{}{}{}", a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
-			else
-				result += append_format(builder, "{}*{}", a.element_index, a.element_size);
-		else
-			if (a.offset)
-				result += append_format(builder, "{}{}", a.offset < 0 ? "-" : "", abs(a.offset));
-			else
-				result += append_format(builder, "0");
+
+	if (a.base) if (a.element_size) if (a.offset) result += append_format(builder, "{}+{}*{}{}{}", a.base.value(), a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
+	                                else          result += append_format(builder, "{}+{}*{}", a.base.value(), a.element_index, a.element_size);
+	            else                if (a.offset) result += append_format(builder, "{}{}{}", a.base.value(), a.offset < 0 ? "-" : "+", abs(a.offset));
+	                                else          result += append_format(builder, "{}", a.base.value());
+	else        if (a.element_size) if (a.offset) result += append_format(builder, "{}*{}{}{}", a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
+	                                else          result += append_format(builder, "{}*{}", a.element_index, a.element_size);
+	            else                if (a.offset) result += append_format(builder, "{}{}", a.offset < 0 ? "-" : "", abs(a.offset));
+	                                else          result += append_format(builder, "0");
 
 	result += append(builder, ']');
 	return result;
