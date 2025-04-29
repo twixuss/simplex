@@ -32,9 +32,9 @@ ValueKind to_value_kind(Type type) {
 	invalid_code_path("to_value_kind: can't convert from {}", type->kind);
 }
 
-umm append(StringBuilder &builder, Value value) {
+void append(StringBuilder &builder, Value value) {
 	switch (value.kind) {
-		case ValueKind::none: return 0;
+		case ValueKind::none: return append(builder, "none");
 		case ValueKind::U8: return append(builder, value.U8);
 		case ValueKind::U16: return append(builder, value.U16);
 		case ValueKind::U32: return append(builder, value.U32);
@@ -48,15 +48,14 @@ umm append(StringBuilder &builder, Value value) {
 		case ValueKind::Type:    return append(builder, value.Type);
 		case ValueKind::lambda:  return append(builder, value.lambda);
 		case ValueKind::array: {
-			umm result = 0;
-			result += append(builder, ".[");
-			result += append(builder, value.elements[0]);
+			append(builder, ".[");
+			append(builder, value.elements[0]);
 			for (auto element : value.elements.skip(1)) {
-				result += append(builder, ", ");
-				result += append(builder, element);
+				append(builder, ", ");
+				append(builder, element);
 			}
-			result += append(builder, "]");
-			return result;
+			append(builder, "]");
+			break;
 		}
 	}
 	return append_format(builder, "(unknown Value {})", value.kind);

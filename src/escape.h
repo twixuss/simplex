@@ -26,7 +26,7 @@ struct EscapedString {
 	String unescaped_string;
 };
 
-umm append(StringBuilder &builder, EscapedString string);
+void append(StringBuilder &builder, EscapedString const &string);
 
 struct UnescapeResult {
 	List<utf8> string;

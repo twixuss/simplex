@@ -2,7 +2,7 @@
 #include "nodes.h"
 #include "builtin_structs.h"
 
-umm append(StringBuilder &builder, BuiltinType type_kind) {
+void append(StringBuilder &builder, BuiltinType type_kind) {
 	switch (type_kind) {
 		#define x(name) case BuiltinType::name: return append(builder, #name);
 		#define y(name, value) x(name)
@@ -24,7 +24,7 @@ BuiltinType to_builtin_type_kind(TokenKind kind) {
 	return {};
 }
 
-umm append(StringBuilder &builder, Type type) {
+void append(StringBuilder &builder, Type type) {
 	return append(builder, (Node *)type);
 }
 

@@ -15,7 +15,7 @@ enum class BuiltinType : u8 {
 	count,
 };
 
-umm append(StringBuilder &builder, BuiltinType type_kind);
+void append(StringBuilder &builder, BuiltinType type_kind);
 BuiltinType to_builtin_type_kind(TokenKind kind);
 
 bool is_type(Expression *expression);
@@ -39,7 +39,7 @@ struct Type {
 using Type = Expression *;
 #endif
 
-umm append(StringBuilder &builder, Type type);
+void append(StringBuilder &builder, Type type);
 
 // NOTE: Do not use this for types in the source code. These do not have a location.
 BuiltinTypeName *get_builtin_type(BuiltinType kind);

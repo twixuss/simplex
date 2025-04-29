@@ -100,7 +100,7 @@ enum class Comparison : u8 {
 #undef x
 };
 
-inline umm append(StringBuilder &builder, Comparison c) {
+inline void append(StringBuilder &builder, Comparison c) {
 	switch (c) {
 		#define x(name) case Comparison::name: return append(builder, #name);
 		#define y(name, value) x(name)
@@ -108,7 +108,7 @@ inline umm append(StringBuilder &builder, Comparison c) {
 		#undef y
 		#undef x
 	}
-	return append_format(builder, "(unknown Comparison {})", (u64)c);
+	append_format(builder, "((Comparison){})", (u64)c);
 }
 
 template <class Key, class Value, class Traits = DefaultHashTraits<Key>, class Allocator = Allocator>

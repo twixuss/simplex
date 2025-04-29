@@ -63,13 +63,13 @@ enum class PreprocessErrorKind {
 	#undef x
 };
 
-inline umm append(StringBuilder &builder, PreprocessErrorKind const &error) {
+inline void append(StringBuilder &builder, PreprocessErrorKind const &error) {
 	switch (error) {
 		#define x(name) case PreprocessErrorKind::name: return append(builder, #name);
 		TL_C_PARSER_ENUMERATE_PREPROCESS_ERROR_KIND(x)
 		#undef x
 	}
-	return append_format(builder, "(unknown PreprocessError {})", (int)error);
+	append_format(builder, "((PreprocessErrorKind){})", (int)error);
 }
 
 struct PreprocessError {

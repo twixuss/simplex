@@ -12,8 +12,8 @@ enum class BinaryOperation : u8 {
 #undef x
 };
 
-umm append(StringBuilder &builder, BinaryOperation operation);
-umm append(StringBuilder &builder, Nameable<BinaryOperation> op);
+void append(StringBuilder &builder, BinaryOperation operation);
+void append(StringBuilder &builder, Nameable<BinaryOperation> op);
 
 Optional<BinaryOperation> as_binary_operation(TokenKind kind);
 

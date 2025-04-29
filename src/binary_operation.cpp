@@ -1,6 +1,6 @@
 #include "binary_operation.h"
 
-umm append(StringBuilder &builder, BinaryOperation operation) {
+void append(StringBuilder &builder, BinaryOperation operation) {
 	switch (operation) {
 #define x(name, token, precedence) case BinaryOperation::name: return append(builder, token);
 		ENUMERATE_BINARY_OPERATIONS(x)
@@ -9,7 +9,7 @@ umm append(StringBuilder &builder, BinaryOperation operation) {
 	return append_format(builder, "(unknown binary {})", (u32)operation);
 }
 
-umm append(StringBuilder &builder, Nameable<BinaryOperation> op) {
+void append(StringBuilder &builder, Nameable<BinaryOperation> op) {
 	switch (op.value) {
 		#define x(name, token, precedence) case BinaryOperation::name: return append(builder, #name##s);
 		ENUMERATE_BINARY_OPERATIONS(x)

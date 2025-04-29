@@ -43,8 +43,8 @@ StaticList<char, 4> escape_character(char ch) {
 	return result;
 }
 
-umm append(StringBuilder &builder, EscapedString string) {
-	return escape_string(string.unescaped_string, [&](auto s) { append(builder, s); });
+void append(StringBuilder &builder, EscapedString const &string) {
+	escape_string(string.unescaped_string, [&](auto s) { append(builder, s); });
 }
 
 UnescapeResult unescape_string(Span<utf8> string) {

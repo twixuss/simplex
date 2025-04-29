@@ -37,7 +37,7 @@ void note_leak(String expression, Node *node, String message = {}, std::source_l
 
 #endif
 
-umm append(StringBuilder &builder, Node *node);
+void append(StringBuilder &builder, Node *node);
 
 template <class T>
 concept CNode = OneOf<T, Expression, Statement

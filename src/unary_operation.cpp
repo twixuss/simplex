@@ -1,6 +1,6 @@
 #include "unary_operation.h"
 
-umm append(StringBuilder &builder, UnaryOperation operation) {
+void append(StringBuilder &builder, UnaryOperation operation) {
 	switch (operation) {
 		case UnaryOperation::pointer: return append(builder, '*');
 		case UnaryOperation::dereference: return append(builder, '*');

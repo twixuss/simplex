@@ -1,21 +1,21 @@
 #include "mutability.h"
 
-umm append(StringBuilder &builder, Mutability mutability) {
+void append(StringBuilder &builder, Mutability const &mutability) {
 	switch (mutability) {
 		case Mutability::constant: return append(builder, "const");
 		case Mutability::readonly: return append(builder, "let");
 		case Mutability::variable: return append(builder, "var");
 	}
-	return append_format(builder, "(unknown Mutability {})", (u32)mutability);
+	append_format(builder, "((Mutability){})", (u32)mutability);
 }
 
-umm append(StringBuilder &builder, Meaning<Mutability> mutability) {
+void append(StringBuilder &builder, Meaning<Mutability> const &mutability) {
 	switch (mutability.value) {
 		case Mutability::constant: return append(builder, "constant");
 		case Mutability::readonly: return append(builder, "read-only");
 		case Mutability::variable: return append(builder, "variable");
 	}
-	return append_format(builder, "(unknown Mutability {})", (u32)mutability.value);
+	append_format(builder, "((Mutability){})", (u32)mutability.value);
 }
 
 Optional<Mutability> to_mutability(TokenKind token_kind) {

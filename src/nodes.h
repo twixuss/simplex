@@ -19,13 +19,13 @@ enum class InlineStatus : u8 {
 #undef x
 };
 
-inline umm append(StringBuilder &builder, InlineStatus status) {
+inline void append(StringBuilder &builder, InlineStatus status) {
 	switch (status) {
 #define x(name) case InlineStatus::name: return append(builder, #name ## s);
 		ENUMERATE_INLINE_STATUS
 #undef x
 	}
-	return 0;
+	append_format(builder, "((InlineStatus){})", (u64)status);
 }
 
 

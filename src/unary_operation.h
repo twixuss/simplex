@@ -11,6 +11,6 @@ enum class UnaryOperation : u8 {
 #undef x
 };
 
-umm append(StringBuilder &builder, UnaryOperation operation);
+void append(StringBuilder &builder, UnaryOperation operation);
 
 Optional<UnaryOperation> as_unary_operation(TokenKind kind);

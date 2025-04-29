@@ -28,7 +28,7 @@ struct GetSourceLocationOptions {
 
 SourceLocation get_source_location(String location, GetSourceLocationOptions options = {});
 
-umm append(StringBuilder &builder, SourceLocation location);
+void append(StringBuilder &builder, SourceLocation location);
 
 void print_replacing_tabs_with_spaces(String string);
 void print_with_length_of(char r, umm count);

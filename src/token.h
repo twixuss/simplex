@@ -30,13 +30,13 @@ enum TokenKind : u64 {
 
 String enum_name(TokenKind k);
 
-umm append(StringBuilder &builder, TokenKind kind);
+void append(StringBuilder &builder, TokenKind kind);
 
 struct Token {
 	TokenKind kind = {};
 	String string;
 };
 
-umm append(StringBuilder &builder, Token token);
+void append(StringBuilder &builder, Token token);
 
 void print_token(umm i, Token token);

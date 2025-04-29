@@ -29,7 +29,7 @@ enum class Register : u8 {
 #undef x
 };
 
-inline umm append(StringBuilder &builder, Register r) {
+inline void append(StringBuilder &builder, Register r) {
 	switch (r) {
 #define x(name, value) case Register::name: return append(builder, #name);
 		ENUMERATE_NAMED_BYTECODE_REGISTERS
@@ -45,21 +45,19 @@ struct Address {
 	s64 offset = {};
 };
 
-inline umm append(StringBuilder &builder, Address a) {
-	umm result = 0;
-	result += append(builder, '[');
+inline void append(StringBuilder &builder, Address a) {
+	append(builder, '[');
 
-	if (a.base) if (a.element_size) if (a.offset) result += append_format(builder, "{}+{}*{}{}{}", a.base.value(), a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
-	                                else          result += append_format(builder, "{}+{}*{}", a.base.value(), a.element_index, a.element_size);
-	            else                if (a.offset) result += append_format(builder, "{}{}{}", a.base.value(), a.offset < 0 ? "-" : "+", abs(a.offset));
-	                                else          result += append_format(builder, "{}", a.base.value());
-	else        if (a.element_size) if (a.offset) result += append_format(builder, "{}*{}{}{}", a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
-	                                else          result += append_format(builder, "{}*{}", a.element_index, a.element_size);
-	            else                if (a.offset) result += append_format(builder, "{}{}", a.offset < 0 ? "-" : "", abs(a.offset));
-	                                else          result += append_format(builder, "0");
+	if (a.base) if (a.element_size) if (a.offset) append_format(builder, "{}+{}*{}{}{}", a.base.value(), a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
+	                                else          append_format(builder, "{}+{}*{}", a.base.value(), a.element_index, a.element_size);
+	            else                if (a.offset) append_format(builder, "{}{}{}", a.base.value(), a.offset < 0 ? "-" : "+", abs(a.offset));
+	                                else          append_format(builder, "{}", a.base.value());
+	else        if (a.element_size) if (a.offset) append_format(builder, "{}*{}{}{}", a.element_index, a.element_size, a.offset < 0 ? "-" : "+", abs(a.offset));
+	                                else          append_format(builder, "{}*{}", a.element_index, a.element_size);
+	            else                if (a.offset) append_format(builder, "{}{}", a.offset < 0 ? "-" : "", abs(a.offset));
+	                                else          append_format(builder, "0");
 
-	result += append(builder, ']');
-	return result;
+	append(builder, ']');
 }
 
 struct Site {
@@ -82,7 +80,7 @@ private:
 	};
 };
 
-inline umm append(StringBuilder &builder, Site s) {
+inline void append(StringBuilder &builder, Site s) {
 	if (s.is_register())
 		return append(builder, s.get_register());
 	else
@@ -125,13 +123,13 @@ private:
 	};
 };
 
-inline umm append(StringBuilder &builder, InputValue v) {
+inline void append(StringBuilder &builder, InputValue v) {
 	if (v.is_register())
-		return append(builder, v.get_register());
+		append(builder, v.get_register());
 	else if (v.is_address())
-		return append(builder, v.get_address());
+		append(builder, v.get_address());
 	else
-		return append(builder, v.get_constant());
+		append(builder, v.get_constant());
 }
 
 /*
@@ -152,7 +150,7 @@ enum class Intrinsic : u8 {
 #undef x
 };
 
-inline umm append(StringBuilder &builder, Intrinsic i) {
+inline void append(StringBuilder &builder, Intrinsic i) {
 	switch (i) {
 		#define x(name) case Intrinsic::name: return append(builder, #name);
 		#define y(name, value) x(name)
@@ -161,7 +159,7 @@ inline umm append(StringBuilder &builder, Intrinsic i) {
 		#undef x		
 
 	}
-	return append_format(builder, "(unknown Intrinsic {})", (u64)i);
+	append_format(builder, "(unknown Intrinsic {})", (u64)i);
 }
 
 /*
@@ -247,14 +245,14 @@ enum class InstructionKind : u8 {
 #undef x
 };
 
-inline umm append(StringBuilder &builder, InstructionKind i) {
+inline void append(StringBuilder &builder, InstructionKind i) {
 	switch (i) {
 		#define x(name, fields) case InstructionKind::name: return append(builder, #name);
 		ENUMERATE_BYTECODE_INSTRUCTION_KIND
 		#undef x		
 
 	}
-	return append_format(builder, "(unknown InstructionKind {})", (u64)i);
+	append_format(builder, "(unknown InstructionKind {})", (u64)i);
 }
 
 struct Instruction {

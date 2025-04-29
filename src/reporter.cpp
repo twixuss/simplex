@@ -93,8 +93,8 @@ SourceLocation get_source_location(String location, GetSourceLocationOptions opt
 	return result;
 }
 
-umm append(StringBuilder &builder, SourceLocation location) {
-	return append_format(builder, "{}:{}:{}", location.file, location.location_line_number, location.location_column_number);
+void append(StringBuilder &builder, SourceLocation location) {
+	append_format(builder, "{}:{}:{}", location.file, location.location_line_number, location.location_column_number);
 }
 
 void print_replacing_tabs_with_spaces(String string) {

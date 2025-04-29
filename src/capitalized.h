@@ -7,9 +7,18 @@ struct Capitalized {
 };
 
 template <class T>
-umm append(StringBuilder &builder, Capitalized<T> capitalized) {
-	u8 *c = builder.last->end();
-	umm result = append(builder, capitalized.value);
-	*c = to_upper((char )*c);
-	return result;
+void append(StringBuilder &builder, Capitalized<T> capitalized) {
+	scoped(temporary_allocator_and_checkpoint);
+
+	StringBuilder tmp;
+	tmp.allocator = current_temporary_allocator;
+
+	append(tmp, capitalized.value);
+
+	if (tmp.first.count) {
+		auto c = tmp.first.data();
+		*c = to_upper((char )*c);
+
+		append(builder, tmp);
+	}
 }

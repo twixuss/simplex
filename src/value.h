@@ -10,7 +10,7 @@ enum class ValueKind : u8 {
 #undef x
 };
 
-inline umm append(StringBuilder &builder, ValueKind kind) {
+inline void append(StringBuilder &builder, ValueKind kind) {
 	switch (kind) {
 #define x(name) case ValueKind::name: return append(builder, #name);
 		ENUMERATE_EXECUTION_VALUE_KIND
@@ -107,7 +107,7 @@ struct Value {
 	}
 };
 
-umm append(StringBuilder &builder, Value value);
+void append(StringBuilder &builder, Value value);
 
 Expression *to_node(Value value);
 

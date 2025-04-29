@@ -18,7 +18,7 @@ String enum_name(TokenKind k) {
 	return s;
 }
 
-umm append(StringBuilder &builder, TokenKind kind) {
+void append(StringBuilder &builder, TokenKind kind) {
 	switch (kind) {
 		case Token_eof:    return append(builder, "end of file");
 		case Token_eol:    return append(builder, "end of line");
@@ -41,7 +41,7 @@ umm append(StringBuilder &builder, TokenKind kind) {
 	return append_format(builder, "(unknown TokenKind 0x{} \"{}\")", FormatInt{.value=(u64)kind, .radix=16}, as_chars(value_as_bytes(kind)));
 }
 
-umm append(StringBuilder &builder, Token token) {
+void append(StringBuilder &builder, Token token) {
 	switch (token.kind) {
 		case Token_eof: return append(builder, "end of file");
 		case Token_eol: return append(builder, "end of line");
