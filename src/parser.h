@@ -46,10 +46,6 @@ struct Parser {
 	YieldResult last_yield_result = YieldResult::fail;
 	List<utf8> extern_library = {};
 
-	// For better error reporting
-	String currently_parsing_if_condition_location;
-	String currently_parsing_while_condition_location;
-
 	List<utf8> unescape_string_or_fail(String string);
 
 	template <class T>

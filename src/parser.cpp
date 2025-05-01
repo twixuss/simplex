@@ -296,34 +296,21 @@ void Parser::parse_name(String *location, String *name) {
 
 	next();
 
-	#if 1
-	if (is_valid_name_part(token.kind)) {
-		StringBuilder builder;
-		defer { tl::free(builder); };
+	auto can_be_merged = [&] {
+		return is_valid_name_part(token.kind) && token.string.begin() - location->end() == 1;
+	};
 
-		append(builder, *name);
+	if (can_be_merged()) {
+		utf8 *location_end = 0;
 
 		do {
-			append(builder, ' ');
-			append(builder, token.string);
-			*location = {location->begin(), token.string.end()};
+			location_end = token.string.end();
 			next();
-		} while (is_valid_name_part(token.kind));
+		} while (can_be_merged());
 
-		*name = as_utf8(to_string(builder));
+		*location = {location->begin(), location_end};
+		*name = *location;
 	}
-	#else
-	if (token.kind == Token_name) {
-		reporter.error({previous_token.string.begin(), token.string.end()}, "Two consecutive names is invalid syntax.");
-		if (currently_parsing_if_condition_location.count) {
-			reporter.help(currently_parsing_if_condition_location, "We are parsing `if` condition right now. If you want to have it on the same line as the branch, you need to use `then` keyword between them");
-		}
-		if (currently_parsing_while_condition_location.count) {
-			reporter.help(currently_parsing_while_condition_location, "We are parsing `while` condition right now. If you want to have it on the same line as the body, you need to use `do` keyword between them");
-		}
-		yield(YieldResult::fail);
-	}
-	#endif
 }
 
 // Parses parse_expression_2 with binary operators and definitions.
@@ -775,13 +762,10 @@ Expression *Parser::parse_expression_0() {
 			next();
 			skip_lines();
 
-			{
-				scoped_replace(currently_parsing_if_condition_location, If->location);
-				If->condition = parse_expression();
+			If->condition = parse_expression();
 					
-				if (fail_due_to_unseparated_ambiguous_expression(If->condition, u8"then"s)) {
-					yield(YieldResult::fail);
-				}
+			if (fail_due_to_unseparated_ambiguous_expression(If->condition, u8"then"s)) {
+				yield(YieldResult::fail);
 			}
 
 			skip_lines();
@@ -1002,10 +986,7 @@ Node *Parser::parse_statement() {
 
 			scoped_replace(current_loop, While);
 				
-			{
-				scoped_replace(currently_parsing_while_condition_location, While->location);
-				While->condition = parse_expression();
-			}
+			While->condition = parse_expression();
 
 			skip_lines();
 			if (token.kind == Token_then) {
@@ -1113,14 +1094,10 @@ Node *Parser::parse_statement() {
 			next();
 			skip_lines();
 
-			Expression *condition;
-			{
-				scoped_replace(currently_parsing_if_condition_location, location);
-				condition = parse_expression();
+			auto condition = parse_expression();
 
-				if (fail_due_to_unseparated_ambiguous_expression(condition, u8"then"s)) {
-					yield(YieldResult::fail);
-				}
+			if (fail_due_to_unseparated_ambiguous_expression(condition, u8"then"s)) {
+				yield(YieldResult::fail);
 			}
 
 			skip_lines();

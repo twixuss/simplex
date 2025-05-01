@@ -16,7 +16,7 @@ void append(StringBuilder &builder, Node *node) {
 				ENUMERATE_BUILTIN_TYPES(x)
 				#undef x
 			}
-			append_format(builder, "((BuiltinTypeName){})", (u64)type_kind);
+			append_format(builder, "BuiltinTypeName({})", (u64)type_kind);
 			break;
 		}
 		case NodeKind::LambdaHead: {

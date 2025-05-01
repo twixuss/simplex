@@ -6,7 +6,7 @@
 
 # Simplex
 ## --- This project is unfinished ---
-## Stuff in this readme that is not yet implemented is colored with <div class="wip">this color</div>
+## Stuff in this readme that is not yet implemented is <span class="wip">colored like this</span>
 
 # Syntax
 ## Comments
@@ -17,9 +17,9 @@ They are just like in C, except nestable.
 /* /* Nested multiline comment */ */
 ```
 ## Whitespace, semicolons and separators
-Spaces and tabs are not significant, however newlines are. Semicolons are optional. Less-noisy syntax made parsing ambiguous in some cases. For that you can use expression separators like `then` and `do`.
+Spaces and tabs are not significant, newlines are. Semicolons are optional (required for multiple statements on a single line). Keywords `then` and `do` separate condition and body when both are on single line.
 
-<details><summary><b>Ambiguity example</b></summary>
+<details><summary><b>Separators example</b></summary>
 Here `*` could mean dereference or multiplication:
 
 <!--
@@ -48,7 +48,13 @@ To disambiguate you can:
 </details>
 
 ## Expressions
-### Level 0
+### Primary
+#### Names (Identifiers)
+A sequence of characters that starts with `_` or `a-Z`, and continues with `_` or ` ` (space, experimental) or `a-Z` or `0-9`.
+I'm experimenting with multi-word names. For example
+`hello world` is a single identifier, like `hello_world`. If there are multiple spaces between names, they are not merged and treated as two separate tokens.
+...
+I think only one space should be allowed. That way there will not be different text that results in same name, which helps with search. If there are multiple spaces, treat as two separate names, this can reduce separator usage (`then`/`do`).
 #### None literal
 `none`
 A value that represents nothing. 
@@ -77,11 +83,7 @@ Type: `Bool`.
 
 Use underscore `_` as a separator.
 
-Type: `UnsizedInteger`, which is implicitly convertible to any sized integer type if there is no data loss. There is no need for suffixes. 
-<details><summary>Internal representation</summary>
-`UnsizedInteger` is a signed 64-bit number, so operations on them will work accordingly.
-I don't know if it is worth for the number of bits to be bigger or unlimited.
-</details>
+Type: `UnsizedInteger`, which is implicitly convertible to any sized integer type if there is no data loss. See [Unsized Integer](#unsizedinteger) for more details.
 
 ---
 #### String literal
@@ -147,11 +149,7 @@ Lambdas that do not return anything have this return type.
 May have one of two values: `true` or `false`
 
 ---
-### `UnsizedInteger`
-Not available to the user. This is the internal type for integer literals.
-
----
-### `U8` / `U6` / `U32` / `U64` / `S8` / `S6` / `S32` / `S64`
+### `U8` / `U16` / `U32` / `U64` / `S8` / `S16` / `S32` / `S64`
 Two's complement integer of N bits.
 If there is no way data could be lost, one is implicitly convertible to another.
 Otherwise implicit attempt will result in an error.
@@ -173,7 +171,19 @@ const Range = struct [T: Type] {
     begin: T
     end: T
 }
+```
 
+Ranges can represent a consecutive set of integers:
+```simplex
+var range: Range[Int] = 0..10  // 10 is not included
+for it in range do println(it) // prints 0 1 2 ... 9
+```
+or a memory span:
+```simplex
+var string = .["hello", "world"]
+var span: Range[*String] = strings
+```
+```simplex
 fn get_count[T: Type](range: Range[T]) {
     range.end - range.begin
 }
@@ -182,12 +192,30 @@ fn get_count[T: Type](range: Range[T]) {
 const String = Range[*U8]
 ```
 
+---
+### Arrays
+```simplex
+[count]Int
+```
+`count` must be `const`. Arrays implicitly convert to [ranges](#range)
+
+---
+### Pointers
+```simplex
+*String
+```
+
+---
+### Function types
+```simplex
+fn (a: Arg1, b: Arg2): ReturnType
+```
 
 ---
 ### Aliases
 `Int` = `S64`
+`UInt` = `US64`
 
-
-
-# TODO
-implicit cast from `Range[T]` to `*T`?
+### Internal
+#### `UnsizedInteger`
+A signed 64-bit number
