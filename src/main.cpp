@@ -150,15 +150,6 @@ auto chars_as_int(utf8 const *chars) {
 	return result;
 }
 
-auto switch_(Node *node, auto &&visitor) {
-	switch (node->kind) {
-		#define x(name) case NodeKind::name: return visitor((name *)node);
-		ENUMERATE_NODE_KIND(x)
-		#undef x
-	}
-	invalid_code_path();
-}
-
 void Block::add(Node *child) {
 	children.add(child);
 	switch (child->kind) {
@@ -252,34 +243,39 @@ fn main() {
 			}
 		}
 	} else {
-		dbgln("\nBytecode:\n");
-		Bytecode::Builder builder;
+		auto generate_bytecode = [&] {
+			dbgln("\nBytecode:\n");
+			Bytecode::Builder builder;
 
-		auto target_platform = Bytecode::Interpreter::target_platform();
+			auto target_platform = Bytecode::Interpreter::target_platform();
 
-		builder.target_platform = &target_platform;
+			builder.target_platform = &target_platform;
 
-		for (auto definition : global_block.definition_list) {
-			builder.append_global_definition(definition);
-		}
-		visit(&global_block, Combine {
-			[&] (auto) {},
-			[&] (Lambda *lambda) {
-				if (lambda->body && !lambda->head.is_template) {
-					builder.append_lambda(lambda);
-				}
-			},
-		});
-		auto bytecode = builder.build(call);
-		if (context->is_debugging) {
-			println("\nFinal instructions:\n");
-			print_instructions(bytecode.instructions);
-		}
+			for (auto definition : global_block.definition_list) {
+				builder.append_global_definition(definition);
+			}
+			visit(&global_block, Combine {
+				[&] (auto) {},
+				[&] (Lambda *lambda) {
+					if (lambda->body && !lambda->head.is_template) {
+						builder.append_lambda(lambda);
+					}
+				},
+			});
+			auto bytecode = builder.build(call);
+			if (context->is_debugging) {
+				println("\nFinal instructions:\n");
+				print_instructions(bytecode.instructions);
+			}
+
+			return bytecode;
+		};
 
 		if (target_string == "bytecode") {
+			auto bytecode = generate_bytecode();
 			if (context->run_compiled_code) {
 				timed_block("executing main");
-				auto result = Bytecode::Interpreter{}.run(&bytecode, builder.entry_point(), context->run_interactive);
+				auto result = Bytecode::Interpreter{}.run(&bytecode, bytecode.entry_point_instruction_index, context->run_interactive);
 				if (!result)
 					return false;
 				println("main returned {}", result.value());
@@ -288,21 +284,33 @@ fn main() {
 			auto dll_path = tformat(u8"{}\\targets\\{}.dll", context->compiler_bin_directory, target_string);
 			auto dll = load_dll(dll_path);
 			
+			#define x(ret, name, decls, defns, args) ret (*name) defns = autocast get_symbol(dll, u8###name##s); 
+			ENUMERATE_BACKEND_API(x)
+			#undef x
 			
-			#define x(ret, name, decls, defns, args)                                                                                \
-				ret (*name) defns = autocast get_symbol(dll, u8###name##s);                                                         \
+			#define ENSURE(name)                                                                                                    \
 				if (!name) {                                                                                                        \
 					immediate_reporter.error("Backend '{}' does not contain required function '{}'.", target_string, u8###name##s); \
 				}
-			ENUMERATE_BACKEND_API(x)
-			#undef x
 
+
+			ENSURE(init);
 			init(context);
-			convert_bytecode(bytecode);
+
+			if (convert_bytecode) {
+				auto bytecode = generate_bytecode();
+				convert_bytecode(bytecode);
+			} else if (convert_ast) {
+				convert_ast(&global_block, lambda, definition);
+			} else {
+				immediate_reporter.error("Backend '{}' does not contain required function 'convert_bytecode' or 'convert_ast'.", target_string);
+			}
 
 			if (context->run_compiled_code) {
 				immediate_reporter.error("TODO: implement running compiled result.");
 			}
+
+			#undef ENSURE
 		}
 	}
 	return true;

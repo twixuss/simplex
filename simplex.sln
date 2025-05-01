@@ -5,6 +5,7 @@ VisualStudioVersion = 17.5.33516.290
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "simplex", "simplex.vcxproj", "{7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05}"
 	ProjectSection(ProjectDependencies) = postProject
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A} = {C2450FD3-5411-42A1-AB09-7FE11F9B551A}
 		{D8ACA62C-7796-425B-A69F-0C3BE2809E35} = {D8ACA62C-7796-425B-A69F-0C3BE2809E35}
 	EndProjectSection
 EndProject
@@ -24,7 +25,9 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fuzzer", "fuzzer\fuzzer.vcx
 		{7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05} = {7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05}
 	EndProjectSection
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "x64", "x64\x64.vcxproj", "{D8ACA62C-7796-425B-A69F-0C3BE2809E35}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "x64", "backends\x64\x64.vcxproj", "{D8ACA62C-7796-425B-A69F-0C3BE2809E35}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "c", "backends\c\c.vcxproj", "{C2450FD3-5411-42A1-AB09-7FE11F9B551A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -84,6 +87,18 @@ Global
 		{D8ACA62C-7796-425B-A69F-0C3BE2809E35}.Release|x64.Build.0 = Release|x64
 		{D8ACA62C-7796-425B-A69F-0C3BE2809E35}.Release|x86.ActiveCfg = Release|x64
 		{D8ACA62C-7796-425B-A69F-0C3BE2809E35}.Release|x86.Build.0 = Release|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.Debug|x64.ActiveCfg = Debug|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.Debug|x64.Build.0 = Debug|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.Debug|x86.ActiveCfg = Debug|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.Debug|x86.Build.0 = Debug|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.DebugFast|x64.ActiveCfg = DebugFast|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.DebugFast|x64.Build.0 = DebugFast|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.DebugFast|x86.ActiveCfg = DebugFast|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.DebugFast|x86.Build.0 = DebugFast|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.Release|x64.ActiveCfg = Release|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.Release|x64.Build.0 = Release|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.Release|x86.ActiveCfg = Release|x64
+		{C2450FD3-5411-42A1-AB09-7FE11F9B551A}.Release|x86.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -196,3 +196,13 @@ ForEachDirective visit(Node *node, auto &&visitor) {
 
 #undef VISIT
 #undef VISITOR
+
+// Does not recurse
+auto visit_one(Node *node, auto &&visitor) {
+	switch (node->kind) {
+		#define x(name) case NodeKind::name: return visitor((name *)node);
+		ENUMERATE_NODE_KIND(x)
+		#undef x
+	}
+	invalid_code_path();
+}

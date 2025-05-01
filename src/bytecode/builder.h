@@ -86,8 +86,6 @@ struct Builder {
 
 	void append_lambda(Lambda *lambda);
 
-	umm entry_point();
-
 	struct BlockInfo {
 		Site destination;
 		List<umm> break_jump_indices;
@@ -97,7 +95,6 @@ struct Builder {
 	u64 temporary_offset = 0;
 	u64 max_temporary_size = 0;
 	u64 max_size_reserved_for_arguments = 0;
-	umm entry_point_instruction_index = -1;
 	umm locals_size = 0;
 	List<std::tuple<umm, Lambda *>> calls_to_patch;
 	List<umm> jumps_to_ret;

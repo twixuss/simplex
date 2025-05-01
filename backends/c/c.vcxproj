@@ -17,10 +17,10 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{d8aca62c-7796-425b-a69f-0c3be2809e35}</ProjectGuid>
-    <RootNamespace>x64</RootNamespace>
+    <ProjectGuid>{C2450FD3-5411-42A1-AB09-7FE11F9B551A}</ProjectGuid>
+    <RootNamespace>c</RootNamespace>
     <WindowsTargetPlatformVersion>10.0.18362.0</WindowsTargetPlatformVersion>
-    <ProjectName>x64</ProjectName>
+    <ProjectName>c</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -49,18 +49,18 @@
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\vs\properties\Common.props" />
-    <Import Project="..\vs\properties\Debug.props" />
+    <Import Project="..\..\vs\properties\Common.props" />
+    <Import Project="..\..\vs\properties\Debug.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='DebugFast|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\vs\properties\Common.props" />
-    <Import Project="..\vs\properties\DebugFast.props" />
+    <Import Project="..\..\vs\properties\Common.props" />
+    <Import Project="..\..\vs\properties\DebugFast.props" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\vs\properties\Common.props" />
-    <Import Project="..\vs\properties\Release.props" />
+    <Import Project="..\..\vs\properties\Common.props" />
+    <Import Project="..\..\vs\properties\Release.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -97,13 +97,19 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <None Include="..\vs\properties\Common.props" />
-    <None Include="..\vs\properties\Debug.props" />
-    <None Include="..\vs\properties\Release.props" />
+    <None Include="..\..\vs\properties\Common.props" />
+    <None Include="..\..\vs\properties\Debug.props" />
+    <None Include="..\..\vs\properties\Release.props" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\reporter.cpp" />
-    <ClCompile Include="x64.cpp" />
+    <ClCompile Include="..\..\src\binary_operation.cpp" />
+    <ClCompile Include="..\..\src\mutability.cpp" />
+    <ClCompile Include="..\..\src\nameable.cpp" />
+    <ClCompile Include="..\..\src\nodes.cpp" />
+    <ClCompile Include="..\..\src\reporter.cpp" />
+    <ClCompile Include="..\..\src\type.cpp" />
+    <ClCompile Include="..\..\src\unary_operation.cpp" />
+    <ClCompile Include="c.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

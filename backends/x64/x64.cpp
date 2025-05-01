@@ -1,8 +1,8 @@
 #define TL_IMPL
-#include "../src/common.h"
-#include "../src/bytecode/bytecode.h"
-#include "../src/x.h"
-#include "../src/reporter.h"
+#include "../../src/common.h"
+#include "../../src/bytecode/bytecode.h"
+#include "../../src/x.h"
+#include "../../src/reporter.h"
 
 CompilerContext *context;
 

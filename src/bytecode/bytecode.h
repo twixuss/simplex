@@ -343,6 +343,7 @@ struct Bytecode {
 	List<u8> global_readonly_data;
 	List<u8> global_mutable_data;
 	HashMap<u64, Lambda *> first_instruction_to_lambda;
+	umm entry_point_instruction_index = -1;
 };
 
 #define y(type, name) \

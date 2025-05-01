@@ -37,7 +37,7 @@ Builder::Builder() {
 }
 
 Bytecode Builder::build(Expression *expression) {
-	entry_point_instruction_index = output_bytecode.instructions.count;
+	output_bytecode.entry_point_instruction_index = output_bytecode.instructions.count;
 	I(sub8, Register::stack, Register::stack, 8);
 	tmpval(destination, get_size(expression->type));
 	output(destination, expression);
@@ -194,8 +194,6 @@ void Builder::append_lambda(Lambda *lambda) {
 		}
 	}
 }
-
-umm Builder::entry_point() { return entry_point_instruction_index; }
 
 void Builder::write(List<u8> &section, Value value, Type type) {
 	switch (value.kind) {
