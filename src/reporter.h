@@ -1,9 +1,6 @@
 #pragma once
 #include "common.h"
 
-extern bool break_on_error;
-extern u32 nested_reports_verbosity;
-
 struct SourceLine {
 	String string;
 	u32 number = 0;
@@ -80,7 +77,7 @@ struct ReporterBase {
 	void info   (this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::info,    self.indentation, location, args...)); }
 	void warning(this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::warning, self.indentation, location, args...)); }
 	void error  (this auto &&self, String location, auto const &...args) {
-		if (break_on_error) {
+		if (context->break_on_error) {
 			debug_break();
 		}
 		self.on_report(Report::create(ReportKind::error, self.indentation, location, args...));

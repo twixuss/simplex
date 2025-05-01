@@ -17,9 +17,6 @@
 
 extern Block global_block;
 extern SpinLock global_block_lock;
-extern String generated_source_directory;
-extern bool should_inline_unspecified_lambdas;
-extern bool constant_name_inlining;
 
 #define ENABLE_TYPECHECKER_REUSE 0
 
@@ -469,7 +466,7 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 			auto source = (Span<utf8>)to_string(source_builder);
 			source = source.subspan(1, source.count - 2);
 				
-			auto path = format(u8"{}\\{}.sp", generated_source_directory, lambda_name);
+			auto path = format(u8"{}\\{}.sp", context->generated_source_directory, lambda_name);
 
 			locked_use(content_start_to_file_name) {
 				content_start_to_file_name.get_or_insert(source.data) = path;
@@ -779,7 +776,7 @@ bool Typechecker::should_inline(Call *call, Lambda *lambda) {
 		return lambda->inline_status == InlineStatus::always;
 	}
 
-	if (should_inline_unspecified_lambdas) {
+	if (context->should_inline_unspecified_lambdas) {
 		return !as<Block>(lambda->body);
 	}
 
@@ -1506,7 +1503,7 @@ Expression *       Typechecker::typecheck_impl(Name *name, bool can_substitute) 
 			if (auto definition = name->definition()) {
 				name->type = definition->type;
 
-				if (constant_name_inlining) {
+				if (context->constant_name_inlining) {
 					if (definition->mutability == Mutability::constant) {
 						// NOTE: Even though definition is constant, definition->initial_value can be null
 						// if it is an unresolved template parameter.
@@ -1965,7 +1962,7 @@ c
 							
 								auto source = source_list.subspan(1, source_list.count - 2);
 									
-								auto path = format(u8"{}\\{}.sp", generated_source_directory, lambda_name);
+								auto path = format(u8"{}\\{}.sp", context->generated_source_directory, lambda_name);
 
 								locked_use(content_start_to_file_name) {
 									content_start_to_file_name.get_or_insert(source.data) = path;

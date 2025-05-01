@@ -15,7 +15,6 @@
 #include "parser.h"
 #include "nodes.h"
 #include "binary_operation.h"
-#include "paths.h"
 #include "capitalized.h"
 #include "builtin_structs.h"
 #include "make_node.h"
@@ -25,8 +24,7 @@
 #include "typechecker.h"
 #include "visit.h"
 
-
-OsLock stdout_mutex;
+CompilerContext _context, *context = &_context;
 
 #define ENABLE_STRING_HASH_COUNT 0
 
@@ -69,31 +67,6 @@ constexpr u64 get_hash(String const &string) {
 	}
 	return result;
 }
-
-bool constant_name_inlining = true;
-bool print_uids = false;
-bool report_yields = false;
-bool enable_time_log = false;
-bool is_debugging = false;
-bool print_tokens = false;
-bool print_wait_failures = false;
-bool enable_log_error_path = false;
-bool break_on_error = false;
-bool run_compiled_code = false;
-bool print_stats = false;
-bool should_print_ast = false;
-bool run_interactive = false;
-u32 nested_reports_verbosity = 1;
-bool should_inline_unspecified_lambdas = false;
-
-enum class InterpretMode {
-	bytecode,
-	ast,
-};
-
-String input_source_path;
-u32 requested_thread_count = 0;
-InterpretMode interpret_mode = {};
 
 /*
 struct GlobalAllocator : AllocatorBase<GlobalAllocator> {
@@ -155,7 +128,7 @@ private:
 */
 
 void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, Span<char> message) {
-	scoped(stdout_mutex);
+	scoped(context->stdout_mutex);
 
 	if (!location.data)
 		location = debug_current_location;
@@ -213,32 +186,132 @@ bool is_expression(Node *node) {
 	return as<Expression>(node);
 }
 
+std::tuple<Lambda *, Definition *> find_main_lambda() {
+	for (auto node : global_block.children) {
+		if (auto definition = as<Definition>(node)) {
+			if (definition->name == u8"main"s) {
+				if (!definition->initial_value) {
+					immediate_reporter.error(definition->location, "main must be a lambda");
+					return {};
+				}
+
+				if (definition->mutability != Mutability::constant) {
+					immediate_reporter.error(definition->location, "main must be constant");
+					return {};
+				}
+
+				auto lambda = as<Lambda>(definition->initial_value);
+				if (!lambda) {
+					immediate_reporter.error(definition->location, "main must be a lambda");
+					return {};
+				}
+
+				if (!types_match(lambda->head.return_type, get_builtin_type(BuiltinType::None)) &&
+					!::is_concrete_integer(lambda->head.return_type)) 
+				{
+					immediate_reporter.error(definition->location, "main must return integer or None, not {}.", lambda->head.return_type);
+					return {};
+				}
+
+				return {lambda, definition};
+			}
+		}
+	}
+	return {};
+}
+
+String target_string = u8"bytecode"s;
+
+bool find_main_and_run() {
+	auto [lambda, definition] = find_main_lambda();
+	
+	if (!lambda) {
+		immediate_reporter.error("Main lambda was not found.");
+		immediate_reporter.help(R"(Create main lambda:
+fn main() {
+	return 0;
+}
+)");
+		return false;
+	}
+
+	auto call = Call::create();
+	call->callable = lambda;
+	call->type = lambda->head.return_type;
+	call->call_kind = CallKind::lambda;
+	if (target_string == "bytecode") {
+		dbgln("\nBytecode:\n");
+		Bytecode::Builder builder;
+
+		auto target_platform = Bytecode::Interpreter::target_platform();
+
+		builder.target_platform = &target_platform;
+
+		for (auto definition : global_block.definition_list) {
+			builder.append_global_definition(definition);
+		}
+		visit(&global_block, Combine {
+			[&] (auto) {},
+			[&] (Lambda *lambda) {
+				if (lambda->body && !lambda->head.is_template) {
+					builder.append_lambda(lambda);
+				}
+			},
+		});
+		auto bytecode = builder.build(call);
+		if (context->is_debugging) {
+			println("\nFinal instructions:\n");
+			print_instructions(bytecode.instructions);
+		}
+						
+		//target_x64::emit(u8"output.exe"s, bytecode);
+
+		if (context->run_compiled_code) {
+			timed_block("executing main");
+			auto result = Bytecode::Interpreter{}.run(&bytecode, builder.entry_point(), context->run_interactive);
+			if (!result)
+				return false;
+			println("main returned {}", result.value());
+		}
+	} else if (target_string == "ast") {
+		if (context->run_compiled_code) {
+			auto context = NodeInterpreter::create(call);
+			auto result = context->run();
+			if (result.is_value()) {
+				println("main returned {}", result.value());
+			} else {
+				with(ConsoleColor::red, println("main failed to execute"));
+			}
+		}
+	}
+	return true;
+}
+
 struct CmdArg {
 	char const *key;
 	Variant<
 		void (*)(),
-		void (*)(u64)
+		void (*)(u64),
+		void (*)(String)
 	> run;
 };
 
 CmdArg args_handlers[] = {
-	{"-threads",                   +[](u64 number){ requested_thread_count = (u32)number; }},
-	{"-nested-reports-verbosity",  +[](u64 number) { nested_reports_verbosity = number; }},
-	{"-print-tokens",              +[] { print_tokens = true; }},
-	{"-print-ast",                 +[] { should_print_ast = true; }},
-	{"-print-uids",                +[] { print_uids = true; }},
-	{"-no-constant-name-inlining", +[] { constant_name_inlining = false; }},
-	{"-report-yields",             +[] { report_yields = true; }},
-	{"-log-time",                  +[] { enable_time_log = true; }},
-	{"-debug",                     +[] { is_debugging = true; }},
-	{"-run-bytecode",              +[] { interpret_mode = InterpretMode::bytecode; }},
-	{"-run-ast",                   +[] { interpret_mode = InterpretMode::ast; }},
-	{"-print-wait-failures",       +[] { print_wait_failures = true; }},
-	{"-log-error-path",            +[] { enable_log_error_path = true; }},
-	{"-run",                       +[] { run_compiled_code = true; }},
-	{"-stats",                     +[] { print_stats = true; }},
-	{"-interactive",               +[] { run_interactive = true; }},
-	{"-auto-inline",               +[] { should_inline_unspecified_lambdas = true; }},
+	{"-threads",                   +[](u64 number){ context->requested_thread_count = (u32)number; }},
+	{"-nested-reports-verbosity",  +[](u64 number) { context->nested_reports_verbosity = number; }},
+	{"-print-tokens",              +[] { context->print_tokens = true; }},
+	{"-print-ast",                 +[] { context->should_print_ast = true; }},
+	{"-print-uids",                +[] { context->print_uids = true; }},
+	{"-no-constant-name-inlining", +[] { context->constant_name_inlining = false; }},
+	{"-report-yields",             +[] { context->report_yields = true; }},
+	{"-log-time",                  +[] { context->enable_time_log = true; }},
+	{"-debug",                     +[] { context->is_debugging = true; }},
+	{"-print-wait-failures",       +[] { context->print_wait_failures = true; }},
+	{"-log-error-path",            +[] { context->enable_log_error_path = true; }},
+	{"-run",                       +[] { context->run_compiled_code = true; }},
+	{"-stats",                     +[] { context->print_stats = true; }},
+	{"-interactive",               +[] { context->run_interactive = true; }},
+	{"-auto-inline",               +[] { context->should_inline_unspecified_lambdas = true; }},
 	{"-limit-time", +[] {
 		create_thread([] {
 			int seconds_limit = 10;
@@ -247,12 +320,14 @@ CmdArg args_handlers[] = {
 			exit(-1);
 		});
 	}},
+	{"-target", +[](String target) { target_string = target; }},
 };
 
 bool parse_arguments(Span<Span<utf8>> args) {
 	for (umm i = 1; i < args.count; ++i) {
 
 		for (auto handler : args_handlers) {
+			auto cmd = args[i];
 			if (args[i] == handler.key) {
 				handler.run.visit(Combine {
 					[&](void (*run)()) {
@@ -262,10 +337,19 @@ bool parse_arguments(Span<Span<utf8>> args) {
 						if (++i < args.count) {
 							if (auto number = parse_u64(args[i])) {
 								run(number.value());
-								return;
+							} else {
+								immediate_reporter.error("Could not parse number after {}. Ignoring.", cmd);
 							}
+						} else {
+							immediate_reporter.error("Expected a number after {}.", cmd);
 						}
-						immediate_reporter.error("Could not parse number after -threads. Defaulting to all threads.");
+					},
+					[&](void (*run)(String x)) {
+						if (++i < args.count) {
+							run(args[i]);
+						} else {
+							immediate_reporter.error("Expected a string after {}.", cmd);
+						}
 					},
 				});
 				goto next_arg;
@@ -274,17 +358,17 @@ bool parse_arguments(Span<Span<utf8>> args) {
 		if (args[i][0] == '-') {
 			immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
 		} else {
-			if (input_source_path.count) {
+			if (context->input_source_path.count) {
 				with(ConsoleColor::red, println("No multiple input files allowed"));
 				return {};
 			} else {
-				input_source_path = normalize_path(make_absolute_path(args[i]));
+				context->input_source_path = normalize_path(make_absolute_path(args[i]));
 			}
 		}
 	next_arg:;
 	}
 
-	if (!input_source_path.count) {
+	if (!context->input_source_path.count) {
 		with(ConsoleColor::red, println("No input file was specified"));
 		return false;
 	} 
@@ -411,110 +495,19 @@ s32 tl_main(Span<Span<utf8>> args) {
 }
 #endif
 
-bool find_main_and_run() {
-	for (auto node : global_block.children) {
-		if (auto definition = as<Definition>(node)) {
-			if (definition->name == u8"main"s) {
-				if (!definition->initial_value) {
-					immediate_reporter.error(definition->location, "main must be a lambda");
-					return false;
-				}
-
-				if (definition->mutability != Mutability::constant) {
-					immediate_reporter.error(definition->location, "main must be constant");
-					return false;
-				}
-
-				auto lambda = as<Lambda>(definition->initial_value);
-				if (!lambda) {
-					immediate_reporter.error(definition->location, "main must be a lambda");
-					return false;
-				}
-
-				if (!types_match(lambda->head.return_type, get_builtin_type(BuiltinType::None)) &&
-					!::is_concrete_integer(lambda->head.return_type)) 
-				{
-					immediate_reporter.error(definition->location, "main must return integer or None, not {}.", lambda->head.return_type);
-					return false;
-				}
-
-
-				auto call = Call::create();
-				call->callable = lambda;
-				call->type = lambda->head.return_type;
-				call->call_kind = CallKind::lambda;
-				switch (interpret_mode) {
-					case InterpretMode::bytecode: {
-						dbgln("\nBytecode:\n");
-						Bytecode::Builder builder;
-
-						auto target_platform = Bytecode::Interpreter::target_platform();
-
-						builder.target_platform = &target_platform;
-
-						for (auto definition : global_block.definition_list) {
-							builder.append_global_definition(definition);
-						}
-						visit(&global_block, Combine {
-							[&] (auto) {},
-							[&] (Lambda *lambda) {
-								if (lambda->body && !lambda->head.is_template) {
-									builder.append_lambda(lambda);
-								}
-							},
-						});
-						auto bytecode = builder.build(call);
-						if (is_debugging) {
-							println("\nFinal instructions:\n");
-							print_instructions(bytecode.instructions);
-						}
-						
-						//target_x64::emit(u8"output.exe"s, bytecode);
-
-						if (run_compiled_code) {
-							timed_block("executing main");
-							auto result = Bytecode::Interpreter{}.run(&bytecode, builder.entry_point(), run_interactive);
-							if (!result)
-								return false;
-							println("main returned {}", result.value());
-						}
-						break;
-					}
-					case InterpretMode::ast: {
-						if (run_compiled_code) {
-							auto context = NodeInterpreter::create(call);
-							auto result = context->run();
-							if (result.is_value()) {
-								println("main returned {}", result.value());
-							} else {
-								with(ConsoleColor::red, println("main failed to execute"));
-							}
-							break;
-						}
-					}
-				}
-				return true;
-			}
-		}
-	}
-
-	immediate_reporter.error("main lambda not found");
-	return false;
-}
-
 s32 tl_main(Span<Span<utf8>> args) {
 	debug_init();
 
 	set_console_encoding(Encoding::utf8);
 
 	defer {
-		if (enable_time_log) {
-			for (auto time : timed_results) {
+		if (context->enable_time_log) {
+			for (auto time : context->timed_results) {
 				println("{} took {} ms", time.name, time.seconds * 1000);
 			}
 		}
 
-		if (print_stats) {
+		if (context->print_stats) {
 			println("Fiber allocations: {}", get_allocated_fiber_count());
 		}
 
@@ -537,12 +530,12 @@ s32 tl_main(Span<Span<utf8>> args) {
 	
 	timed_function();
 
-	compiler_path = args[0];
-	compiler_bin_directory = parse_path(compiler_path).directory;
-	compiler_root_directory = format(u8"{}\\..", compiler_bin_directory);
-	generated_source_directory = format(u8"{}\\generated", compiler_root_directory);
+	context->compiler_path = args[0];
+	context->compiler_bin_directory = parse_path(context->compiler_path).directory;
+	context->compiler_root_directory = format(u8"{}\\..", context->compiler_bin_directory);
+	context->generated_source_directory = format(u8"{}\\generated", context->compiler_root_directory);
 
-	for_each_file(generated_source_directory, {}, [&](String path) {
+	for_each_file(context->generated_source_directory, {}, [&](String path) {
 		return ForEach_erase;
 	});
 
@@ -554,10 +547,10 @@ s32 tl_main(Span<Span<utf8>> args) {
 	auto cpu_info = get_cpu_info();
 
 	u32 thread_count;
-	if (requested_thread_count == 0) {
+	if (context->requested_thread_count == 0) {
 		thread_count = cpu_info.logical_processor_count;
 	} else {
-		thread_count = min(requested_thread_count, cpu_info.logical_processor_count);
+		thread_count = min(context->requested_thread_count, cpu_info.logical_processor_count);
 	}
 
 	
@@ -565,8 +558,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 	thread_pool.init(thread_count - 1);
 	defer { thread_pool.deinit(); };
 
-	imports.use_unprotected().add_file({.path = input_source_path, .location = {}});
-	imports.use_unprotected().add_file({.path = normalize_path(make_absolute_path(format(u8"{}\\import\\base.sp", compiler_root_directory))), .location = {}});
+	imports.use_unprotected().add_file({.path = context->input_source_path, .location = {}});
+	imports.use_unprotected().add_file({.path = normalize_path(make_absolute_path(format(u8"{}\\import\\base.sp", context->compiler_root_directory))), .location = {}});
 
 	static bool failed = false;
 
@@ -591,7 +584,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 	}
 	
 	defer {
-		if (should_print_ast) {
+		if (context->should_print_ast) {
 			print_ast(&global_block);
 		}
 	};

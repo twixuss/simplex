@@ -209,7 +209,7 @@ umm print_report_kind(ReportKind kind) {
 void Report::print() {
 	scoped(temporary_allocator_and_checkpoint);
 
-	bool verbose = indentation < nested_reports_verbosity;
+	bool verbose = indentation < context->nested_reports_verbosity;
 		
 	if (verbose) {
 		print_report_indentation(indentation);
@@ -248,13 +248,13 @@ void Reporter::on_report(Report report) {
 	reports.add(report);
 }
 void Reporter::print_all() {
-	scoped(stdout_mutex);
+	scoped(context->stdout_mutex);
 	for (auto &report : reports) {
 		report.print();
 	}
 }
 
 void ImmediateReporter::on_report(Report report) {
-	scoped(stdout_mutex);
+	scoped(context->stdout_mutex);
 	report.print();
 }

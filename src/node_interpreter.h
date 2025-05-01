@@ -7,7 +7,6 @@
 
 #include <tl/bucket_hash_map.h>
 
-extern bool report_yields;
 extern bool no_more_progress;
 
 struct NodeInterpreter {
@@ -32,7 +31,7 @@ private:
 	bool yield_while(String location, auto predicate) {
 		while (true) {
 			if (predicate()) {
-				if (report_yields)
+				if (context->report_yields)
 					immediate_reporter.info(location, "Yield");
 
 				yield_smt();

@@ -146,10 +146,10 @@ void Builder::append_lambda(Lambda *lambda) {
 	} else {
 		dbgln(get_source_location(lambda->location));
 	}
-	if (is_debugging) {
+	if (context->is_debugging) {
 		println("    locals_size: {}, temporary_size: {}, total_parameters_size: {}, return_value_size: {}", locals_size, max_temporary_size, head->total_parameters_size, return_value_size);
 	}
-	if (is_debugging) {
+	if (context->is_debugging) {
 		print_instructions(lambda_instructions);
 	}
 

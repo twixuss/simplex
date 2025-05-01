@@ -55,7 +55,6 @@
     <ClInclude Include="src\nameable.h" />
     <ClInclude Include="src\unary_operation.h" />
     <ClInclude Include="src\capitalized.h" />
-    <ClInclude Include="src\paths.h" />
     <ClInclude Include="src\fiber.h" />
     <ClInclude Include="src\debug.h" />
     <ClInclude Include="src\builtin_structs.h" />

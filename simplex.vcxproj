@@ -120,7 +120,6 @@
     <ClInclude Include="src\is_constant.h" />
     <ClInclude Include="src\is_mutable.h" />
     <ClInclude Include="src\make_node.h" />
-    <ClInclude Include="src\paths.h" />
     <ClInclude Include="src\escape.h" />
     <ClInclude Include="src\lexer.h" />
     <ClInclude Include="src\meaning.h" />

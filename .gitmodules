@@ -1,3 +1,6 @@
 [submodule "dep/tl"]
 	path = dep/tl
 	url = https://github.com/twixuss/tl
+[submodule "dep/x64write"]
+	path = dep/x64write
+	url = https://github.com/twixuss/x64write

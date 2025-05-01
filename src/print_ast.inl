@@ -70,7 +70,7 @@ void print_ast_impl(Definition *definition) {
 	}
 	print(' ');
 	print(definition->name);
-	if (print_uids) {
+	if (context->print_uids) {
 		print('_');
 		print(definition->uid);
 	}
@@ -180,7 +180,7 @@ void print_ast_impl(Lambda *lambda) {
 }
 void print_ast_impl(Name *name) {
 	print(name->name);
-	if (print_uids) {
+	if (context->print_uids) {
 		print('_');
 		assert(name->definition());
 		print(name->definition()->uid);

@@ -4,7 +4,6 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <IntDir>$(SolutionDir)tmp\$(ProjectName)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep\tl\include;$(IncludePath)</IncludePath>
     <OutDir>$(SolutionDir)bin-$(Configuration)\</OutDir>
     <_PropertySheetDisplayName>Common</_PropertySheetDisplayName>
   </PropertyGroup>
@@ -32,6 +31,7 @@
       <BuildStlModules>false</BuildStlModules>
       <PreprocessToFile>false</PreprocessToFile>
       <UseStandardPreprocessor>true</UseStandardPreprocessor>
+      <AdditionalIncludeDirectories>$(SolutionDir)dep\tl\include</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup />

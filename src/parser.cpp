@@ -4,7 +4,6 @@
 #include "escape.h"
 #include "mutability.h"
 #include "capitalized.h"
-#include "paths.h"
 #include "fiber.h"
 #include "debug.h"
 
@@ -1155,7 +1154,7 @@ Node *Parser::parse_statement() {
 				
 			next();
 	
-			auto full_path = normalize_path(make_absolute_path(format(u8"{}\\import\\{}.sp", compiler_root_directory, import->path)));
+			auto full_path = normalize_path(make_absolute_path(format(u8"{}\\import\\{}.sp", context->compiler_root_directory, import->path)));
 			locked_use(imports) {
 				imports.add_file({.path = full_path, .location = import->location});
 			};
