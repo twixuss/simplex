@@ -4,6 +4,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 VisualStudioVersion = 17.5.33516.290
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "simplex", "simplex.vcxproj", "{7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05}"
+	ProjectSection(ProjectDependencies) = postProject
+		{D8ACA62C-7796-425B-A69F-0C3BE2809E35} = {D8ACA62C-7796-425B-A69F-0C3BE2809E35}
+	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Элементы решения", "Элементы решения", "{3C731290-52A5-4AEC-9CA9-CF0E44A0A2CA}"
 	ProjectSection(SolutionItems) = preProject
@@ -12,8 +15,14 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Элементы решен
 	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tests", "test_runner\test_runner.vcxproj", "{C64A3AA6-BA4E-4446-B1F5-A536A2541081}"
+	ProjectSection(ProjectDependencies) = postProject
+		{7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05} = {7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fuzzer", "fuzzer\fuzzer.vcxproj", "{9BE8748B-1320-4FB7-978B-C0374B8DE164}"
+	ProjectSection(ProjectDependencies) = postProject
+		{7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05} = {7D4D9C5A-FD2C-42D4-B564-604A2AAC8A05}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "x64", "x64\x64.vcxproj", "{D8ACA62C-7796-425B-A69F-0C3BE2809E35}"
 EndProject

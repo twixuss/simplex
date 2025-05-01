@@ -187,13 +187,12 @@ using Operand = Variant<Gpr8, Gpr16, Gpr32, Gpr64, Mem, s64>;
 		
 namespace b = Bytecode;
 
-namespace target_x64 {
-
 static u8 buf[65536 * 256] = {};
 
 struct Emitter {
+	u8 *c = buf;
+
 	void emit(String target_executable_path, b::Bytecode bytecode) {
-		u8 *c = buf;
 
 		for (auto i : bytecode.instructions) {
 			emit_instruction(i);
@@ -210,43 +209,50 @@ struct Emitter {
 		if (fits_in_4_bytes(x)) return 4;
 		return 8;
 	}
-	#if 0
-	x64::Register64 map(b::Register r) {
+
+	inline static constexpr Array temp_regs = {rax};
+	Optional<Gpr64> map(b::Register r) {
 		switch (r) {
-			case (b::Register)0: return x64::Register64::rcx;
-			case (b::Register)1: return x64::Register64::rdx;
-			case (b::Register)2: return x64::Register64::r8;
-			case (b::Register)3: return x64::Register64::r9;
-			case (b::Register)4: return x64::Register64::r10;
-			case (b::Register)5: return x64::Register64::r11;
-			case b::Register::stack: return x64::Register64::rsp;
-			case b::Register::base: return x64::Register64::rbp;
+			case (b::Register)0: return rcx;
+			case (b::Register)1: return rdx;
+			case (b::Register)2: return r8;
+			case (b::Register)3: return r9;
+			case (b::Register)4: return r10;
+			case (b::Register)5: return r11;
+			case b::Register::stack: return rsp;
+			case b::Register::base: return rbp;
 		}
-		invalid_code_path("Unmappable register {}", r);
+		return {};
 	}
-	x64::Address map(b::Address a) {
-		x64::Address result = {};
+	Optional<Mem> map(b::Address a) {
+		Mem result = {};
 		if (a.base) {
-			result.r1 = map(a.base.value());
-			result.r1_scale = 1;
+			auto base = map(a.base.value());
+			if (!base)
+				return {};
+
+			result.base = base.value().i;
+			result.base_scale = 1;
 		}
-		result.r2 = map(a.element_index);
+		auto index = map(a.element_index);
+		if (!index)
+			return {};
+		result.index = index.value().i;
 		switch (a.element_size) {
 			case 0: break;
-			case 1: result.r2_scale_index = 1; break;
-			case 2: result.r2_scale_index = 2; break;
-			case 4: result.r2_scale_index = 3; break;
-			case 8: result.r2_scale_index = 4; break;
-			default: invalid_code_path("Unmappable address: a.element_size is {}", a.element_size);
+			case 1: result.index_scale = 1; break;
+			case 2: result.index_scale = 2; break;
+			case 4: result.index_scale = 4; break;
+			case 8: result.index_scale = 8; break;
+			default: return {};
 		}
 
-		assert(fits_in_4_bytes(a.offset), "Unmappable address: a.offset is not 4 byte: {}", a.offset);
+		assert(fits_in_32(a.offset), "Unmappable address: a.offset is bigger that 32 bit: {}", a.offset);
 
-		result.c = (s32)a.offset;
+		result.displacement = (s32)a.offset;
 		
 		return result;
 	}
-	#endif
 
 	void emit_instruction(b::Instruction i) {
 		switch (i.kind) {
@@ -257,10 +263,69 @@ struct Emitter {
 		invalid_code_path("Invalid instruction kind: {}", i.kind);
 	}
 	void emit_instruction_impl(b::Instruction::nop_t i) {}
-	void emit_instruction_impl(b::Instruction::push_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::push_t i) {
+		if (i.s.is_constant()) {
+			assert(x64w_fits_in_32(i.s.get_constant()));
+			push_i32(&c, i.s.get_constant());
+		} else if (i.s.is_register()) {
+			auto mapped = map(i.s.get_register());
+			if (mapped) {
+				push_r64(&c, mapped.value());
+			} else {
+				not_implemented();
+			}
+		} else {
+			not_implemented();
+		}
+	}
 	void emit_instruction_impl(b::Instruction::pop_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::copy_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::set_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::copy_t i) {
+		if (i.d.is_register()) {
+			auto mapped_d = map(i.d.get_register());
+			if (mapped_d) {
+				if (i.s.is_constant()) {
+					mov_ri64(&c, mapped_d.value(), i.s.get_constant());
+				} else if (i.s.is_register()) {
+					auto mapped_s = map(i.s.get_register());
+					if (mapped_s) {
+						mov_rr64(&c, mapped_d.value(), mapped_s.value());
+					} else {
+						not_implemented();
+					}
+				} else {
+					not_implemented();
+				}
+			} else {
+				not_implemented();
+			}
+		}
+	}
+	void emit_instruction_impl(b::Instruction::set_t i) {
+		switch (i.size) {
+			case 0: {
+				break;
+			}
+			case 8: {
+				auto mapped_d = map(i.d);
+				if (mapped_d) {
+					u64 x;
+					memset(&x, i.value, sizeof(x));
+					if (fits_in_32(x)) {
+						mov_m64i32(&c, mapped_d.value(), x);
+					} else {
+						not_implemented();
+					}
+				} else {
+					not_implemented();
+				}
+				break;
+			}
+			default: {
+				not_implemented();
+				break;
+			}
+		}
+	}
 	void emit_instruction_impl(b::Instruction::lea_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::add1_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::sub1_t i) { not_implemented(); }
@@ -299,7 +364,36 @@ struct Emitter {
 	void emit_instruction_impl(b::Instruction::sra4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::cmp4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::add8_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::sub8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::sub8_t i) {
+		if (i.d.is_register() && i.a.is_register() && (i.d.get_register() == i.a.get_register())) {
+			auto mapped_d = map(i.d.get_register());
+			auto mapped_a = map(i.a.get_register());
+
+			if (mapped_d && mapped_a) {
+				if (i.b.is_constant()) {
+					auto b = -i.b.get_constant();
+					if (fits_in_8(b)) {
+						add_r64i8(&c, mapped_d.value(), b);
+					} else {
+						add_r64i32(&c, mapped_d.value(), b);
+					}
+				} else if (i.b.is_register()) {
+					auto mapped_b = map(i.b.get_register());
+					if (mapped_b) {
+						add_rr64(&c, mapped_d.value(), mapped_b.value());
+					} else {
+						not_implemented();
+					}
+				} else {
+					not_implemented();
+				}
+			} else {
+				not_implemented();
+			}
+		} else {
+			not_implemented();
+		}
+	}
 	void emit_instruction_impl(b::Instruction::mul8_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::div8_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::mod8_t i) { not_implemented(); }
@@ -326,13 +420,19 @@ struct Emitter {
 	void emit_instruction_impl(b::Instruction::intrinsic_t i) { not_implemented(); }
 };
 
-extern "C" void emit_bytecode(CompilerContext *c, b::Bytecode bytecode) {
+extern "C" __declspec(dllexport)
+void init(CompilerContext *c) {
 	context = c;
+
+	init_allocator();
+	init_printer();
+}
+
+extern "C" __declspec(dllexport)
+void convert_bytecode(b::Bytecode bytecode) {
 
 	Emitter emitter;
 	emitter.emit(tformat(u8"{}.exe", parse_path(context->input_source_path).path_without_extension()), bytecode);
-}
-
 }
 
 // FIXME: Copied from main.cpp

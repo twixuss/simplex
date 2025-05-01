@@ -6,6 +6,7 @@
 #include <tl/variant.h>
 #include <tl/contiguous_hash_map.h>
 #include <tl/bucket_hash_map.h>
+#include <tl/dynamic_lib.h>
 
 #include "x.h"
 #include "reporter.h"
@@ -23,6 +24,7 @@
 #include "bytecode/interpreter.h"
 #include "typechecker.h"
 #include "visit.h"
+#include "backend.h"
 
 CompilerContext _context, *context = &_context;
 
@@ -239,7 +241,17 @@ fn main() {
 	call->callable = lambda;
 	call->type = lambda->head.return_type;
 	call->call_kind = CallKind::lambda;
-	if (target_string == "bytecode") {
+	if (target_string == "ast") {
+		if (context->run_compiled_code) {
+			auto context = NodeInterpreter::create(call);
+			auto result = context->run();
+			if (result.is_value()) {
+				println("main returned {}", result.value());
+			} else {
+				with(ConsoleColor::red, println("main failed to execute"));
+			}
+		}
+	} else {
 		dbgln("\nBytecode:\n");
 		Bytecode::Builder builder;
 
@@ -263,24 +275,33 @@ fn main() {
 			println("\nFinal instructions:\n");
 			print_instructions(bytecode.instructions);
 		}
-						
-		//target_x64::emit(u8"output.exe"s, bytecode);
 
-		if (context->run_compiled_code) {
-			timed_block("executing main");
-			auto result = Bytecode::Interpreter{}.run(&bytecode, builder.entry_point(), context->run_interactive);
-			if (!result)
-				return false;
-			println("main returned {}", result.value());
-		}
-	} else if (target_string == "ast") {
-		if (context->run_compiled_code) {
-			auto context = NodeInterpreter::create(call);
-			auto result = context->run();
-			if (result.is_value()) {
+		if (target_string == "bytecode") {
+			if (context->run_compiled_code) {
+				timed_block("executing main");
+				auto result = Bytecode::Interpreter{}.run(&bytecode, builder.entry_point(), context->run_interactive);
+				if (!result)
+					return false;
 				println("main returned {}", result.value());
-			} else {
-				with(ConsoleColor::red, println("main failed to execute"));
+			}
+		} else {
+			auto dll_path = tformat(u8"{}\\targets\\{}.dll", context->compiler_bin_directory, target_string);
+			auto dll = load_dll(dll_path);
+			
+			
+			#define x(ret, name, decls, defns, args)                                                                                \
+				ret (*name) defns = autocast get_symbol(dll, u8###name##s);                                                         \
+				if (!name) {                                                                                                        \
+					immediate_reporter.error("Backend '{}' does not contain required function '{}'.", target_string, u8###name##s); \
+				}
+			ENUMERATE_BACKEND_API(x)
+			#undef x
+
+			init(context);
+			convert_bytecode(bytecode);
+
+			if (context->run_compiled_code) {
+				immediate_reporter.error("TODO: implement running compiled result.");
 			}
 		}
 	}
