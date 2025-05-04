@@ -1,6 +1,7 @@
 #include "type.h"
 #include "nodes.h"
 #include "builtin_structs.h"
+#include "compiler_context.h"
 
 void append(StringBuilder &builder, BuiltinType type_kind) {
 	switch (type_kind) {
@@ -28,10 +29,8 @@ void append(StringBuilder &builder, Type type) {
 	return append(builder, (Node *)type);
 }
 
-BuiltinTypeName builtin_types[(u32)BuiltinType::count];
-
 BuiltinTypeName *get_builtin_type(BuiltinType kind) {
-	return &builtin_types[(u32)kind];
+	return &context->builtin_types[(u32)kind];
 }
 
 Expression *direct(Expression *node) {

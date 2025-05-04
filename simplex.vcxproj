@@ -77,7 +77,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\binary_operation.cpp" />
-    <ClCompile Include="src\builtin_structs.cpp" />
     <ClCompile Include="src\bytecode\builder.cpp" />
     <ClCompile Include="src\copier.cpp" />
     <ClCompile Include="src\debug.cpp" />
@@ -112,6 +111,7 @@
     <ClInclude Include="src\bytecode\interpreter.h" />
     <ClInclude Include="src\capitalized.h" />
     <ClInclude Include="src\common.h" />
+    <ClInclude Include="src\compiler_context.h" />
     <ClInclude Include="src\copier.h" />
     <ClInclude Include="src\c_parser.h" />
     <ClInclude Include="src\debug.h" />

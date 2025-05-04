@@ -4,6 +4,7 @@
 #include "../builtin_structs.h"
 #include "../make_node.h"
 #include "../get_constant_value.h"
+#include "../compiler_context.h"
 
 namespace Bytecode {
 
@@ -146,10 +147,10 @@ void Builder::append_lambda(Lambda *lambda) {
 	} else {
 		dbgln(get_source_location(lambda->location));
 	}
-	if (context->is_debugging) {
+	if (context_base->is_debugging) {
 		println("    locals_size: {}, temporary_size: {}, total_parameters_size: {}, return_value_size: {}", locals_size, max_temporary_size, head->total_parameters_size, return_value_size);
 	}
-	if (context->is_debugging) {
+	if (context_base->is_debugging) {
 		print_instructions(lambda_instructions);
 	}
 
@@ -518,7 +519,7 @@ void Builder::output_impl(Site destination, Call *call) {
 						auto parameter_type = parameters[0]->type;
 						if (types_match(parameter_type, BuiltinType::S64)) {
 							I(intrinsic, Intrinsic::print_S64, {});
-						} else if (types_match(parameter_type, builtin_structs.String)) {
+						} else if (types_match(parameter_type, context->builtin_structs.String)) {
 							I(intrinsic, Intrinsic::print_String, {});
 						} else {
 							invalid_code_path(definition->location, "Unsupported parameter type '{}' in 'print' intrinsic", parameter_type);
@@ -930,14 +931,14 @@ void Builder::output_impl(Site destination, Match *match) {
 	}
 		
 	if (match->default_case) {
-		output(destination, match->default_case->to);
+		output(destination, match->default_case);
 	} else {
 		if (!types_match(match->type, BuiltinType::None)) {
 			reserve_space_for_arguments(16);
 			StringLiteral message;
 			message.value = tformat(u8"{}: failed to execute `match` expression with no default case", get_source_location(match->location));
 			message.location = match->location;
-			message.type = make_name(builtin_structs.String->definition);
+			message.type = make_name(context->builtin_structs.String->definition);
 			output(Address{.base = Register::stack}, &message);
 			I(intrinsic, Intrinsic::print_String, {});
 			I(add8, Register::stack, Register::stack, 16);

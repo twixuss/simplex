@@ -142,11 +142,11 @@ inline void log_error_path(char const *file, int line, auto &&...args) {
 }
 
 #define LOG_ERROR_PATH(...) \
-	if (context->enable_log_error_path) { \
+	if (context_base->enable_log_error_path) { \
 		log_error_path(__FILE__, __LINE__ __VA_OPT__(,) __VA_ARGS__); \
 	}
 
-#define dbgln(...) (context->is_debugging ? println(__VA_ARGS__) : 0)
+#define dbgln(...) (context_base->is_debugging ? println(__VA_ARGS__) : 0)
 
 struct TimedResult {
 	char const *name = 0;
@@ -154,9 +154,9 @@ struct TimedResult {
 };
 
 #define timed_block(name) \
-	if (context->enable_time_log) println("{} ...", name); \
+	if (context_base->enable_time_log) println("{} ...", name); \
 	auto timer = create_precise_timer(); \
-	defer { if (context->enable_time_log) context->timed_results.add({name, elapsed_time(timer)}); }
+	defer { if (context_base->enable_time_log) context_base->timed_results.add({name, elapsed_time(timer)}); }
 
 #define timed_function() \
 	static constexpr auto funcname = __FUNCTION__; \
@@ -173,7 +173,9 @@ struct TimedResult {
 #define locked_use_it(protected, expr) protected.use([&](auto &it) { return expr; })
 
 
-struct CompilerContext {
+// Basic stuff that has simple type dependencies.
+// Nodes, types and other stuff is defined in CompilerContext.
+struct CompilerContextBase {
 	String compiler_path;
 	String compiler_bin_directory;
 	String compiler_root_directory;
@@ -202,6 +204,17 @@ struct CompilerContext {
 	u32 requested_thread_count = 0;
 	u32 nested_reports_verbosity = 1;
 
+	LockProtected<GHashMap<utf8 *, String>, SpinLock> content_start_to_file_name;
+
+	LockProtected<GList<ReusableFiber>, SpinLock> fibers_to_reuse;
+	u32 allocated_fiber_count;
 };
 
+struct CompilerContext;
+
 extern CompilerContext *context;
+
+#define context_base ((CompilerContextBase *)context)
+
+struct Block *get_global_block();
+struct SpinLock *get_global_block_lock();

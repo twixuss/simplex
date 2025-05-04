@@ -16,8 +16,6 @@ struct SourceLocation {
 	List<String> lines;
 };
 
-extern LockProtected<GHashMap<utf8 *, String>, SpinLock> content_start_to_file_name;
-
 struct GetSourceLocationOptions {
 	int lines_before = 0;
 	int lines_after = 0;
@@ -77,7 +75,7 @@ struct ReporterBase {
 	void info   (this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::info,    self.indentation, location, args...)); }
 	void warning(this auto &&self, String location, auto const &...args) { self.on_report(Report::create(ReportKind::warning, self.indentation, location, args...)); }
 	void error  (this auto &&self, String location, auto const &...args) {
-		if (context->break_on_error) {
+		if (context_base->break_on_error) {
 			debug_break();
 		}
 		self.on_report(Report::create(ReportKind::error, self.indentation, location, args...));

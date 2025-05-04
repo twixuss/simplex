@@ -23,8 +23,6 @@ struct Imports {
 
 extern LockProtected<Imports, SpinLock> imports;
 
-extern Block global_block;
-
 struct Parser {
 	enum class YieldResult {
 		parsed_node,
@@ -35,7 +33,7 @@ struct Parser {
 	Lexer lexer;
 	Token token;
 	Token previous_token;
-	Block *current_block = &global_block;
+	Block *current_block = get_global_block();
 	While *current_loop = 0;
 	Expression *current_container = 0;
 	Reporter reporter;
@@ -136,6 +134,7 @@ struct Parser {
 
 bool parse_source(String source, auto on_parse_global_node) {
 	#if ENABLE_ASSERTIONS
+	auto &content_start_to_file_name = context_base->content_start_to_file_name;
 	locked_use(content_start_to_file_name) {
 		assert(content_start_to_file_name.find(source.data));
 	};

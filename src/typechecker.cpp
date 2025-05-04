@@ -14,9 +14,7 @@
 #include "is_mutable.h"
 #include "do_all_paths_return.h"
 #include "get_constant_value.h"
-
-extern Block global_block;
-extern SpinLock global_block_lock;
+#include "compiler_context.h"
 
 #define ENABLE_TYPECHECKER_REUSE 0
 
@@ -39,9 +37,8 @@ Typechecker *Typechecker::create(Node *node) {
 	#endif
 	{
 		typechecker = default_allocator.allocate<Typechecker>();
-		extern u32 allocated_fiber_count;
-		++allocated_fiber_count;
-		typechecker->fiber = create_fiber([](void *param) {
+		typechecker->fiber = get_new_fiber();
+		set_start(typechecker->fiber, [](void *param) {
 			((Typechecker *)param)->fiber_main(); 
 		}, typechecker);
 
@@ -49,7 +46,7 @@ Typechecker *Typechecker::create(Node *node) {
 	}
 
 	typechecker->reporter.reports.clear();
-	typechecker->current_block = &global_block;
+	typechecker->current_block = &context->global_block;
 	typechecker->initial_node = node;
 	typechecker->debug_stopped = true;
 	return typechecker;
@@ -108,6 +105,8 @@ void Typechecker::retire() {
 	can_generate_vectorized_lambdas = false;
 	template_instantiation_stack_for_reports.clear();
 	fail_strategy = FailStrategy::yield;
+	add_fiber_to_reuse(fiber);
+	fiber = {};
 
 	locked_use_it(retired_typecheckers, it.add(this));
 }
@@ -145,7 +144,7 @@ void Typechecker::fail_impl() {
 void Typechecker::yield(Typechecker::YieldResult result) {
 	yield_result = result;
 	scoped_replace(debug_current_location, {});
-	tl::yield(parent_fiber);
+	tl::yield_reuse(parent_fiber, fiber);
 	if (result == YieldResult::fail) {
 		longjmp(main_loop_unwind_point.buf, 1);
 	}
@@ -466,8 +465,9 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 			auto source = (Span<utf8>)to_string(source_builder);
 			source = source.subspan(1, source.count - 2);
 				
-			auto path = format(u8"{}\\{}.sp", context->generated_source_directory, lambda_name);
+			auto path = format(u8"{}\\{}.sp", context_base->generated_source_directory, lambda_name);
 
+			auto &content_start_to_file_name = context_base->content_start_to_file_name;
 			locked_use(content_start_to_file_name) {
 				content_start_to_file_name.get_or_insert(source.data) = path;
 			};
@@ -477,13 +477,13 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 			bool success = parse_source(source, [&](Node *node) {
 				assert(!definition_node, "Only one node expected");
 				definition_node = node;
-				scoped(global_block_lock);
-				global_block.add(node);
+				scoped(context->global_block_lock);
+				context->global_block.add(node);
 			});
 
 			can_generate_vectorized_lambdas = false;
 			success &= with_unwind_strategy([&] {
-				scoped_replace(current_block, &global_block);
+				scoped_replace(current_block, &context->global_block);
 				scoped_replace(current_container, 0);
 				scoped_replace(current_loop, 0);
 				return typecheck(&definition_node);
@@ -590,8 +590,8 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 		new_lambda_definition->mutability = Mutability::constant;
 		new_lambda_definition->type = new_lambda->type;
 
-		withs(global_block_lock) {
-			global_block.add(new_lambda_definition);
+		withs(context->global_block_lock) {
+			context->global_block.add(new_lambda_definition);
 		};
 
 		vectorized_lambdas.insert({ original_lambda, vector_size }, new_lambda_definition);
@@ -755,8 +755,8 @@ Expression *Typechecker::instantiate_lambda_template(Call *original_call, Lambda
 	instantiated_lambda_definition->initial_value = instantiated_lambda;
 	instantiated_lambda_definition->name = (String)to_string(name_builder);
 	instantiated_lambda_definition->type = &instantiated_lambda->head;
-	withs(global_block_lock) {
-		global_block.add(instantiated_lambda_definition);
+	withs(context->global_block_lock) {
+		context->global_block.add(instantiated_lambda_definition);
 	};
 
 	new_callable_name->name = instantiated_lambda_definition->name;
@@ -776,7 +776,7 @@ bool Typechecker::should_inline(Call *call, Lambda *lambda) {
 		return lambda->inline_status == InlineStatus::always;
 	}
 
-	if (context->should_inline_unspecified_lambdas) {
+	if (context_base->should_inline_unspecified_lambdas) {
 		return !as<Block>(lambda->body);
 	}
 
@@ -907,7 +907,7 @@ Expression *Typechecker::typecheck_binary_dot(Binary *binary, Reporter &reporter
 	}
 
 	if (!struct_) {
-		if (types_match(binary->left->type, builtin_structs.String)) {
+		if (types_match(binary->left->type, context->builtin_structs.String)) {
 			auto member_name = as<Name>(binary->right);
 			if (!member_name) {
 				reporter.error(binary->right->location, "Expression after dot must be a name.");
@@ -1142,7 +1142,7 @@ Definition *       Typechecker::typecheck_impl(Definition *definition, bool can_
 			}
 		}
 			
-		if (current_block == &global_block || definition->mutability == Mutability::constant) {
+		if (current_block == &context->global_block || definition->mutability == Mutability::constant) {
 			auto constant_check = is_constant(definition->initial_value);
 			if (!constant_check) {
 				if (definition->mutability == Mutability::constant) {
@@ -1218,7 +1218,7 @@ NoneLiteral *      Typechecker::typecheck_impl(NoneLiteral *literal, bool can_su
 	return literal;
 }
 StringLiteral *    Typechecker::typecheck_impl(StringLiteral *literal, bool can_substitute) {
-	literal->type = make_name(builtin_structs.String->definition);
+	literal->type = make_name(context->builtin_structs.String->definition);
 	return literal;
 }
 LambdaHead *       Typechecker::typecheck_impl(LambdaHead *head, bool can_substitute) {
@@ -1474,7 +1474,7 @@ Expression *       Typechecker::typecheck_impl(Name *name, bool can_substitute) 
 				name->possible_definitions.add(definition);
 
 
-				if (block == &global_block) {
+				if (block == &context->global_block) {
 					for (auto &typecheck_entry : typecheck_entries) {
 						if (typecheck_entry.node == definition) {
 							entry->dependency = &typecheck_entry;
@@ -1503,7 +1503,7 @@ Expression *       Typechecker::typecheck_impl(Name *name, bool can_substitute) 
 			if (auto definition = name->definition()) {
 				name->type = definition->type;
 
-				if (context->constant_name_inlining) {
+				if (context_base->constant_name_inlining) {
 					if (definition->mutability == Mutability::constant) {
 						// NOTE: Even though definition is constant, definition->initial_value can be null
 						// if it is an unresolved template parameter.
@@ -1962,8 +1962,9 @@ c
 							
 								auto source = source_list.subspan(1, source_list.count - 2);
 									
-								auto path = format(u8"{}\\{}.sp", context->generated_source_directory, lambda_name);
+								auto path = format(u8"{}\\{}.sp", context_base->generated_source_directory, lambda_name);
 
+								auto &content_start_to_file_name = context_base->content_start_to_file_name;
 								locked_use(content_start_to_file_name) {
 									content_start_to_file_name.get_or_insert(source.data) = path;
 								};
@@ -1973,12 +1974,12 @@ c
 								bool success = parse_source(source, [&](Node *node) {
 									assert(!definition_node, "Only one node expected");
 									definition_node = node;
-									scoped(global_block_lock);
-									global_block.add(node);
+									scoped(context->global_block_lock);
+									context->global_block.add(node);
 								});
 
 								success &= with_unwind_strategy([&] {
-									scoped_replace(current_block, &global_block);
+									scoped_replace(current_block, &context->global_block);
 									scoped_replace(current_container, 0);
 									scoped_replace(current_loop, 0);
 									return typecheck(&definition_node);

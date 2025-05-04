@@ -4,4 +4,3 @@
 struct BuiltinStructs {
 	Struct *String;
 };
-extern BuiltinStructs builtin_structs;

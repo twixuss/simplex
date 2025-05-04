@@ -206,3 +206,21 @@ auto visit_one(Node *node, auto &&visitor) {
 	}
 	invalid_code_path();
 }
+// Does not recurse
+auto visit_one(Expression *expression, auto &&visitor) {
+	switch (expression->kind) {
+		#define x(name) case NodeKind::name: return visitor((name *)expression);
+		ENUMERATE_EXPRESSION_KIND(x)
+		#undef x
+	}
+	invalid_code_path();
+}
+// Does not recurse
+auto visit_one(Statement *statement, auto &&visitor) {
+	switch (statement->kind) {
+		#define x(name) case NodeKind::name: return visitor((name *)statement);
+		ENUMERATE_STATEMENT_KIND(x)
+		#undef x
+	}
+	invalid_code_path();
+}

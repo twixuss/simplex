@@ -16,7 +16,7 @@ fn memcpy(dst: *var None  src: *let None size: U64): *var None => {
     while d as U64 < e as U64 {
         *d = *s
         d = ((d as U64) + 1) as *var U8
-        s = ((d as U64) + 1) as *let U8
+        s = ((s as U64) + 1) as *let U8
     }
     return dst
 }

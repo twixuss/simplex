@@ -145,7 +145,7 @@ private:
 	static constexpr int fail_unwind_tag = 42;
 
 	Fiber parent_fiber = {};
-	Fiber fiber = {};
+	ReusableFiber fiber = {};
 	YieldResult yield_result = {};
 	Reporter reporter;
 	Node *initial_node = 0;
@@ -183,7 +183,7 @@ private:
 	bool yield_while(String location, auto predicate) {
 		while (true) {
 			if (predicate()) {
-				if (context->report_yields)
+				if (context_base->report_yields)
 					immediate_reporter.info(location, "Yield");
 
 				yield_smt();

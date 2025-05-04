@@ -432,12 +432,12 @@ extern "C" __declspec(dllexport)
 void convert_bytecode(b::Bytecode bytecode) {
 
 	Emitter emitter;
-	emitter.emit(tformat(u8"{}.exe", parse_path(context->input_source_path).path_without_extension()), bytecode);
+	emitter.emit(tformat(u8"{}.exe", parse_path(context_base->input_source_path).path_without_extension()), bytecode);
 }
 
 // FIXME: Copied from main.cpp
 void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, Span<char> message) {
-	scoped(context->stdout_mutex);
+	scoped(context_base->stdout_mutex);
 
 	immediate_reporter.error("COMPILER ERROR: {} {} at {}:{} in function {}", cause_string, expression, file, line, function);
 	if (message.count)

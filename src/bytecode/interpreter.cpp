@@ -3,6 +3,7 @@
 #include "../nodes.h"
 #include "../builtin_structs.h"
 #include "../escape.h"
+#include "../compiler_context.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -281,7 +282,7 @@ int Interpreter::print_value_inner(Address address, Type type, PrintValueOptions
 		if (types_match(type, BuiltinType::S16)) { return print_int<s16>(address, options); }
 		if (types_match(type, BuiltinType::S32)) { return print_int<s32>(address, options); }
 		if (types_match(type, BuiltinType::S64)) { return print_int<s64>(address, options); }
-		if (types_match(type, builtin_structs.String)) {
+		if (types_match(type, context->builtin_structs.String)) {
 			return print("\"{}\"", EscapedString(Span((utf8 *)val8(address), (umm)val8(address withx { it.offset += 8; }))));
 		}
 		auto directed = direct(type);

@@ -31,7 +31,7 @@ private:
 	bool yield_while(String location, auto predicate) {
 		while (true) {
 			if (predicate()) {
-				if (context->report_yields)
+				if (context_base->report_yields)
 					immediate_reporter.info(location, "Yield");
 
 				yield_smt();

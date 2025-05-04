@@ -59,6 +59,3 @@ concept CStatement = OneOf<T, Statement
 	ENUMERATE_STATEMENT_KIND(x)
 #undef x
 >;
-
-extern Block global_block;
-extern SpinLock global_block_lock;

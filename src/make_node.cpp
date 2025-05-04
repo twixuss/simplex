@@ -1,5 +1,6 @@
 #include "make_node.h"
 #include "builtin_structs.h"
+#include "compiler_context.h"
 
 Type make_pointer(Type type, Mutability mutability) {
 	auto pointer = Unary::create();
@@ -49,7 +50,7 @@ BooleanLiteral *make_boolean(bool value, String location) {
 StringLiteral *make_string(String value, String location) {
 	auto result = StringLiteral::create();
 	result->value = value;
-	result->type = make_name(builtin_structs.String->definition);
+	result->type = make_name(context->builtin_structs.String->definition);
 	result->location = location;
 	return result;
 }

@@ -1,6 +1,7 @@
 #include "value.h"
 #include "builtin_structs.h"
 #include "make_node.h"
+#include "compiler_context.h"
 
 ValueKind to_value_kind(Type type) {
 	type = direct(type);
@@ -22,7 +23,7 @@ ValueKind to_value_kind(Type type) {
 			break;
 		}
 		case NodeKind::Struct: {
-			if (type == builtin_structs.String) {
+			if (type == context->builtin_structs.String) {
 				return ValueKind::String;
 			}
 			break;
@@ -96,7 +97,7 @@ Value zero_of_type(Type type) {
 	else if (types_match(direct_type, BuiltinType::S16)) { result = Value((s16)0); }
 	else if (types_match(direct_type, BuiltinType::S32)) { result = Value((s32)0); }
 	else if (types_match(direct_type, BuiltinType::S64)) { result = Value((s64)0); }
-	else if (types_match(direct_type, builtin_structs.String)) { result = Value(String{}); }
+	else if (types_match(direct_type, context->builtin_structs.String)) { result = Value(String{}); }
 	else if (types_match(direct_type, BuiltinType::UnsizedInteger)) { result = Value(unsized_integer_tag, UnsizedInteger{}); }
 	else if (auto pointer = as_pointer(direct_type)) { result = Value((Value *)0); }
 	else {

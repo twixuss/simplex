@@ -6,6 +6,7 @@
 #include "capitalized.h"
 #include "fiber.h"
 #include "debug.h"
+#include "compiler_context.h"
 
 LockProtected<Imports, SpinLock> imports;
 
@@ -300,14 +301,11 @@ void Parser::parse_name(String *location, String *name) {
 	};
 
 	if (can_be_merged()) {
-		utf8 *location_end = 0;
-
 		do {
-			location_end = token.string.end();
+			location->set_end(token.string.end());
 			next();
 		} while (can_be_merged());
 
-		*location = {location->begin(), location_end};
 		*name = *location;
 	}
 }
@@ -829,7 +827,7 @@ Expression *Parser::parse_expression_0() {
 						reporter.error(to->location, "Match expression can not have multiple default cases.");
 						yield(YieldResult::fail);
 					}
-					match->default_case = &Case;
+					match->default_case = to;
 				}
 
 				skip_lines();
@@ -1154,7 +1152,7 @@ Node *Parser::parse_statement() {
 				
 			next();
 	
-			auto full_path = normalize_path(make_absolute_path(format(u8"{}\\import\\{}.sp", context->compiler_root_directory, import->path)));
+			auto full_path = normalize_path(make_absolute_path(format(u8"{}\\import\\{}.sp", context_base->compiler_root_directory, import->path)));
 			locked_use(imports) {
 				imports.add_file({.path = full_path, .location = import->location});
 			};
@@ -1264,7 +1262,7 @@ void Parser::link_constant_definition_to_initial_value(Definition *definition) {
 }
 
 void Parser::ensure_allowed_in_statement_context(Node *node) {
-	String is_global = current_block == &global_block ? u8"global "s : u8""s;
+	String is_global = current_block == &context->global_block ? u8"global "s : u8""s;
 
 	switch (node->kind) {
 		#define x(name) case NodeKind::name:
@@ -1277,7 +1275,7 @@ void Parser::ensure_allowed_in_statement_context(Node *node) {
 		case NodeKind::Match:
 			return;
 		case NodeKind::Binary: {
-			if (current_block != &global_block) {
+			if (current_block != &context->global_block) {
 				auto binary = (Binary *)node;
 				switch (binary->operation) {
 					case BinaryOperation::ass:
@@ -1380,13 +1378,14 @@ bool read_file_and_parse_into_global_block(String import_location, String path) 
 	// At the end to
 	auto source = (String)source_buffer.subspan(1, source_buffer.count - 2);
 	
+	auto &content_start_to_file_name = context_base->content_start_to_file_name;
 	locked_use(content_start_to_file_name) {
 		content_start_to_file_name.get_or_insert(source.data) = path;
 	};
 
 	bool success = parse_source(source, [&](Node *node) {
-		scoped(global_block_lock);
-		global_block.add(node);
+		scoped(context->global_block_lock);
+		context->global_block.add(node);
 	});
 	
 	if (!success) {

@@ -1,8 +1,6 @@
 #pragma once
 #include "reporter.h"
 
-LockProtected<GHashMap<utf8 *, String>, SpinLock> content_start_to_file_name;
-
 SourceLocation get_source_location(String location, GetSourceLocationOptions options) {
 	SourceLocation result;
 	result.location = location;
@@ -86,6 +84,7 @@ SourceLocation get_source_location(String location, GetSourceLocationOptions opt
 
 	result.location_line_number = result.lines_start_number + options.lines_before;
 
+	auto &content_start_to_file_name = context_base->content_start_to_file_name;
 	auto found_file_name = locked_use(content_start_to_file_name) { return content_start_to_file_name.find(cursor + 1); };
 	assert(found_file_name);
 	result.file = *found_file_name.value;
@@ -209,7 +208,7 @@ umm print_report_kind(ReportKind kind) {
 void Report::print() {
 	scoped(temporary_allocator_and_checkpoint);
 
-	bool verbose = indentation < context->nested_reports_verbosity;
+	bool verbose = indentation < context_base->nested_reports_verbosity;
 		
 	if (verbose) {
 		print_report_indentation(indentation);
@@ -248,13 +247,13 @@ void Reporter::on_report(Report report) {
 	reports.add(report);
 }
 void Reporter::print_all() {
-	scoped(context->stdout_mutex);
+	scoped(context_base->stdout_mutex);
 	for (auto &report : reports) {
 		report.print();
 	}
 }
 
 void ImmediateReporter::on_report(Report report) {
-	scoped(context->stdout_mutex);
+	scoped(context_base->stdout_mutex);
 	report.print();
 }

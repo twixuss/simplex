@@ -25,6 +25,7 @@
 #include "typechecker.h"
 #include "visit.h"
 #include "backend.h"
+#include "compiler_context.h"
 
 CompilerContext _context, *context = &_context;
 
@@ -130,7 +131,7 @@ private:
 */
 
 void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, Span<char> message) {
-	scoped(context->stdout_mutex);
+	scoped(context_base->stdout_mutex);
 
 	if (!location.data)
 		location = debug_current_location;
@@ -180,7 +181,7 @@ bool is_expression(Node *node) {
 }
 
 std::tuple<Lambda *, Definition *> find_main_lambda() {
-	for (auto node : global_block.children) {
+	for (auto node : context->global_block.children) {
 		if (auto definition = as<Definition>(node)) {
 			if (definition->name == u8"main"s) {
 				if (!definition->initial_value) {
@@ -233,7 +234,7 @@ fn main() {
 	call->type = lambda->head.return_type;
 	call->call_kind = CallKind::lambda;
 	if (target_string == "ast") {
-		if (context->run_compiled_code) {
+		if (context_base->run_compiled_code) {
 			auto context = NodeInterpreter::create(call);
 			auto result = context->run();
 			if (result.is_value()) {
@@ -251,10 +252,10 @@ fn main() {
 
 			builder.target_platform = &target_platform;
 
-			for (auto definition : global_block.definition_list) {
+			for (auto definition : context->global_block.definition_list) {
 				builder.append_global_definition(definition);
 			}
-			visit(&global_block, Combine {
+			visit(&context->global_block, Combine {
 				[&] (auto) {},
 				[&] (Lambda *lambda) {
 					if (lambda->body && !lambda->head.is_template) {
@@ -263,7 +264,7 @@ fn main() {
 				},
 			});
 			auto bytecode = builder.build(call);
-			if (context->is_debugging) {
+			if (context_base->is_debugging) {
 				println("\nFinal instructions:\n");
 				print_instructions(bytecode.instructions);
 			}
@@ -273,16 +274,17 @@ fn main() {
 
 		if (target_string == "bytecode") {
 			auto bytecode = generate_bytecode();
-			if (context->run_compiled_code) {
+			if (context_base->run_compiled_code) {
 				timed_block("executing main");
-				auto result = Bytecode::Interpreter{}.run(&bytecode, bytecode.entry_point_instruction_index, context->run_interactive);
+				auto result = Bytecode::Interpreter{}.run(&bytecode, bytecode.entry_point_instruction_index, context_base->run_interactive);
 				if (!result)
 					return false;
 				println("main returned {}", result.value());
 			}
 		} else {
-			auto dll_path = tformat(u8"{}\\targets\\{}.dll", context->compiler_bin_directory, target_string);
+			auto dll_path = tformat(u8"{}\\targets\\{}.dll", context_base->compiler_bin_directory, target_string);
 			auto dll = load_dll(dll_path);
+			debug_add_module(dll.handle, (Span<char>)dll_path);
 			
 			#define x(ret, name, decls, defns, args) ret (*name) defns = autocast get_symbol(dll, u8###name##s); 
 			ENUMERATE_BACKEND_API(x)
@@ -301,12 +303,12 @@ fn main() {
 				auto bytecode = generate_bytecode();
 				convert_bytecode(bytecode);
 			} else if (convert_ast) {
-				convert_ast(&global_block, lambda, definition);
+				convert_ast(&context->global_block, lambda, definition);
 			} else {
 				immediate_reporter.error("Backend '{}' does not contain required function 'convert_bytecode' or 'convert_ast'.", target_string);
 			}
 
-			if (context->run_compiled_code) {
+			if (context_base->run_compiled_code) {
 				immediate_reporter.error("TODO: implement running compiled result.");
 			}
 
@@ -326,21 +328,21 @@ struct CmdArg {
 };
 
 CmdArg args_handlers[] = {
-	{"-threads",                   +[](u64 number){ context->requested_thread_count = (u32)number; }},
-	{"-nested-reports-verbosity",  +[](u64 number) { context->nested_reports_verbosity = number; }},
-	{"-print-tokens",              +[] { context->print_tokens = true; }},
-	{"-print-ast",                 +[] { context->should_print_ast = true; }},
-	{"-print-uids",                +[] { context->print_uids = true; }},
-	{"-no-constant-name-inlining", +[] { context->constant_name_inlining = false; }},
-	{"-report-yields",             +[] { context->report_yields = true; }},
-	{"-log-time",                  +[] { context->enable_time_log = true; }},
-	{"-debug",                     +[] { context->is_debugging = true; }},
-	{"-print-wait-failures",       +[] { context->print_wait_failures = true; }},
-	{"-log-error-path",            +[] { context->enable_log_error_path = true; }},
-	{"-run",                       +[] { context->run_compiled_code = true; }},
-	{"-stats",                     +[] { context->print_stats = true; }},
-	{"-interactive",               +[] { context->run_interactive = true; }},
-	{"-auto-inline",               +[] { context->should_inline_unspecified_lambdas = true; }},
+	{"-threads",                   +[](u64 number){ context_base->requested_thread_count = (u32)number; }},
+	{"-nested-reports-verbosity",  +[](u64 number) { context_base->nested_reports_verbosity = number; }},
+	{"-print-tokens",              +[] { context_base->print_tokens = true; }},
+	{"-print-ast",                 +[] { context_base->should_print_ast = true; }},
+	{"-print-uids",                +[] { context_base->print_uids = true; }},
+	{"-no-constant-name-inlining", +[] { context_base->constant_name_inlining = false; }},
+	{"-report-yields",             +[] { context_base->report_yields = true; }},
+	{"-log-time",                  +[] { context_base->enable_time_log = true; }},
+	{"-debug",                     +[] { context_base->is_debugging = true; }},
+	{"-print-wait-failures",       +[] { context_base->print_wait_failures = true; }},
+	{"-log-error-path",            +[] { context_base->enable_log_error_path = true; }},
+	{"-run",                       +[] { context_base->run_compiled_code = true; }},
+	{"-stats",                     +[] { context_base->print_stats = true; }},
+	{"-interactive",               +[] { context_base->run_interactive = true; }},
+	{"-auto-inline",               +[] { context_base->should_inline_unspecified_lambdas = true; }},
 	{"-limit-time", +[] {
 		create_thread([] {
 			int seconds_limit = 10;
@@ -387,17 +389,17 @@ bool parse_arguments(Span<Span<utf8>> args) {
 		if (args[i][0] == '-') {
 			immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
 		} else {
-			if (context->input_source_path.count) {
+			if (context_base->input_source_path.count) {
 				with(ConsoleColor::red, println("No multiple input files allowed"));
 				return {};
 			} else {
-				context->input_source_path = normalize_path(make_absolute_path(args[i]));
+				context_base->input_source_path = normalize_path(make_absolute_path(args[i]));
 			}
 		}
 	next_arg:;
 	}
 
-	if (!context->input_source_path.count) {
+	if (!context_base->input_source_path.count) {
 		with(ConsoleColor::red, println("No input file was specified"));
 		return false;
 	} 
@@ -445,9 +447,9 @@ void init_builtin_types() {
 	d->name = u8"String"s;
 	d->type = s->type;
 
-	builtin_structs.String = s;
+	context->builtin_structs.String = s;
 
-	global_block.add(d);
+	context->global_block.add(d);
 }
 
 #if 0
@@ -530,13 +532,13 @@ s32 tl_main(Span<Span<utf8>> args) {
 	set_console_encoding(Encoding::utf8);
 
 	defer {
-		if (context->enable_time_log) {
-			for (auto time : context->timed_results) {
+		if (context_base->enable_time_log) {
+			for (auto time : context_base->timed_results) {
 				println("{} took {} ms", time.name, time.seconds * 1000);
 			}
 		}
 
-		if (context->print_stats) {
+		if (context_base->print_stats) {
 			println("Fiber allocations: {}", get_allocated_fiber_count());
 		}
 
@@ -559,12 +561,12 @@ s32 tl_main(Span<Span<utf8>> args) {
 	
 	timed_function();
 
-	context->compiler_path = args[0];
-	context->compiler_bin_directory = parse_path(context->compiler_path).directory;
-	context->compiler_root_directory = format(u8"{}\\..", context->compiler_bin_directory);
-	context->generated_source_directory = format(u8"{}\\generated", context->compiler_root_directory);
+	context_base->compiler_path = args[0];
+	context_base->compiler_bin_directory = parse_path(context_base->compiler_path).directory;
+	context_base->compiler_root_directory = format(u8"{}\\..", context_base->compiler_bin_directory);
+	context_base->generated_source_directory = format(u8"{}\\generated", context_base->compiler_root_directory);
 
-	for_each_file(context->generated_source_directory, {}, [&](String path) {
+	for_each_file(context_base->generated_source_directory, {}, [&](String path) {
 		return ForEach_erase;
 	});
 
@@ -576,10 +578,10 @@ s32 tl_main(Span<Span<utf8>> args) {
 	auto cpu_info = get_cpu_info();
 
 	u32 thread_count;
-	if (context->requested_thread_count == 0) {
+	if (context_base->requested_thread_count == 0) {
 		thread_count = cpu_info.logical_processor_count;
 	} else {
-		thread_count = min(context->requested_thread_count, cpu_info.logical_processor_count);
+		thread_count = min(context_base->requested_thread_count, cpu_info.logical_processor_count);
 	}
 
 	
@@ -587,8 +589,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 	thread_pool.init(thread_count - 1);
 	defer { thread_pool.deinit(); };
 
-	imports.use_unprotected().add_file({.path = context->input_source_path, .location = {}});
-	imports.use_unprotected().add_file({.path = normalize_path(make_absolute_path(format(u8"{}\\import\\base.sp", context->compiler_root_directory))), .location = {}});
+	imports.use_unprotected().add_file({.path = context_base->input_source_path, .location = {}});
+	imports.use_unprotected().add_file({.path = normalize_path(make_absolute_path(format(u8"{}\\import\\base.sp", context_base->compiler_root_directory))), .location = {}});
 
 	static bool failed = false;
 
@@ -613,8 +615,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 	}
 	
 	defer {
-		if (context->should_print_ast) {
-			print_ast(&global_block);
+		if (context_base->should_print_ast) {
+			print_ast(&context->global_block);
 		}
 	};
 
@@ -629,7 +631,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 		failed = false;
 
-		for (auto node : global_block.children) {
+		for (auto node : context->global_block.children) {
 			typecheck_entries.add({.node = node});
 		}
 

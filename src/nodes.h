@@ -280,7 +280,7 @@ DEFINE_EXPRESSION(Match) {
 
 	Expression *expression = 0;
 	GList<Case> cases;
-	Case *default_case = 0;
+	Expression *default_case = 0;
 };
 DEFINE_EXPRESSION(Unary) {
 	Expression *expression = 0;
