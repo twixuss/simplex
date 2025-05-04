@@ -33,7 +33,7 @@ struct Parser {
 	Lexer lexer;
 	Token token;
 	Token previous_token;
-	Block *current_block = get_global_block();
+	Block *current_block = get_global_block_unprotected();
 	While *current_loop = 0;
 	Expression *current_container = 0;
 	Reporter reporter;

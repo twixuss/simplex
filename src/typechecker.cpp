@@ -46,7 +46,7 @@ Typechecker *Typechecker::create(Node *node) {
 	}
 
 	typechecker->reporter.reports.clear();
-	typechecker->current_block = &context->global_block;
+	typechecker->current_block = &context->global_block.unprotected;
 	typechecker->initial_node = node;
 	typechecker->debug_stopped = true;
 	return typechecker;
@@ -477,13 +477,14 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 			bool success = parse_source(source, [&](Node *node) {
 				assert(!definition_node, "Only one node expected");
 				definition_node = node;
-				scoped(context->global_block_lock);
-				context->global_block.add(node);
+				locked_use_expr(global_block, context->global_block) {
+					global_block.add(node);
+				};
 			});
 
 			can_generate_vectorized_lambdas = false;
 			success &= with_unwind_strategy([&] {
-				scoped_replace(current_block, &context->global_block);
+				scoped_replace(current_block, &context->global_block.unprotected);
 				scoped_replace(current_container, 0);
 				scoped_replace(current_loop, 0);
 				return typecheck(&definition_node);
@@ -755,8 +756,8 @@ Expression *Typechecker::instantiate_lambda_template(Call *original_call, Lambda
 	instantiated_lambda_definition->initial_value = instantiated_lambda;
 	instantiated_lambda_definition->name = (String)to_string(name_builder);
 	instantiated_lambda_definition->type = &instantiated_lambda->head;
-	withs(context->global_block_lock) {
-		context->global_block.add(instantiated_lambda_definition);
+	locked_use_expr(global_block, context->global_block) {
+		global_block.add(instantiated_lambda_definition);
 	};
 
 	new_callable_name->name = instantiated_lambda_definition->name;
@@ -1142,7 +1143,7 @@ Definition *       Typechecker::typecheck_impl(Definition *definition, bool can_
 			}
 		}
 			
-		if (current_block == &context->global_block || definition->mutability == Mutability::constant) {
+		if (current_block == &context->global_block.unprotected || definition->mutability == Mutability::constant) {
 			auto constant_check = is_constant(definition->initial_value);
 			if (!constant_check) {
 				if (definition->mutability == Mutability::constant) {
@@ -1474,7 +1475,7 @@ Expression *       Typechecker::typecheck_impl(Name *name, bool can_substitute) 
 				name->possible_definitions.add(definition);
 
 
-				if (block == &context->global_block) {
+				if (block == &context->global_block.unprotected) {
 					for (auto &typecheck_entry : typecheck_entries) {
 						if (typecheck_entry.node == definition) {
 							entry->dependency = &typecheck_entry;
@@ -1974,12 +1975,13 @@ c
 								bool success = parse_source(source, [&](Node *node) {
 									assert(!definition_node, "Only one node expected");
 									definition_node = node;
-									scoped(context->global_block_lock);
-									context->global_block.add(node);
+									locked_use_expr(global_block, context->global_block) {
+										global_block.add(node);
+									};
 								});
 
 								success &= with_unwind_strategy([&] {
-									scoped_replace(current_block, &context->global_block);
+									scoped_replace(current_block, &context->global_block.unprotected);
 									scoped_replace(current_container, 0);
 									scoped_replace(current_loop, 0);
 									return typecheck(&definition_node);

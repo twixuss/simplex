@@ -181,7 +181,7 @@ bool is_expression(Node *node) {
 }
 
 std::tuple<Lambda *, Definition *> find_main_lambda() {
-	for (auto node : context->global_block.children) {
+	for (auto node : context->global_block.unprotected.children) {
 		if (auto definition = as<Definition>(node)) {
 			if (definition->name == u8"main"s) {
 				if (!definition->initial_value) {
@@ -252,10 +252,10 @@ fn main() {
 
 			builder.target_platform = &target_platform;
 
-			for (auto definition : context->global_block.definition_list) {
+			for (auto definition : context->global_block.unprotected.definition_list) {
 				builder.append_global_definition(definition);
 			}
-			visit(&context->global_block, Combine {
+			visit(&context->global_block.unprotected, Combine {
 				[&] (auto) {},
 				[&] (Lambda *lambda) {
 					if (lambda->body && !lambda->head.is_template) {
@@ -303,7 +303,7 @@ fn main() {
 				auto bytecode = generate_bytecode();
 				convert_bytecode(bytecode);
 			} else if (convert_ast) {
-				convert_ast(&context->global_block, lambda, definition);
+				convert_ast(&context->global_block.unprotected, lambda, definition);
 			} else {
 				immediate_reporter.error("Backend '{}' does not contain required function 'convert_bytecode' or 'convert_ast'.", target_string);
 			}
@@ -449,7 +449,7 @@ void init_builtin_types() {
 
 	context->builtin_structs.String = s;
 
-	context->global_block.add(d);
+	context->global_block.unprotected.add(d);
 }
 
 #if 0
@@ -589,8 +589,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 	thread_pool.init(thread_count - 1);
 	defer { thread_pool.deinit(); };
 
-	imports.use_unprotected().add_file({.path = context_base->input_source_path, .location = {}});
-	imports.use_unprotected().add_file({.path = normalize_path(make_absolute_path(format(u8"{}\\import\\base.sp", context_base->compiler_root_directory))), .location = {}});
+	imports.unprotected.add_file({.path = context_base->input_source_path, .location = {}});
+	imports.unprotected.add_file({.path = normalize_path(make_absolute_path(format(u8"{}\\import\\base.sp", context_base->compiler_root_directory))), .location = {}});
 
 	static bool failed = false;
 
@@ -609,14 +609,14 @@ s32 tl_main(Span<Span<utf8>> args) {
 	
 		thread_pool.wait_for_completion(WaitForCompletionOption::do_my_task);
 
-		if (imports.use_unprotected().files_to_import.count == 0) {
+		if (imports.unprotected.files_to_import.count == 0) {
 			break;
 		}
 	}
 	
 	defer {
 		if (context_base->should_print_ast) {
-			print_ast(&context->global_block);
+			print_ast(&context->global_block.unprotected);
 		}
 	};
 
@@ -631,7 +631,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 		failed = false;
 
-		for (auto node : context->global_block.children) {
+		for (auto node : context->global_block.unprotected.children) {
 			typecheck_entries.add({.node = node});
 		}
 
@@ -810,7 +810,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 			}
 		}
 
-		for (auto &report : deferred_reports.use_unprotected()) {
+		for (auto &report : deferred_reports.unprotected) {
 			report.print();
 		}
 

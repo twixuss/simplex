@@ -4,13 +4,11 @@
 #include "builtin_structs.h"
 
 struct CompilerContext : CompilerContextBase {
-	// TODO: make LockProtected
-	Block global_block;
-	SpinLock global_block_lock;
+	LockProtected<Block, SpinLock> global_block;
 
 	BuiltinStructs builtin_structs;
 	BuiltinTypeName builtin_types[(u32)BuiltinType::count];
 };
 
-inline Block *get_global_block() { return &context->global_block; }
-inline SpinLock *get_global_block_lock() { return &context->global_block_lock; }
+inline LockProtected<Block, SpinLock> *get_global_block() { return &context->global_block; }
+inline Block *get_global_block_unprotected() { return &context->global_block.unprotected; }

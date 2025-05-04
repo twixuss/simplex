@@ -216,5 +216,5 @@ extern CompilerContext *context;
 
 #define context_base ((CompilerContextBase *)context)
 
-struct Block *get_global_block();
-struct SpinLock *get_global_block_lock();
+LockProtected<struct Block, SpinLock> *get_global_block();
+struct Block *get_global_block_unprotected();

@@ -1262,7 +1262,7 @@ void Parser::link_constant_definition_to_initial_value(Definition *definition) {
 }
 
 void Parser::ensure_allowed_in_statement_context(Node *node) {
-	String is_global = current_block == &context->global_block ? u8"global "s : u8""s;
+	String is_global = current_block == get_global_block_unprotected() ? u8"global "s : u8""s;
 
 	switch (node->kind) {
 		#define x(name) case NodeKind::name:
@@ -1275,7 +1275,7 @@ void Parser::ensure_allowed_in_statement_context(Node *node) {
 		case NodeKind::Match:
 			return;
 		case NodeKind::Binary: {
-			if (current_block != &context->global_block) {
+			if (current_block != get_global_block_unprotected()) {
 				auto binary = (Binary *)node;
 				switch (binary->operation) {
 					case BinaryOperation::ass:
@@ -1378,14 +1378,14 @@ bool read_file_and_parse_into_global_block(String import_location, String path) 
 	// At the end to
 	auto source = (String)source_buffer.subspan(1, source_buffer.count - 2);
 	
-	auto &content_start_to_file_name = context_base->content_start_to_file_name;
-	locked_use(content_start_to_file_name) {
+	locked_use_expr(content_start_to_file_name, context_base->content_start_to_file_name) {
 		content_start_to_file_name.get_or_insert(source.data) = path;
 	};
 
 	bool success = parse_source(source, [&](Node *node) {
-		scoped(context->global_block_lock);
-		context->global_block.add(node);
+		locked_use_expr(global_block, context->global_block) {
+			global_block.add(node);
+		};
 	});
 	
 	if (!success) {
