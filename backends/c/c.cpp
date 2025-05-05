@@ -7,16 +7,20 @@
 #include "../../src/type.h"
 #include "../../src/compiler_context.h"
 
+#include <tl/process.h>
+#include <tl/linear_set.h>
+
 CompilerContext *context;
 
 Node *debug_current_node;
 
+template <class T>
 struct CName {
-	String string;
+	T value;
 };
 
-void append(StringBuilder &builder, CName name) {
-	for (auto c : name.string) {
+void append(StringBuilder &builder, CName<String> name) {
+	for (auto c : name.value) {
 		if (c == '_' ||
 			('0' <= c && c <= '9') ||
 			('a' <= c && c <= 'z') ||
@@ -29,21 +33,33 @@ void append(StringBuilder &builder, CName name) {
 	}
 }
 
-void append_name(StringBuilder &builder, Lambda *lambda) {
-	if (lambda->definition) {
-		append(builder, CName{lambda->definition->name});
-	} else {
-		append(builder, "__lambda_");
-		append(builder, lambda->uid);
+void append(StringBuilder &builder, CName<Lambda *> lambda) {
+	if (lambda.value->link_name.count) {
+		append(builder, lambda.value->link_name);
+		return;
+	}
+
+	if (lambda.value->definition) {
+		append(builder, CName{lambda.value->definition->name});
+	}
+	if (lambda.value->body) {
+		append(builder, '_');
+		append(builder, lambda.value->uid);
 	}
 }
-void append_name(StringBuilder &builder, Struct *t) {
-	if (t->definition) {
-		append(builder, CName{t->definition->name});
-	} else {
-		append(builder, "__struct_");
-		append(builder, t->uid);
+void append(StringBuilder &builder, CName<Struct *> t) {
+	if (t.value->definition) {
+		append(builder, CName{t.value->definition->name});
 	}
+	append(builder, '_');
+	append(builder, t.value->uid);
+}
+void append(StringBuilder &builder, CName<Name *> t) {
+	visit_one(direct(t.value), Combine{
+		[&](Lambda *node) { append(builder, CName{node}); },
+		[&](Struct *node) { append(builder, CName{node}); },
+		[&](auto *node) { append_format(builder, "{}_{}", CName{t.value->name}, node->uid); },
+	});
 }
 
 struct CType {
@@ -58,7 +74,7 @@ void append(StringBuilder &builder, CType type) {
 	auto t = (Expression *)type.type;
 	visit_one(t, Combine{
 		[&](auto *t) {
-			append(builder, "UnknownType");
+			append_format(builder, "UnknownType_{}", t->kind);
 		},
 		[&](BuiltinTypeName *t) {
 			switch (t->type_kind) {
@@ -72,7 +88,7 @@ void append(StringBuilder &builder, CType type) {
 				case BuiltinType::S32: append(builder, "int32_t"); break;
 				case BuiltinType::S64: append(builder, "int64_t"); break;
 				case BuiltinType::None: append(builder, "void"); break;
-				default: append(builder, "UnknownType");
+				default: append_format(builder, "UnknownBuiltinType_{}", t->type_kind); break;
 			}
 		},
 		[&](Unary *t) {
@@ -82,14 +98,17 @@ void append(StringBuilder &builder, CType type) {
 					append(builder, '*');
 					break;
 				}
-				default: append(builder, "UnknownType");
+				default: append_format(builder, "UnknownUnary_{}", t->operation); break;
 			}
 		},
 		[&](Name *t) {
 			append(builder, ctype(t->definition()->initial_value));
 		},
 		[&](Struct *t) {
-			append_name(builder, t);
+			append(builder, CName{t});
+		},
+		[&](LambdaHead *head) {
+			append_format(builder, "F_{}", head->uid);
 		},
 	});
 }
@@ -208,7 +227,7 @@ ValueId append_address(StringBuilder &code, Node *node) {
 		[&](Binary *binary) {
 			if (binary->operation == BinaryOperation::dot) {
 				auto left_id = append_address(code, binary->left);
-				append_line(code, "{} *_{} = &_{}.{};", ctype(binary->type), id, left_id, as<Name>(binary->right)->name);
+				append_line(code, "{} *_{} = &_{}->{};", ctype(binary->type), id, left_id, as<Name>(binary->right)->name);
 				return;
 			}
 			append_line(code, "_{} = &(unknown_binary {});", id, binary->operation);
@@ -238,20 +257,19 @@ ValueId append_node(StringBuilder &code, Node *node) {
 		[&](Expression *expression) {
 			append_line(code, "{} _{} = (unknown_expression {});", ctype(expression->type), id, expression->kind);
 		},
+		[&](Lambda *lambda) {
+			append_line(code, "{} _{} = {};", ctype(&lambda->head), id, CName{lambda});
+		},
 		[&](Block *block) {
 			ValueId last_id;
 			for (auto child : block->children) {
 				last_id = append_node(code, child);
 			}
 
-			if (block->children.count) {
-				if (auto expression = as<Expression>(block->children.back())) {
-					if (!types_match(block->type, BuiltinType::None)) {
-						// Could return last_id and save a copy.
-						append_line(code, "{} _{} = _{};", ctype(block->type), id, last_id);
-						return;
-					}
-				}
+			if (!types_match(block->type, BuiltinType::None)) {
+				// Could return last_id and save a copy.
+				append_line(code, "{} _{} = _{};", ctype(block->type), id, last_id);
+				return;
 			}
 
 			// no value
@@ -264,6 +282,7 @@ ValueId append_node(StringBuilder &code, Node *node) {
 				append_line(code, "{} _{} = _{};", ctype(definition->type), id, init_id);
 			} else {
 				append_line(code, "{} _{};", ctype(definition->type), id);
+				append_line(code, "memset(&_{}, 0, sizeof(_{}));", id, id);
 			}
 		},
 		[&](Name *name) {
@@ -271,7 +290,7 @@ ValueId append_node(StringBuilder &code, Node *node) {
 			if (found_def) {
 				append_line(code, "{} _{} = _{};", ctype(name->type), id, *found_def);
 			} else {
-				append_line(code, "{} _{} = {};", ctype(name->type), id, name->name);
+				append_line(code, "{} _{} = {};", ctype(name->type), id, CName{name});
 			}
 		},
 		[&](BuiltinTypeName *name) {
@@ -304,7 +323,10 @@ ValueId append_node(StringBuilder &code, Node *node) {
 		[&](Binary *binary) {
 			if (binary->operation == BinaryOperation::dot) {
 				auto left_id = append_node(code, binary->left);
-				append_line(code, "{} _{} = _{}.{};", ctype(binary->type), id, left_id, as<Name>(binary->right)->name);
+
+				auto dot_or_arrow = as_pointer(binary->left->type) ? u8"->"s : u8"."s;
+
+				append_line(code, "{} _{} = _{}{}{};", ctype(binary->type), id, left_id, dot_or_arrow, as<Name>(binary->right)->name);
 				return;
 			}
 
@@ -331,6 +353,8 @@ ValueId append_node(StringBuilder &code, Node *node) {
 			append_line(code, "return _{};", value_id);
 		},
 		[&](Call *call) {
+			auto callable_id = append_node(code, call->callable);
+			
 			static GList<ValueId> arg_ids;
 
 			arg_ids.clear();
@@ -340,7 +364,10 @@ ValueId append_node(StringBuilder &code, Node *node) {
 			}
 			
 			tabs(code);
-			append_format(code, "{} _{} = {}(", ctype(call->type), id, as<Name>(call->callable)->name);
+			if (!types_match(call->type, BuiltinType::None)) {
+				append_format(code, "{} _{} = ", ctype(call->type), id);
+			}
+			append_format(code, "_{}(", callable_id);
 			for (auto &arg_id : arg_ids) {
 				if (&arg_id != &arg_ids[0]) {
 					append(code, ", ");
@@ -350,7 +377,7 @@ ValueId append_node(StringBuilder &code, Node *node) {
 			append_format(code, ");\n");
 		},
 		[&](Match *match) {
-			if (types_match(match, BuiltinType::None)) {
+			if (types_match(match->type, BuiltinType::None)) {
 				// Statement match
 				auto expr_id = append_node(code, match->expression);
 				append_line(code, "{");
@@ -364,7 +391,9 @@ ValueId append_node(StringBuilder &code, Node *node) {
 						};
 						append_line(code, "}");
 					}
-					append_node(code, match->default_case);
+					if (match->default_case) {
+						append_node(code, match->default_case);
+					}
 					append_line(code, "endmatch{}:;", match->uid);
 				};
 				append_line(code, "}");
@@ -384,6 +413,12 @@ ValueId append_node(StringBuilder &code, Node *node) {
 						};
 						append_line(code, "}");
 					}
+					if (match->default_case) {
+						auto value_id = append_node(code, match->default_case);
+						append_line(code, "_{} = _{};", id, value_id);
+					} else {
+						append_line(code, "*(int *)0 = 0; // incomplete match");
+					}
 					append_line(code, "endmatch{}:;", match->uid);
 				};
 				append_line(code, "}");
@@ -397,6 +432,37 @@ ValueId append_node(StringBuilder &code, Node *node) {
 
 				append_node(code, While->body);
 			};
+			append_line(code, "}");
+		},
+		[&](IfStatement *If) {
+			auto cond_id = append_node(code, If->condition);
+			append_line(code, "if (_{}) {{", cond_id);
+			withs(tabs) {
+				append_node(code, If->true_branch);
+			};
+			if (If->false_branch) {
+				append_line(code, "} else {");
+				withs(tabs) {
+					append_node(code, If->false_branch);
+				};
+			}
+			append_line(code, "}");
+		},
+		[&](IfExpression *If) {
+			auto cond_id = append_node(code, If->condition);
+			append_line(code, "{} _{};", ctype(If->type), id);
+			append_line(code, "if (_{}) {{", cond_id);
+			withs(tabs) {
+				auto branch_id = append_node(code, If->true_branch);
+				append_line(code, "_{} = _{};", id, branch_id);
+			};
+			if (If->false_branch) {
+				append_line(code, "} else {");
+				withs(tabs) {
+					auto branch_id = append_node(code, If->false_branch);
+					append_line(code, "_{} = _{};", id, branch_id);
+				};
+			}
 			append_line(code, "}");
 		},
 	});
@@ -413,7 +479,7 @@ void init(CompilerContext *c) {
 }
 
 extern "C" __declspec(dllexport)
-void convert_ast(Block *global_block, Lambda *main_lambda, Definition *main_lambda_definition) {
+bool convert_ast(Block *global_block, Lambda *main_lambda, Definition *main_lambda_definition) {
 	StringBuilder builder;
 	StringBuilder code;
 	
@@ -433,6 +499,20 @@ typedef int64_t S64;
 
 )");
 	
+	LinearSet<String> extern_libraries;
+	visit(global_block, Combine {
+		[&] (auto) {},
+		[&] (Lambda *lambda) {
+			if (lambda->is_extern) {
+				extern_libraries.add(lambda->extern_library);
+			}
+		},
+	});
+	for (auto lib : extern_libraries) {
+		append_format(builder, "#pragma comment(lib, \"{}\")\n", lib);
+	}
+
+
 	append(builder, R"(
 //
 // Struct declarations
@@ -441,11 +521,7 @@ typedef int64_t S64;
 	visit(global_block, Combine {
 		[&] (auto) {},
 		[&] (Struct *s) {
-			append(builder, "typedef struct ");
-			append_name(builder, s);
-			append(builder, " ");
-			append_name(builder, s);
-			append(builder, ";\n");
+			append_format(builder, "typedef struct {} {};\n", CName{s}, CName{s});
 		},
 	});
 	
@@ -458,9 +534,7 @@ typedef int64_t S64;
 	visit(global_block, Combine {
 		[&] (auto) {},
 		[&] (Struct *s) {
-			append(builder, "struct ");
-			append_name(builder, s);
-			append(builder, " {\n");
+			append_format(builder, "struct {} {{\n", CName{s});
 			withs(tabs) {
 				for (auto member : s->members) {
 					append_line(builder, "{} {};", ctype(member->type), member->name);
@@ -470,11 +544,15 @@ typedef int64_t S64;
 		},
 	});
 	
-	append(builder, R"(
-String __make_string(char const *str) {
-	return (String){str, strlen(str)};
-}
-)");
+	append_format(builder, R"(
+{} __make_string(char const *str) {{
+	return ({}){{str, strlen(str)}};
+}}
+
+void print_S64(int64_t x) {{ printf("%d", x); }}
+void print_String({} x) {{ printf("%.*s", x.count, x.data); }}
+
+)", CName{context->builtin_structs.String}, CName{context->builtin_structs.String}, CName{context->builtin_structs.String});
 
 	append(builder, R"(
 //
@@ -488,10 +566,7 @@ String __make_string(char const *str) {
 				if (!lambda->body) {
 					append(builder, "extern ");
 				}
-				append(builder, ctype(lambda->head.return_type));
-				append(builder, ' ');
-				append_name(builder, lambda);
-				append(builder, '(');
+				append_format(builder, "{} {}(", ctype(lambda->head.return_type), CName{lambda});
 				for (umm i = 0; i < lambda->head.parameters_block.definition_list.count; ++i) {
 					auto param = lambda->head.parameters_block.definition_list[i];
 
@@ -508,6 +583,25 @@ String __make_string(char const *str) {
 		},
 	});
 	
+	visit(global_block, Combine {
+		[&] (auto) {},
+		[&] (Lambda *lambda) {
+			if (!lambda->head.is_template) {
+				append_format(builder, "typedef {} (*F_{})(", ctype(lambda->head.return_type), lambda->head.uid);
+				for (umm i = 0; i < lambda->head.parameters_block.definition_list.count; ++i) {
+					auto param = lambda->head.parameters_block.definition_list[i];
+
+					if (i) {
+						append(builder, ", ");
+					}
+
+					append(builder, ctype(param->type));
+				}
+				append(builder, ");\n");
+			}
+		},
+	});
+	
 	append(builder, R"(
 //
 // Function implementations/definitions
@@ -517,10 +611,7 @@ String __make_string(char const *str) {
 		[&] (auto) {},
 		[&] (Lambda *lambda) {
 			if (lambda->body && !lambda->head.is_template) {
-				append(builder, ctype(lambda->head.return_type));
-				append(builder, ' ');
-				append_name(builder, lambda);
-				append(builder, '(');
+				append_format(builder, "{} {}(", ctype(lambda->head.return_type), CName{lambda});
 				for (umm i = 0; i < lambda->head.parameters_block.definition_list.count; ++i) {
 					auto param = lambda->head.parameters_block.definition_list[i];
 
@@ -528,9 +619,7 @@ String __make_string(char const *str) {
 						append(builder, ", ");
 					}
 
-					append(builder, ctype(param->type));
-					append(builder, ' ');
-					append(builder, CName{param->name});
+					append_format(builder, "{} {}_{}", ctype(param->type), CName{param->name}, param->uid);
 				}
 				append(builder, ") {\n");
 
@@ -555,8 +644,34 @@ String __make_string(char const *str) {
 		},
 	});
 
+	append_format(builder, R"(
+int main() {{
+	return {}();
+}}
+)", CName{main_lambda});
+
 	println("Resulting C code:\n");
 	println(builder);
+
+	auto path_base = parse_path(context_base->input_source_path).path_without_extension();
+
+	write_entire_file(tformat(u8"{}.c", path_base), to_string(builder));
+
+	auto cmd = tformat(u8"cl {}.c /Zi /link /out:{}.exe", path_base, path_base);
+	println(cmd);
+
+	auto ret = start_process(cmd, [](auto x) {print(x); });
+	
+	if (!ret) {
+		println("Could not start `cl` process. Make sure it is in your PATH.");
+		return false;
+	}
+
+	if (ret.value()) {
+		return false;
+	}
+
+	return true;
 }
 
 // FIXME: Copied from main.cpp

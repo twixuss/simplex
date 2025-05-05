@@ -11,6 +11,9 @@
 LockProtected<Imports, SpinLock> imports;
 
 List<utf8> Parser::unescape_string_or_fail(String string) {
+	assert(string.count >= 2);
+	assert(string.front() == '"');
+	assert(string.back()  == '"');
 	if (auto result = ::unescape_string(string.skip(1).skip(-1))) {
 		return result.string;
 	} else {
@@ -201,6 +204,10 @@ Parser::ParsedLambda Parser::parse_lambda() {
 			} else if (token.string == u8"#extern"s) {
 				lambda->is_extern = true;
 				lambda->extern_library = extern_library;
+			} else if (token.string == u8"#linkname"s) {
+				next();
+				expect(Token_string);
+				lambda->link_name = unescape_string_or_fail(token.string);
 			} else {
 				reporter.error(token.string, "Unknown lambda directive '{}'.", token.string);
 				yield(YieldResult::fail);

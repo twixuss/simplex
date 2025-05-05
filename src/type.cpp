@@ -56,6 +56,10 @@ Expression *direct(Expression *node) {
 	}
 	return node;
 }
+Type direct(Type type) {
+	type.expression = direct(type.expression);
+	return type;
+}
 
 #define TYPES_MUST_MATCH(a, b)          \
 	if (auto _ = types_match(a, b); !_) \
@@ -139,7 +143,7 @@ CheckResult2 types_match(Type a, Type b) {
 	return {false, a, b};
 }
 
-CheckResult2 types_match(Expression *a, BuiltinType b) {
+CheckResult2 types_match(Type a, BuiltinType b) {
 	assert(a);
 	a = direct(a);
 	assert(a);
@@ -152,12 +156,15 @@ CheckResult2 types_match(Expression *a, BuiltinType b) {
 
 	return {false, a, get_builtin_type(b)};
 }
-CheckResult2 types_match(BuiltinType a, Expression *b) {
+CheckResult2 types_match(BuiltinType a, Type b) {
 	return types_match(b, a);
 }
 
 bool is_type(Expression *expression) {
-	return types_match(expression->type, BuiltinType::Type);
+	// Type constructor calls is_type. Bypass to avoid stack overflow.
+	Type type;
+	type.expression = expression->type;
+	return types_match(type, BuiltinType::Type);
 }
 
 bool is_concrete_integer(Type type) {

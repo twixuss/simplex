@@ -25,7 +25,7 @@ struct Type {
 	Expression *expression = 0;
 	Type() = default;
 	Type(Expression *expression) : expression(expression) {
-		if (expression) {
+		if (expression && context_base->check_that_types_are_types) {
 			assert(is_type(expression));
 		}
 	}
@@ -45,6 +45,7 @@ void append(StringBuilder &builder, Type type);
 BuiltinTypeName *get_builtin_type(BuiltinType kind);
 
 Expression *direct(Expression *node);
+Type direct(Type type);
 
 template <class T>
 T *direct_as(Expression *node) {
@@ -68,8 +69,8 @@ struct CheckResult2 {
 };
 
 CheckResult2 types_match(Type a, Type b);
-CheckResult2 types_match(Expression *a, BuiltinType b);
-CheckResult2 types_match(BuiltinType a, Expression *b);
+CheckResult2 types_match(Type a, BuiltinType b);
+CheckResult2 types_match(BuiltinType a, Type b);
 
 bool is_concrete_integer(Type type);
 bool is_signed_integer(Type type);

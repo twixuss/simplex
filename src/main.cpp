@@ -301,9 +301,13 @@ fn main() {
 
 			if (convert_bytecode) {
 				auto bytecode = generate_bytecode();
-				convert_bytecode(bytecode);
+				if (!convert_bytecode(bytecode)) {
+					return false;
+				}
 			} else if (convert_ast) {
-				convert_ast(&context->global_block.unprotected, lambda, definition);
+				if (!convert_ast(&context->global_block.unprotected, lambda, definition)) {
+					return false;
+				}
 			} else {
 				immediate_reporter.error("Backend '{}' does not contain required function 'convert_bytecode' or 'convert_ast'.", target_string);
 			}
@@ -408,6 +412,9 @@ bool parse_arguments(Span<Span<utf8>> args) {
 }
 
 void init_builtin_types() {
+	// Disable checks, as the types are not ready yet.
+	scoped_replace(context_base->check_that_types_are_types, false);
+
 	#define x(name) \
 		{ \
 			auto type = get_builtin_type(BuiltinType::name); \
@@ -819,10 +826,12 @@ s32 tl_main(Span<Span<utf8>> args) {
 		}
 	}
 
-	if (failed)
+	if (failed) {
 		return 1;
+	}
 
 	if (!find_main_and_run()) {
+		with(ConsoleColor::red, println("Build failed"));
 		return 1;
 	}
 

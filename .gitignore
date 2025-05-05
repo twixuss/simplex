@@ -12,4 +12,8 @@ TODO.md
 generated/
 fuzzer/*.log
 fuzzer/fuzz*.sp
-
+*.exe
+*.ilk
+*.pdb
+*.obj
+a.c

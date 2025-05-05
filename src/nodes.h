@@ -236,6 +236,7 @@ DEFINE_EXPRESSION(Lambda) {
 	InlineStatus inline_status = {};
 
 	String extern_library = {};
+	String link_name = {};
 
 	GList<Definition *> locals = {};
 	u64 space_for_call_arguments = 0;

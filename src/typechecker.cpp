@@ -1709,6 +1709,7 @@ typecheck_dot_succeeded:
 		if (matching_overloads.count == 1) {
 			auto matching_overload = matching_overloads[0];
 			name->possible_definitions.set(matching_overload->definition);
+			name->type = name->definition()->type;
 			return typecheck_lambda_call(call, matching_overload->lambda, matching_overload->lambda_head);
 		}
 		if (matching_overloads.count == 0) {
