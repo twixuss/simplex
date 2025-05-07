@@ -17,3 +17,7 @@ fuzzer/fuzz*.sp
 *.pdb
 *.obj
 a.c
+tests/*
+!tests/*.sp
+examples/*
+!examples/*.sp

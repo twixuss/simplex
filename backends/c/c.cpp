@@ -175,7 +175,7 @@ struct Tabs {
 		append(builder, Repeat{"    ", value});
 	}
 	void operator()() {
-		print(Repeat{"    ", value});
+		standard_error_printer.write(Repeat{"    ", value});
 	}
 } tabs;
 
@@ -239,7 +239,13 @@ ValueId append_address(StringBuilder &code, Node *node) {
 				return;
 			}
 			append_line(code, "{} *_{} = &(unknown_unary {});", ctype(unary->type), id, unary->operation);
-		}
+		},
+		[&](Block *block) {
+			for (auto child : block->children.skip(-1)) {
+				append_node(code, child);
+			}
+			id = append_address(code, block->children.back());
+		},
 	});
 
 	return id;
@@ -650,28 +656,37 @@ int main() {{
 }}
 )", CName{main_lambda});
 
-	println("Resulting C code:\n");
-	println(builder);
-
 	auto path_base = parse_path(context_base->input_source_path).path_without_extension();
 
 	write_entire_file(tformat(u8"{}.c", path_base), to_string(builder));
 
-	auto cmd = tformat(u8"cl {}.c /Zi /link /out:{}.exe", path_base, path_base);
-	println(cmd);
+	auto cmd = tformat(u8"cl {}.c /Zi /FS /link /out:{}.exe", path_base, path_base);
+	standard_error_printer.writeln(cmd);
 
-	auto ret = start_process(cmd, [](auto x) {print(x); });
+	auto ret = start_process(cmd, [](auto x) {standard_error_printer.write(x); });
 	
 	if (!ret) {
-		println("Could not start `cl` process. Make sure it is in your PATH.");
+		standard_error_printer.writeln(u8"Could not start `cl` process. Make sure it is in your PATH."s);
 		return false;
 	}
 
 	if (ret.value()) {
+		standard_error_printer.writeln(u8"C compiler failed. Resulting C code:"s);
+		standard_error_printer.write(builder);
 		return false;
 	}
 
+	if (!context_base->keep_build_artifacts) {
+		delete_file(tformat(u8"{}.c", path_base));
+	}
+
 	return true;
+}
+
+extern "C" __declspec(dllexport)
+u32 run() {
+	auto code = start_process(tformat(u8"{}.exe", parse_path(context->input_source_path).path_without_extension()), [](auto s){standard_error_printer.write(s);});
+	return code.value_or(0);
 }
 
 // FIXME: Copied from main.cpp

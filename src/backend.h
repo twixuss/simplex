@@ -17,3 +17,6 @@ ENUMERATE_BACKEND_API(x)
 	x(bool, convert_bytecode, (Bytecode::Bytecode bytecode), \
 	                          (Bytecode::Bytecode bytecode), \
 	                          (bytecode)) \
+	x(u32, run, (), \
+	            (), \
+	            ()) \

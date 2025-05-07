@@ -3,5 +3,5 @@
 const main = fn () => {
     var a = 32
     var b = &{println(64); a}
-    return *b
+    println(*b)
 }

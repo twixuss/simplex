@@ -201,6 +201,7 @@ struct CompilerContextBase {
 	bool run_interactive                   : 1 = false;
 	bool should_inline_unspecified_lambdas : 1 = false;
 	bool check_that_types_are_types        : 1 = true;
+	bool keep_build_artifacts              : 1 = true;
 	
 	u32 requested_thread_count = 0;
 	u32 nested_reports_verbosity = 1;

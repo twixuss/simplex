@@ -313,7 +313,8 @@ fn main() {
 			}
 
 			if (context_base->run_compiled_code) {
-				immediate_reporter.error("TODO: implement running compiled result.");
+				ENSURE(run);
+				run();
 			}
 
 			#undef ENSURE
