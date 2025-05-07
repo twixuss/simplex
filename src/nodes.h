@@ -1,3 +1,11 @@
+// NOTES:
+// 
+// Nodes that represent a type should be `Type`, not `Expression *`.
+// 
+// If you have a type that is parsed from source, there should be two pointers:
+//     1) `Expression *parsed_type` - Parser modifies this. May be null if syntax allows omitting.
+//     2) `Type *type` - Actual type that is computed from `parsed_type` or something else. Should be null if typechecking failed.
+
 #pragma once
 #include "common.h"
 #include "nodes_fwd.h"
@@ -6,6 +14,7 @@
 #include "x.h"
 #include "binary_operation.h"
 #include "unary_operation.h"
+#include "type.h"
 
 enum class CallKind {
 	unknown,
@@ -30,7 +39,7 @@ inline void append(StringBuilder &builder, InlineStatus status) {
 
 
 struct Expression : Node {
-	Expression *type = 0;
+	Type type = {};
 };
 
 struct Statement : Node {
@@ -182,6 +191,22 @@ DEFINE_EXPRESSION(Call) {
 	InlineStatus inline_status = {};
 	CallKind call_kind = {};
 };
+//DEFINE_EXPRESSION(FunctionCall) {
+//	using Argument = CallArgument;
+//
+//	Expression *callable = 0;
+//	GList<Argument> arguments;
+//
+//	InlineStatus inline_status = {};
+//};
+//DEFINE_EXPRESSION(Constructor) {
+//	using Argument = CallArgument;
+//
+//	Expression *callable = 0;
+//	GList<Argument> arguments;
+//
+//	InlineStatus inline_status = {};
+//};
 DEFINE_EXPRESSION(Definition) {
 	inline static constexpr u64 invalid_offset = 1ull << 63;
 
@@ -217,7 +242,7 @@ DEFINE_EXPRESSION(LambdaHead) {
 	Block template_parameters_block;
 	Block parameters_block;
 	Expression *parsed_return_type = 0;
-	Expression *return_type = 0;
+	Type return_type = 0;
 	u64 total_parameters_size = 0;
 
 	// When true, template parameters are unresolved
@@ -301,7 +326,8 @@ DEFINE_EXPRESSION(Struct) {
 	bool is_template : 1 = false;
 };
 DEFINE_EXPRESSION(ArrayType) {
-	Expression *element_type = 0;
+	Expression *parsed_element_type = 0;
+	Type element_type = 0;
 	Expression *count_expression = 0;
 	Optional<u64> count;
 };
@@ -340,13 +366,5 @@ DEFINE_STATEMENT(Import) {
 DEFINE_STATEMENT(Defer) {
 	Node *body = 0;
 };
-
-#if CHECK_THAT_TYPES_ARE_TYPES
-template <class Expr>
-Type::operator Expr*() {
-	static_assert(std::is_same_v<Expr, Node> || CExpression<Expr>);
-	return (Expr *)expression;
-}
-#endif
 
 bool is_substitutable(Block *block);

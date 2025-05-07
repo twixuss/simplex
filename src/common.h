@@ -172,6 +172,7 @@ struct TimedResult {
 
 #define locked_use_it(protected, expr) protected.use([&](auto &it) { return expr; })
 
+#define CHECK_THAT_TYPES_ARE_TYPES 1//BUILD_DEBUG
 
 // Basic stuff that has simple type dependencies.
 // Nodes, types and other stuff is defined in CompilerContext.

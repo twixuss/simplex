@@ -2,6 +2,7 @@
 #include "common.h"
 #include "nodes_fwd.h"
 #include "x.h"
+#include "type.h"
 
 template <class T>
 struct Nameable {
@@ -20,4 +21,7 @@ inline void append(StringBuilder &builder, Nameable<Expression *> node) {
 }
 inline void append(StringBuilder &builder, Nameable<Statement *> node) {
 	append(builder, Nameable((Node *)node.value));
+}
+inline void append(StringBuilder &builder, Nameable<Type> node) {
+	append(builder, Nameable(node.value.expression));
 }

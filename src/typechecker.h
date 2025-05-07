@@ -204,9 +204,8 @@ private:
 		return yield_while({}, predicate);
 	}
 
-	template <class T>
 	[[nodiscard]] 
-	bool yield_while_null(String location, T **pointer) {
+	bool yield_while_null(String location, auto *pointer) {
 		return yield_while(location, [&] {
 			return !*pointer;
 		});

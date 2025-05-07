@@ -968,7 +968,7 @@ bool Typechecker::ensure_not_overloaded(Expression *expression) {
 	return true;
 }
 
-Node *             Typechecker::typecheck(Node *node, bool can_substitute) {
+Node             *Typechecker::typecheck(Node *node, bool can_substitute) {
 	++progress;
 	defer { ++progress; };
 
@@ -1017,7 +1017,7 @@ Node *             Typechecker::typecheck(Node *node, bool can_substitute) {
 
 	return new_node;
 }
-Expression *       Typechecker::typecheck_impl(Block *block, bool can_substitute) {
+Expression       *Typechecker::typecheck_impl(Block *block, bool can_substitute) {
 	scoped_replace(current_block, block);
 	for (auto &old_child : block->children) {
 		auto new_child = typecheck(old_child, true);
@@ -1206,23 +1206,23 @@ Definition *       Typechecker::typecheck_impl(Definition *definition, bool can_
 
 	return definition;
 }
-IntegerLiteral *   Typechecker::typecheck_impl(IntegerLiteral *literal, bool can_substitute) {
+IntegerLiteral   *Typechecker::typecheck_impl(IntegerLiteral *literal, bool can_substitute) {
 	literal->type = get_builtin_type(BuiltinType::UnsizedInteger);
 	return literal;
 }
-BooleanLiteral *   Typechecker::typecheck_impl(BooleanLiteral *literal, bool can_substitute) {
+BooleanLiteral   *Typechecker::typecheck_impl(BooleanLiteral *literal, bool can_substitute) {
 	literal->type = get_builtin_type(BuiltinType::Bool);
 	return literal;
 }
-NoneLiteral *      Typechecker::typecheck_impl(NoneLiteral *literal, bool can_substitute) {
+NoneLiteral      *Typechecker::typecheck_impl(NoneLiteral *literal, bool can_substitute) {
 	literal->type = get_builtin_type(BuiltinType::None);
 	return literal;
 }
-StringLiteral *    Typechecker::typecheck_impl(StringLiteral *literal, bool can_substitute) {
+StringLiteral    *Typechecker::typecheck_impl(StringLiteral *literal, bool can_substitute) {
 	literal->type = make_name(context->builtin_structs.String->definition);
 	return literal;
 }
-LambdaHead *       Typechecker::typecheck_impl(LambdaHead *head, bool can_substitute) {
+LambdaHead       *Typechecker::typecheck_impl(LambdaHead *head, bool can_substitute) {
 	if (head->is_template) {
 		typecheck(head->template_parameters_block);
 	} else {
@@ -1443,7 +1443,7 @@ Lambda *           Typechecker::typecheck_impl(Lambda *lambda, bool can_substitu
 	}
 	return lambda;
 }
-Expression *       Typechecker::typecheck_impl(Name *name, bool can_substitute) {
+Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 	name->possible_definitions.clear();
 
 	for (auto block = current_block; block; block = block->parent) {
@@ -1539,7 +1539,7 @@ Expression *       Typechecker::typecheck_impl(Name *name, bool can_substitute) 
 	fail();
 	return 0;
 }
-Expression *       Typechecker::typecheck_impl(Call *call, bool can_substitute) {
+Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 	defer { assert(call->callable->type != 0); };
 	if (auto binary = as<Binary>(call->callable)) {
 		if (binary->operation == BinaryOperation::dot) {
@@ -1740,7 +1740,7 @@ typecheck_dot_succeeded:
 	fail();
 	return 0;
 }
-Node *             Typechecker::typecheck_impl(IfStatement *If, bool can_substitute) {
+Node             *Typechecker::typecheck_impl(IfStatement *If, bool can_substitute) {
 	typecheck(&If->condition);
 
 	typecheck(&If->true_branch);
@@ -1773,7 +1773,7 @@ Node *             Typechecker::typecheck_impl(IfStatement *If, bool can_substit
 
 	return If;
 }
-Expression *       Typechecker::typecheck_impl(IfExpression *If, bool can_substitute) {
+Expression       *Typechecker::typecheck_impl(IfExpression *If, bool can_substitute) {
 	typecheck(&If->condition);
 
 	typecheck(&If->true_branch);
@@ -1825,11 +1825,11 @@ Expression *       Typechecker::typecheck_impl(IfExpression *If, bool can_substi
 
 	return If;
 }
-BuiltinTypeName *  Typechecker::typecheck_impl(BuiltinTypeName *type, bool can_substitute) { 
+BuiltinTypeName  *Typechecker::typecheck_impl(BuiltinTypeName *type, bool can_substitute) { 
 	type->type = get_builtin_type(BuiltinType::Type);
 	return type;
 }
-Expression *       Typechecker::typecheck_impl(Binary *binary, bool can_substitute) {
+Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitute) {
 	if (binary->operation == BinaryOperation::dot) {
 		Expression *result = binary;
 		if (!with_unwind_strategy([&] {
@@ -2048,7 +2048,7 @@ c
 		return 0;
 	}
 }
-Match *            Typechecker::typecheck_impl(Match *match, bool can_substitute) {
+Match            *Typechecker::typecheck_impl(Match *match, bool can_substitute) {
 	typecheck(&match->expression);
 
 	make_concrete(match->expression);
@@ -2098,7 +2098,7 @@ Match *            Typechecker::typecheck_impl(Match *match, bool can_substitute
 
 	return match;
 }
-Expression *       Typechecker::typecheck_impl(Unary *unary, bool can_substitute) {
+Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute) {
 	typecheck(&unary->expression);
 	auto constant = get_constant_value(unary->expression);
 	switch (unary->operation) {
@@ -2200,13 +2200,13 @@ Expression *       Typechecker::typecheck_impl(Unary *unary, bool can_substitute
 
 	return unary;
 }
-Return *           Typechecker::typecheck_impl(Return *return_, bool can_substitute) {
+Return           *Typechecker::typecheck_impl(Return *return_, bool can_substitute) {
 	if (return_->value)
 		typecheck(&return_->value);
 
 	return return_;
 }
-While *            Typechecker::typecheck_impl(While *While, bool can_substitute) {
+While            *Typechecker::typecheck_impl(While *While, bool can_substitute) {
 	typecheck(&While->condition);
 
 	scoped_replace(current_loop, While);
@@ -2220,12 +2220,12 @@ While *            Typechecker::typecheck_impl(While *While, bool can_substitute
 
 	return While;
 }
-Continue *         Typechecker::typecheck_impl(Continue *Continue, bool can_substitute) {
+Continue         *Typechecker::typecheck_impl(Continue *Continue, bool can_substitute) {
 	assert(current_loop);
 	Continue->loop = current_loop;
 	return Continue;
 }
-Break *            Typechecker::typecheck_impl(Break *Break, bool can_substitute) {
+Break            *Typechecker::typecheck_impl(Break *Break, bool can_substitute) {
 	if (Break->value) {
 		typecheck(&Break->value);
 	} else {
@@ -2234,7 +2234,7 @@ Break *            Typechecker::typecheck_impl(Break *Break, bool can_substitute
 	}
 	return Break;
 }
-Struct *           Typechecker::typecheck_impl(Struct *Struct, bool can_substitute) {
+Struct           *Typechecker::typecheck_impl(Struct *Struct, bool can_substitute) {
 	if (Struct->is_template) {
 		Struct->type = get_builtin_type(BuiltinType::Template);
 		return Struct;
@@ -2260,7 +2260,7 @@ Struct *           Typechecker::typecheck_impl(Struct *Struct, bool can_substitu
 		return Struct;
 	}
 }
-ArrayType *        Typechecker::typecheck_impl(ArrayType *arr, bool can_substitute) {
+ArrayType        *Typechecker::typecheck_impl(ArrayType *arr, bool can_substitute) {
 	typecheck(&arr->count_expression);
 	if (auto maybe_count = get_constant_value(arr->count_expression)) {
 		auto count_value = maybe_count.value();
@@ -2292,17 +2292,18 @@ ArrayType *        Typechecker::typecheck_impl(ArrayType *arr, bool can_substitu
 		fail();
 	}
 		
-	typecheck(&arr->element_type);
-	if (!is_type(arr->element_type)) {
-		reporter.error(arr->element_type->location, "This must be a type.");
+	typecheck(&arr->parsed_element_type);
+	if (!is_type(arr->parsed_element_type)) {
+		reporter.error(arr->parsed_element_type->location, "This must be a type.");
 		reporter.info(arr->location, "Because this is an array.");
 		fail();
 	}
 
+	arr->element_type = arr->parsed_element_type;
 	arr->type = get_builtin_type(BuiltinType::Type);
 	return arr;
 }
-Expression *       Typechecker::typecheck_impl(Subscript *Subscript, bool can_substitute) {
+Expression       *Typechecker::typecheck_impl(Subscript *Subscript, bool can_substitute) {
 	typecheck(&Subscript->subscriptable);
 
 	if (auto array_type = direct_as<ArrayType>(Subscript->subscriptable->type)) {
@@ -2344,7 +2345,7 @@ Expression *       Typechecker::typecheck_impl(Subscript *Subscript, bool can_su
 		fail();
 	}
 }
-ArrayConstructor * Typechecker::typecheck_impl(ArrayConstructor *arr, bool can_substitute) {
+ArrayConstructor *Typechecker::typecheck_impl(ArrayConstructor *arr, bool can_substitute) {
 	for (auto &element : arr->elements) {
 		typecheck(&element);
 	}
@@ -2360,15 +2361,15 @@ ArrayConstructor * Typechecker::typecheck_impl(ArrayConstructor *arr, bool can_s
 
 	return arr;
 }
-Import *           Typechecker::typecheck_impl(Import *import, bool can_substitute) {
+Import           *Typechecker::typecheck_impl(Import *import, bool can_substitute) {
 	return import;
 }
-Defer *            Typechecker::typecheck_impl(Defer *defer_, bool can_substitute) {
+Defer            *Typechecker::typecheck_impl(Defer *defer_, bool can_substitute) {
 	typecheck(&defer_->body);
 	current_block->defers.add(defer_);
 	return defer_;
 }
-ZeroInitialized *  Typechecker::typecheck_impl(ZeroInitialized *zi, bool can_substitute) {
+ZeroInitialized  *Typechecker::typecheck_impl(ZeroInitialized *zi, bool can_substitute) {
 	invalid_code_path("ZeroInitialized cannot be typechecked.");
 }
 

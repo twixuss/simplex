@@ -619,8 +619,8 @@ Expression *Parser::parse_expression_0() {
 			Array->count_expression = parse_expression();
 			expect(']');
 			next();
-			Array->element_type = parse_expression_0();
-			Array->location = {Array->location.begin(), Array->element_type->location.end()};
+			Array->parsed_element_type = parse_expression_0();
+			Array->location = {Array->location.begin(), Array->parsed_element_type->location.end()};
 			return finish_node(Array);
 		}
 		case '.': {

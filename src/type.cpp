@@ -25,6 +25,21 @@ BuiltinType to_builtin_type_kind(TokenKind kind) {
 	return {};
 }
 
+Type::Type(Expression *expression) : expression(expression) {
+	if (expression && context_base->check_that_types_are_types) {
+		assert(is_type(expression));
+	}
+}
+Type::Type(Node *node) {
+	if (node) {
+		expression = as<Expression>(node);
+		assert(expression);
+		if (context_base->check_that_types_are_types) {
+			assert(is_type(expression));
+		}
+	}
+}
+
 void append(StringBuilder &builder, Type type) {
 	return append(builder, (Node *)type);
 }

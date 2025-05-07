@@ -4,7 +4,7 @@
 
 #define VISIT(node)                                      \
 	do {                                                 \
-		auto **x = node;                                 \
+		auto *x = node;                                  \
 		if (visit((Node **)x, visitor) == ForEach_break) \
 			return ForEach_break;                        \
 	} while (0)

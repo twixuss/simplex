@@ -6,8 +6,6 @@
 #include "mutability.h"
 #include "unsized_integer.h"
 
-#define CHECK_THAT_TYPES_ARE_TYPES 1//BUILD_DEBUG
-
 enum class BuiltinType : u8 {
 	#define x(name) name,
 	ENUMERATE_BUILTIN_TYPES(x)
@@ -24,16 +22,27 @@ bool is_type(Expression *expression);
 struct Type {
 	Expression *expression = 0;
 	Type() = default;
-	Type(Expression *expression) : expression(expression) {
-		if (expression && context_base->check_that_types_are_types) {
-			assert(is_type(expression));
-		}
-	}
+	Type(Expression *expression);
+	explicit Type(Node *node);
 	operator Expression *() { return expression; }
 	Expression *operator->() { return expression; }
 	Expression &operator*() { return *expression; }
 	template <class Expr>
-	operator Expr*();
+	operator Expr*() {
+		static_assert(std::is_same_v<Expr, Node> || CExpression<Expr>);
+		return (Expr *)expression;
+	}
+
+	// auto operator&() {
+	// 	struct Castable {
+	// 		Type *type;
+	// 		operator Type *() { return type; }
+	// 		operator Node **() { return (Node **)&type->expression; }
+	// 		operator Expression **() { return &type->expression; }
+	// 	};
+	// 
+	// 	return Castable{this};
+	// }
 };
 #else
 using Type = Expression *;
