@@ -275,6 +275,9 @@ reloop:
 				auto actual_compiler = run_process(compile_command, working_dir);
 				defer { free(actual_compiler); };
 
+				delete_file(tformat(u8"{}.exe", parse_path(test.path).path_without_extension()));
+				delete_file(tformat(u8"{}.pdb", parse_path(test.path).path_without_extension()));
+
 				if (actual_compiler.timed_out) {
 					do_fail([&] {
 						with(ConsoleColor::red, print("Compiler timed out\n"));
