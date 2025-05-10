@@ -259,7 +259,8 @@ reloop:
 				with(stdout_lock, println(test.path));
 				//with(stdout_lock, println(compile_command));
 
-				auto working_dir = tformat(u8"{}\\tmp\\{}", root_directory, test_index);
+				auto working_dir = tformat(u8"{}\\tmp\\tests\\{}", root_directory, test_index);
+				create_directories(working_dir);
 
 				if (do_coverage) {
 					auto coverage_command = format(u8"opencppcoverage --sources {}\\src\\ --export_type=binary:codecov\\{}.cov -- {}"s, root_directory, test_index, compile_command);

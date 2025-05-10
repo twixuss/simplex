@@ -595,11 +595,18 @@ Value NodeInterpreter::execute_impl(Match *match) {
 	assert(value.kind == ValueKind::S64, "Only this is implemented");
 
 	for (auto Case : match->cases) {
+		if (!Case.from)
+			continue;
+
 		EXECUTE_DEFN(from, Case.from);
 		assert(from.kind == ValueKind::S64, "Only this is implemented");
 		if (value.S64 == from.S64) {
 			return execute(Case.to);
 		}
+	}
+
+	if (match->default_case) {
+		return execute(match->default_case);
 	}
 
 	invalid_code_path(match->location, "match did not match value {}", value);

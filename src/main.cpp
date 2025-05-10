@@ -416,6 +416,8 @@ void init_builtin_types() {
 	// Disable checks, as the types are not ready yet.
 	scoped_replace(context_base->check_that_types_are_types, false);
 
+	context->global_block.unprotected.type = get_builtin_type(BuiltinType::None);
+
 	#define x(name) \
 		{ \
 			auto type = get_builtin_type(BuiltinType::name); \

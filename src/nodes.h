@@ -21,18 +21,26 @@ enum class CallKind {
 	lambda,
 	constructor,
 };
+inline void append(StringBuilder &builder, CallKind kind) {
+	switch (kind) {
+		#define x(name) case CallKind::name: return append(builder, #name ## s);
+		ENUMERATE_CALL_KIND
+		#undef x
+	}
+	append_format(builder, "((CallKind){})", (u64)kind);
+}
 
 enum class InlineStatus : u8 {
-#define x(name) name,
+	#define x(name) name,
 	ENUMERATE_INLINE_STATUS
-#undef x
+	#undef x
 };
 
 inline void append(StringBuilder &builder, InlineStatus status) {
 	switch (status) {
-#define x(name) case InlineStatus::name: return append(builder, #name ## s);
+		#define x(name) case InlineStatus::name: return append(builder, #name ## s);
 		ENUMERATE_INLINE_STATUS
-#undef x
+		#undef x
 	}
 	append_format(builder, "((InlineStatus){})", (u64)status);
 }
@@ -166,6 +174,7 @@ DEFINE_EXPRESSION(Block) {
 	String tag;
 	GList<Break *> breaks;
 
+	// TODO: order by execution
 	GList<Defer *> defers;
 
 	void add(Node *child);
@@ -191,22 +200,6 @@ DEFINE_EXPRESSION(Call) {
 	InlineStatus inline_status = {};
 	CallKind call_kind = {};
 };
-//DEFINE_EXPRESSION(FunctionCall) {
-//	using Argument = CallArgument;
-//
-//	Expression *callable = 0;
-//	GList<Argument> arguments;
-//
-//	InlineStatus inline_status = {};
-//};
-//DEFINE_EXPRESSION(Constructor) {
-//	using Argument = CallArgument;
-//
-//	Expression *callable = 0;
-//	GList<Argument> arguments;
-//
-//	InlineStatus inline_status = {};
-//};
 DEFINE_EXPRESSION(Definition) {
 	inline static constexpr u64 invalid_offset = 1ull << 63;
 
@@ -342,6 +335,8 @@ DEFINE_EXPRESSION(ZeroInitialized) {}; // Might get rid of this if `none as type
 DEFINE_STATEMENT(Return) {
 	Expression *value = 0;
 	Lambda *lambda = 0;
+	// Populated after typechecking. In execution order.
+	GList<Defer *> defers;
 };
 DEFINE_STATEMENT(While) {
 	Expression *condition = 0;
@@ -349,11 +344,15 @@ DEFINE_STATEMENT(While) {
 };
 DEFINE_STATEMENT(Continue) {
 	While *loop = 0;
+	// Populated after typechecking. In execution order.
+	GList<Defer *> defers;
 };
 DEFINE_STATEMENT(Break) {
 	While *loop = 0;
 	Block *tag_block = 0;
 	Expression *value = 0;
+	// Populated after typechecking. In execution order.
+	GList<Defer *> defers;
 };
 DEFINE_STATEMENT(IfStatement) {
 	Expression *condition = 0;

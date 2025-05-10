@@ -65,11 +65,11 @@ bool do_all_paths_return_impl(Match *match) {
 		return true;
 	}
 	for (auto Case : match->cases) {
-		if (do_all_paths_return(Case.to)) {
-			return true;
+		if ((!Case.from || !do_all_paths_return(Case.from)) && !do_all_paths_return(Case.to)) {
+			return false;
 		}
 	}
-	return false;
+	return true;
 }
 bool do_all_paths_return_impl(Unary *un) {
 	if (do_all_paths_return(un->expression)) {

@@ -254,6 +254,8 @@ private:
 
 	bool ensure_not_overloaded(Name *name);
 	bool ensure_not_overloaded(Expression *expression);
+	
+	void add_defers(GList<Defer *> &defers);
 
 	//
 	// These `typecheck` overloads automatically substitute old node with new one.

@@ -1,9 +1,9 @@
-// COMPILER OUTPUT 42
-// NO COMPILER OUTPUT 69
+// COMPILER OUTPUT 69\n42
 
 var bar = 69
 
 const main = fn () => {
+    println(bar)
     bar = 42
-    bar
+    println(bar)
 }

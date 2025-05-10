@@ -6,5 +6,5 @@ const Vec2 = struct {
 
 const main = fn () => {
     var v = Vec2(111, 222)
-    return v.x + v.y
+    println(v.x + v.y)
 }

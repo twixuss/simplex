@@ -215,7 +215,7 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 							if (src_sign == dst_sign) {
 								if (src_size <= dst_size) {
 									if (apply)
-										expression->type = target_type;
+										expression = make_cast(expression, target_type);
 									return true;
 								} else {
 									if (reporter)
@@ -359,6 +359,8 @@ Expression *Typechecker::inline_body(Call *call, Lambda *lambda) {
 					auto Break = Break::create();
 					Break->value = ret->value;
 					Break->tag_block = result_block;
+					Break->defers = ret->defers;
+					ret->defers = {};
 					result_block->breaks.add(Break);
 					NOTE_LEAK(ret);
 					return Break;
@@ -916,9 +918,13 @@ Expression *Typechecker::typecheck_binary_dot(Binary *binary, Reporter &reporter
 			}
 
 			if (member_name->name == "data") {
-				return make_cast(binary->left, make_pointer(make_name(BuiltinType::U8, member_name->location), Mutability::variable));
+				auto type = make_pointer(make_name(BuiltinType::U8, member_name->location), Mutability::variable);
+				member_name->type = type;
+				return make_cast(binary->left, type);
 			} else if (member_name->name == "count") {
-				return make_cast(binary->left, make_name(BuiltinType::U64, member_name->location));
+				auto type = make_name(BuiltinType::U64, member_name->location);
+				member_name->type = type;
+				return make_cast(binary->left, type);
 			} else {
 				reporter.error(binary->right->location, "Type `String` does not have member named `{}`.", member_name->name);
 				fail();
@@ -940,6 +946,7 @@ Expression *Typechecker::typecheck_binary_dot(Binary *binary, Reporter &reporter
 	if (auto found = find_if(struct_->members, [&](auto member) { return member->name == member_name->name; })) {
 		auto definition = *found;
 		member_name->possible_definitions.set(definition);
+		member_name->type = definition->type;
 		binary->type = definition->type;
 	} else {
 		reporter.error(binary->right->location, "Struct {} does not contain member named {}.", struct_, member_name->name);
@@ -966,6 +973,16 @@ bool Typechecker::ensure_not_overloaded(Expression *expression) {
 		return ensure_not_overloaded(name);
 	}
 	return true;
+}
+
+void Typechecker::add_defers(GList<Defer *> &defers) {
+	auto lambda = as<Lambda>(current_container);
+	assert(lambda);
+	for (auto block = current_block; block && block->container == lambda; block = block->parent) {
+		for (auto Defer : reversed(block->defers)) {
+			defers.add(Defer);
+		}
+	}
 }
 
 Node             *Typechecker::typecheck(Node *node, bool can_substitute) {
@@ -1109,7 +1126,7 @@ Expression       *Typechecker::typecheck_impl(Block *block, bool can_substitute)
 
 	return block;
 }
-Definition *       Typechecker::typecheck_impl(Definition *definition, bool can_substitute) {
+Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_substitute) {
 	if (definition->parsed_type) {
 		typecheck(&definition->parsed_type);
 	} else {
@@ -1247,7 +1264,7 @@ LambdaHead       *Typechecker::typecheck_impl(LambdaHead *head, bool can_substit
 	head->type = get_builtin_type(BuiltinType::Type);
 	return head;
 }
-Lambda *           Typechecker::typecheck_impl(Lambda *lambda, bool can_substitute) {
+Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitute) {
 	if (lambda->is_intrinsic) {
 		if (lambda->inline_status != InlineStatus::unspecified) {
 			reporter.warning(lambda->location, "Inline specifiers for intrinsic lambda are meaningless.");
@@ -1830,6 +1847,9 @@ BuiltinTypeName  *Typechecker::typecheck_impl(BuiltinTypeName *type, bool can_su
 	return type;
 }
 Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitute) {
+	if (binary->location == "v.x + v.y") {
+		int x = 4;
+	}
 	if (binary->operation == BinaryOperation::dot) {
 		Expression *result = binary;
 		if (!with_unwind_strategy([&] {
@@ -2200,11 +2220,13 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 
 	return unary;
 }
-Return           *Typechecker::typecheck_impl(Return *return_, bool can_substitute) {
-	if (return_->value)
-		typecheck(&return_->value);
+Return           *Typechecker::typecheck_impl(Return *Return, bool can_substitute) {
+	if (Return->value)
+		typecheck(&Return->value);
 
-	return return_;
+	add_defers(Return->defers);
+
+	return Return;
 }
 While            *Typechecker::typecheck_impl(While *While, bool can_substitute) {
 	typecheck(&While->condition);
@@ -2223,6 +2245,9 @@ While            *Typechecker::typecheck_impl(While *While, bool can_substitute)
 Continue         *Typechecker::typecheck_impl(Continue *Continue, bool can_substitute) {
 	assert(current_loop);
 	Continue->loop = current_loop;
+	
+	add_defers(Continue->defers);
+	
 	return Continue;
 }
 Break            *Typechecker::typecheck_impl(Break *Break, bool can_substitute) {
@@ -2232,6 +2257,9 @@ Break            *Typechecker::typecheck_impl(Break *Break, bool can_substitute)
 		assert(current_loop);
 		Break->loop = current_loop;
 	}
+
+	add_defers(Break->defers);
+
 	return Break;
 }
 Struct           *Typechecker::typecheck_impl(Struct *Struct, bool can_substitute) {
@@ -2364,10 +2392,10 @@ ArrayConstructor *Typechecker::typecheck_impl(ArrayConstructor *arr, bool can_su
 Import           *Typechecker::typecheck_impl(Import *import, bool can_substitute) {
 	return import;
 }
-Defer            *Typechecker::typecheck_impl(Defer *defer_, bool can_substitute) {
-	typecheck(&defer_->body);
-	current_block->defers.add(defer_);
-	return defer_;
+Defer            *Typechecker::typecheck_impl(Defer *Defer, bool can_substitute) {
+	typecheck(&Defer->body);
+	current_block->defers.add(Defer);
+	return Defer;
 }
 ZeroInitialized  *Typechecker::typecheck_impl(ZeroInitialized *zi, bool can_substitute) {
 	invalid_code_path("ZeroInitialized cannot be typechecked.");

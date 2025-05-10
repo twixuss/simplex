@@ -150,8 +150,7 @@ ForEachDirective visit(Node **node, auto &&visitor) {
 	auto visitor_wrapper = [&] (auto node) {
 		if constexpr (requires { { visitor(*node) }; }) {
 			if constexpr (requires { { visitor(*node) } -> std::same_as<ForEachDirective>; }) {
-				if (visitor(*node) == ForEach_break)
-					return ForEach_break;
+				return visitor(*node);
 			} else if constexpr (std::is_convertible_v<decltype(visitor(*node)), Node *>) {
 				// Sketchy
 				*(Node **)node = visitor(*node);
@@ -168,10 +167,14 @@ ForEachDirective visit(Node **node, auto &&visitor) {
 
 	// Visit the actual node. It might be replaced, so do two separate switches.
 	switch ((*node)->kind) {
-		#define x(name)                                              \
-			case NodeKind::name:                                     \
-				if (visitor_wrapper((name **)node) == ForEach_break) \
-					return ForEach_break;                            \
+		#define x(name)                                   \
+			case NodeKind::name:                          \
+				switch (visitor_wrapper((name **)node)) { \
+					case ForEach_break:                   \
+						return ForEach_break;             \
+					case ForEach_dont_recurse:            \
+						return ForEach_continue;          \
+				}                                         \
 				break;
 
 		ENUMERATE_NODE_KIND(x)

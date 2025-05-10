@@ -11,5 +11,5 @@ const foo = fn (var v: Vec2) => {
 const main = fn () => {
     var v = Vec2(111, 222)
     v.foo()
-    return v.x + v.y
+    println(v.x + v.y)
 }

@@ -977,7 +977,7 @@ Node *Parser::parse_statement() {
 
 			next();
 
-			if (token.kind != '\n') {
+			if (token.kind != '\n' && token.kind != ';') {
 				return_->value = parse_expression();
 			}
 

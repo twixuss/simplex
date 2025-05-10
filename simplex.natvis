@@ -33,4 +33,7 @@
     <Type Name="BuiltinType">
         <DisplayString>{location}: {type}</DisplayString>
     </Type>
+    <Type Name="BuiltinTypeName">
+        <DisplayString>{type_kind}</DisplayString>
+    </Type>
 </AutoVisualizer>

@@ -303,6 +303,16 @@ ENUMERATE_NODE_KIND(x)
 
 /*
 #define x(name)
+ENUMERATE_CALL_KIND
+#undef x
+*/
+#define ENUMERATE_CALL_KIND \
+	x(unknown) \
+	x(lambda) \
+	x(constructor) \
+
+/*
+#define x(name)
 ENUMERATE_INLINE_STATUS(x)
 #undef x
 */

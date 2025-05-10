@@ -166,6 +166,7 @@ void Copier::deep_copy_impl(Unary *from, Unary *to) {
 void Copier::deep_copy_impl(Return *from, Return *to) {
 	DEEP_COPY(value);
 	LOOKUP_COPY(lambda);
+	COPY_LIST(defers, LOOKUP_COPY);
 	to->lambda->returns.add(to);
 }
 void Copier::deep_copy_impl(While *from, While *to) {
@@ -174,10 +175,15 @@ void Copier::deep_copy_impl(While *from, While *to) {
 } 
 void Copier::deep_copy_impl(Continue *from, Continue *to) {
 	LOOKUP_COPY(loop);
+	COPY_LIST(defers, LOOKUP_COPY);
 } 
 void Copier::deep_copy_impl(Break *from, Break *to) {
 	LOOKUP_COPY(tag_block);
 	LOOKUP_COPY(loop);
+	if (from->value) {
+		DEEP_COPY(value);
+	}
+	COPY_LIST(defers, LOOKUP_COPY);
 }
 void Copier::deep_copy_impl(Struct *from, Struct *to) { not_implemented(); }
 void Copier::deep_copy_impl(ArrayType *from, ArrayType *to) { not_implemented(); }

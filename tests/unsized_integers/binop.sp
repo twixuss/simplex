@@ -54,4 +54,4 @@ const bar = fn () => {
     2222
 }
 
-const main = fn () => foo() * 10000 + bar()
+const main = fn () => println(foo() * 10000 + bar())
