@@ -49,7 +49,8 @@ Call::Argument Copier::deep_copy(Call::Argument from) {
 
 void Copier::deep_copy_impl(Block *from, Block *to) {
 	LOOKUP_COPY(parent);
-
+	
+	// NOTE: Block::add populates all necessary lists. COPY_LIST is not sufficient here.
 	for (auto from_child : from->children) {
 		auto to_child = deep_copy(from_child);
 		to->add(to_child);

@@ -174,7 +174,7 @@ DEFINE_EXPRESSION(Block) {
 	String tag;
 	GList<Break *> breaks;
 
-	// TODO: order by execution
+	// Populated *while* typechecking. In execution order.
 	GList<Defer *> defers;
 
 	void add(Node *child);

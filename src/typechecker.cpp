@@ -979,7 +979,7 @@ void Typechecker::add_defers(GList<Defer *> &defers) {
 	auto lambda = as<Lambda>(current_container);
 	assert(lambda);
 	for (auto block = current_block; block && block->container == lambda; block = block->parent) {
-		for (auto Defer : reversed(block->defers)) {
+		for (auto Defer : block->defers) {
 			defers.add(Defer);
 		}
 	}

@@ -322,7 +322,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			
 				append_line(code, "end_{}:;", block->uid);
 
-				for (auto Defer : reversed(block->defers)) {
+				for (auto Defer : block->defers) {
 					append_node(code, Defer->body, false);
 				}
 			};

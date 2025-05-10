@@ -427,19 +427,6 @@ bool Builder::is_addressable(Expression *expression) {
 	return false;
 }
 
-void Builder::output_defers_up_until(Node *last_node) {
-	auto block = current_block;
-	while (1) {
-		for (auto defer_ : reversed(block->defers)) {
-			output_discard(defer_->body);
-		}
-		if (block == last_node) {
-			break;
-		}
-		block = block->parent;
-	}
-}
-
 void Builder::output_impl(Site destination, Block *block) {
 	scoped_replace(current_block, block);
 
@@ -472,7 +459,7 @@ void Builder::output_impl(Site destination, Block *block) {
 	};
 
 	output_children();
-	for (auto defer_ : reversed(block->defers)) {
+	for (auto defer_ : block->defers) {
 		output_discard(defer_->body);
 	}
 } 
@@ -988,6 +975,7 @@ void Builder::output_impl(Site destination, Subscript *subscript) {
 		Address element_address = {};
 		element_address.base = array_address;
 		element_address.element_index = index_reg;
+		assert(element_size < 256);
 		element_address.element_size = element_size;
 
 		I(copy, destination, element_address, element_size);
@@ -1013,7 +1001,9 @@ void Builder::output_impl(Return *ret) {
 		output(return_value_destination, ret->value);
 	}
 
-	output_defers_up_until(current_lambda->body);
+	for (auto Defer : ret->defers) {
+		output_discard(Defer->body);
+	}
 
 	jumps_to_ret.add(output_bytecode.instructions.count);
 	I(jmp, 0);
@@ -1040,7 +1030,9 @@ void Builder::output_impl(While *While) {
 	}
 } 
 void Builder::output_impl(Continue *node) {
-	output_defers_up_until(node->loop->body);
+	for (auto Defer : node->defers) {
+		output_discard(Defer->body);
+	}
 
 	continue_jump_indices.get_or_insert(node->loop).add(output_bytecode.instructions.count);
 	I(jmp, 0);
@@ -1050,14 +1042,18 @@ void Builder::output_impl(Break *node) {
 		auto &info = *block_infos.find(node->tag_block).value;
 		output(info.destination, node->value);
 			
-		output_defers_up_until(node->tag_block);
+		for (auto Defer : node->defers) {
+			output_discard(Defer->body);
+		}
 
 		info.break_jump_indices.add(output_bytecode.instructions.count);
 		I(jmp, 0);
 	} else {
 		assert(node->loop);
 		
-		output_defers_up_until(node->loop->body);
+		for (auto Defer : node->defers) {
+			output_discard(Defer->body);
+		}
 			
 		loop_break_indices.get_or_insert(node->loop).add(output_bytecode.instructions.count);
 		I(jmp, 0);
