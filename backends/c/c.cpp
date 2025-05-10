@@ -921,6 +921,7 @@ void print_S64(int64_t v) {{
 
 	if (!context_base->keep_build_artifacts) {
 		delete_file(tformat(u8"{}.c", path_base));
+		delete_file(tformat(u8"{}.ilk", path_base));
 	}
 
 	return true;
