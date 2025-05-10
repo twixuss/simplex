@@ -348,6 +348,7 @@ CmdArg args_handlers[] = {
 	{"-stats",                     +[] { context_base->print_stats = true; }},
 	{"-interactive",               +[] { context_base->run_interactive = true; }},
 	{"-auto-inline",               +[] { context_base->should_inline_unspecified_lambdas = true; }},
+	{"-keep-build-artifacts",      +[] { context_base->keep_build_artifacts = true; }},
 	{"-limit-time", +[] {
 		create_thread([] {
 			int seconds_limit = 10;
