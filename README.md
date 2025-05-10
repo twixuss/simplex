@@ -1,12 +1,8 @@
-<style>
-    .wip {
-        color: #F80
-    }
-</style>
-
 # Simplex
-## --- This project is unfinished ---
-## Stuff in this readme that is not yet implemented is <span class="wip">colored like this</span>
+---
+# 🚧 This project is unfinished 🚧
+## Stuff in this readme that is not yet implemented is marked with 🚧
+---
 
 # Syntax
 ## Comments
@@ -61,10 +57,8 @@ A value that represents nothing.
 Has type `None`, which is like `void` in C.
 It is implicitly convertible to:
 * Pointers
-* <div class="wip">Options</div>
-<div class="wip">
-Explicitly it is convertible to any type, resulting in all bytes being set to zero, equivalent to <code>memset(&value, 0, sizeof(value))</code>
-</div>
+* 🚧 Options
+Explicitly it is convertible to any type, resulting in all bytes being set to zero, equivalent to `memset(&value, 0, sizeof(value))`
 
 ---
 #### Boolean Literal
@@ -90,6 +84,7 @@ Type: `UnsizedInteger`, which is implicitly convertible to any sized integer typ
 ```simplex
 "Hello, world!\n"
 ```
+Enclosed in double quotes `"`. Escaped with backslash `\`. Supports hex bytes using `\xFF`. Terminates only when encoutering unescaped double quote `"`, meaning that multiline literals just work. Line endings are not changed, so they are whatever is in your source file () (🚧 user-defined line endings might be useful?). 
 
 ---
 #### Definition
@@ -103,15 +98,25 @@ let condition = true
 `let` - runtime immutable.
 `const` - compile time constant.
 
-<p class="wip">
-Definitions are *expressions*, meaning you can place them in unusual places, for example in `if` conditions:
-</p>
+🚧 Definitions are *expressions*, meaning you can place them in unusual places, for example in `if` conditions:
 
 ```simplex
 if let found = find(array, needle) {
     println(*found)
 }
 ```
+
+##### Shorthands
+Definitions that closely represent the AST look like this:
+```simplex
+const my_function = fn () {}
+```
+This syntax is a bit cumbersome, so there is an easier way:
+```simplex
+fn my_function() {}
+```
+This is transformed into the version above, so they are identical.
+This currently works for `fn` and `struct`.
 
 ---
 #### Block
@@ -132,12 +137,102 @@ let foo = {
 ```
 Here "something" is printed, then `42` is assigned to `foo`.
 
+---
+#### If Expression
+```simplex
+var result = if condition then true_branch() else false_branch()
+```
+If expression must have both branches, and both of them must be expressions, not statements. Branches' type must be the same.
+
+---
+#### Match expression
+Table from value to code
+```
+var color_string = match color {
+    0 => "black"
+    1 => "white"
+    else => "unknown"
+}
+```
+`match` is mostly eqivalent to a series of `if`s:
+```
+var color_string = {:a
+    if color == 0 then break :a "black"
+    if color == 1 then break :a "white"
+    "unknown"
+}
+```
+In some cases compiler may introduce a jump table.
+
+Match expression yields a value. If there's no matching case, and no default case, `debug_break()` is executed, which will stop the program.
+
+---
+#### Lambda Head
+```simplex
+fn (arg: Type): Ret
+```
+Lambda head is a type. It has parameters and return type. If you follow LambdaHead with a body it turns into a Lambda.
+
+---
+#### Lambda
+```simplex
+fn (arg: Type): ReturnType => body
+fn (arg: Type) body                // return type is inferred from body
+```
+Lambda's type is its head. Lambda's body is executed when you call it. Any expression can be the body.
+🚧 What should the result type of `typeof lambda`?
+1. Generic function type, to which any lambda with matching signature can be implicitly casted.
+1. Unique function type that only that lambda has.
+
+Some examples:
+```
+fn foo(x: Int): Int
+fn eval(func: typeof foo, x: Int) => func(x)
+eval(foo, 42)
+```
+Here you probably want the first option so eval can accept lambdas other than foo.
+
+```simplex
+
+fn foo(x: Int): Int
+fn eval[T](func: T, x: Int) => func(x)
+eval(foo, 42)
+```
+Here you probably want the second option so inlining works
+...
+though that might be solved by constant propagation.
+probably just stick with first one. idk.
+
+---
+## Statements
+### If Statement
+```simplex
+if condition {
+    true_branch()
+} else {
+    false_branch()
+}
+```
+Unlike if expression, branches of if statement can be either statements or expressions. `else` branch can be omitted.
+
+---
+### Match statement
+```simplex
+match thing {
+    0 => {
+        println("Thing is zero")
+    }
+    1 => {
+        // do some stuff
+    }
+}
+```
+Match statements are not required to be complete: if a case is missing, nothing will happen.
+
 ## Types
 ### `Type`
 The type of all types.
-<div class="wip">
-Values of type <code>Type</code> store information about some type, e.g. name, size, alignment, members, arguments etc.
-</div>
+🚧 Values of type `Type` store information about some type, e.g. name, size, alignment, members, arguments etc.
 
 ---
 ### `None`
@@ -165,7 +260,7 @@ const String = struct {
 ```
 
 ---
-### <code class="wip">Range</code>
+### 🚧 `Range`
 ```simplex
 const Range = struct [T: Type] {
     begin: T
