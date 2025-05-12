@@ -105,6 +105,15 @@ struct Value {
 				break;
 		}
 	}
+
+	// decltype(auto) visit(auto &&visitor) {
+	// 	switch (kind) {
+	// 		#define x(name) case ValueKind::name: return visitor(name);
+	// 		ENUMERATE_EXECUTION_VALUE_KIND
+	// 		#undef x
+	// 		default: invalid_code_path("invalid ValueKind::{}", kind);
+	// 	}
+	// }
 };
 
 void append(StringBuilder &builder, Value value);

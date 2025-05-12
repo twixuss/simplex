@@ -204,6 +204,7 @@ void Builder::append_lambda(Lambda *lambda) {
 }
 
 void Builder::write(List<u8> &section, Value value, Type type) {
+	// TODO: use variant & visit
 	switch (value.kind) {
 		case ValueKind::Bool:
 		case ValueKind::U8:
@@ -246,7 +247,7 @@ void Builder::write(List<u8> &section, Value value, Type type) {
 						break;
 					}
 					default: {
-						not_implemented();
+						not_implemented("pointer to ValueKind::{}", value.pointer->kind);
 					}
 				}
 
@@ -598,7 +599,7 @@ void Builder::output_impl(Site destination, Call *call) {
 			break;
 		}
 		default: 
-			not_implemented();
+			invalid_code_path("CallKind::{}", call->call_kind);
 	}
 } 
 void Builder::output_impl(Site destination, Definition *definition) {

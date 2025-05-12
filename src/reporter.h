@@ -101,10 +101,3 @@ struct ImmediateReporter : ReporterBase {
 };
 
 inline ImmediateReporter immediate_reporter;
-
-void fatal_exit();
-inline void fatal(String location, auto &&...args) {
-	scoped(context_base->stdout_mutex);
-	Report::create(ReportKind::internal_error, 0, location, args...).print();
-	fatal_exit();
-}

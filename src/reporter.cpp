@@ -259,11 +259,3 @@ void ImmediateReporter::on_report(Report report) {
 	scoped(context_base->stdout_mutex);
 	report.print();
 }
-
-void fatal_exit() {
-	#if BUILD_DEBUG
-	debug_break();
-	#else
-	abort();
-	#endif
-}

@@ -139,7 +139,7 @@ void assertion_failure_impl(char const *cause_string, char const *expression, ch
 	if (!location.data)
 		location = debug_current_location;
 
-	fatal(debug_current_location, "{} {} at {}:{} in function {}\n{}", cause_string, expression, file, line, function, message);
+	immediate_reporter.error(debug_current_location, "{} {} at {}:{} in function {}\n{}", cause_string, expression, file, line, function, message);
 }
 
 template <int byte_count>

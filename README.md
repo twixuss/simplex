@@ -177,7 +177,7 @@ Lambda head is a type. It has parameters and return type. If you follow LambdaHe
 #### Lambda
 ```simplex
 fn (arg: Type): ReturnType => body
-fn (arg: Type) body                // return type is inferred from body
+fn (arg: Type) => body             // return type is inferred from body
 ```
 Lambda's type is its head. Lambda's body is executed when you call it. Any expression can be the body.
 🚧 What should the result type of `typeof lambda`?
@@ -186,7 +186,7 @@ Lambda's type is its head. Lambda's body is executed when you call it. Any expre
 
 Some examples:
 ```
-fn foo(x: Int): Int
+fn foo(x: Int): Int => {...}
 fn eval(func: typeof foo, x: Int) => func(x)
 eval(foo, 42)
 ```
