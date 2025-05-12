@@ -107,7 +107,7 @@ void Builder::append_global_definition(Definition *definition) {
 
 		auto value = get_constant_value(definition->initial_value).value();
 
-		write(section, definition->constant_value.value(), definition->type);
+		append_to_section(section, definition->constant_value.value(), definition->type);
 	} else {
 		section.resize(section.count + get_size(definition->type));
 	}
@@ -215,7 +215,8 @@ void Builder::append_lambda(Lambda *lambda) {
 	}
 }
 
-void Builder::write(List<u8> &section, Value value, Type type) {
+void Builder::write(List<u8> const &section, u8 *dst, Value value, Type type, u64 size) {
+	u64 dst_offset = dst - section.data;
 	// TODO: use variant & visit
 	switch (value.kind) {
 		case ValueKind::Bool:
@@ -227,13 +228,11 @@ void Builder::write(List<u8> &section, Value value, Type type) {
 		case ValueKind::S16:
 		case ValueKind::S32:
 		case ValueKind::S64: {
-			section.add(Span((u8 *)&value.S64, get_size(type)));
+			memcpy(dst, &value.S64, size);
 			break;
 		}
 		case ValueKind::lambda: {
-			lambda_relocations.add({&section, section.count, value.lambda});
-			u64 index = 0;
-			section.add(value_as_bytes(index));
+			lambda_relocations.add({autocast &section, dst_offset, value.lambda});
 			break;
 		}
 		case ValueKind::struct_: {
@@ -241,16 +240,16 @@ void Builder::write(List<u8> &section, Value value, Type type) {
 			assert(struct_);
 			assert(value.elements.count == struct_->members.count);
 			for (umm i = 0; i < value.elements.count; ++i) {
-				immediate_reporter.warning("Struct padding in sections is not implemented");
-				write(section, value.elements[i], struct_->members[i]->type);
+				auto member = struct_->members[i];
+				write(section, dst + member->offset, value.elements[i], member->type, get_size(member->type));
 			}
 			break;
 		}
 		case ValueKind::pointer: {
 			if (value.pointer) {
 				PointerInSection pis = {
-					.in_section = &section,
-					.in_section_offset = section.count,
+					.in_section = autocast &section,
+					.in_section_offset = dst_offset,
 				};
 
 				switch (value.pointer->kind) {
@@ -265,21 +264,22 @@ void Builder::write(List<u8> &section, Value value, Type type) {
 
 				pointers_to_patch.add(pis);
 			}
-			section.add({0,0,0,0,0,0,0,0});
 			break;
 		}
 		case ValueKind::String: {
+			u8 *data = dst;
+			u8 *count = dst + 8;
+
 			pointers_to_patch.add({
-				.in_section = &section,
-				.in_section_offset = section.count,
+				.in_section = autocast &section,
+				.in_section_offset = (u64)(data - section.data),
 				.to = PointerInSection::ToSection{
 					.section = &output_bytecode.global_readonly_data,
 					.offset = string_literal_offset(value.String),
 				}
 			});
 
-			section.add({0,0,0,0,0,0,0,0});
-			section.add(value_as_bytes((u64)value.String.count));
+			*(u64 *)count = value.String.count;
 			break;
 		}
 		default:

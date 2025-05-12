@@ -129,7 +129,14 @@ struct Builder {
 
 	List<PointerInSection> pointers_to_patch;
 
-	void write(List<u8> &section, Value value, Type type);
+	// Writes value with specified type into section at dst
+	void write(List<u8> const &section, u8 *dst, Value value, Type type, u64 size);
+
+	inline void append_to_section(List<u8> &section, Value value, Type type) {
+		auto size = get_size(type);
+		section.resize(section.count + size);
+		write(section, section.end() - size, value, type, size);
+	}
 
 	u64 align_size(u64 x);
 	s64 align_size(s64 x);
