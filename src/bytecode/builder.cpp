@@ -59,7 +59,14 @@ Bytecode Builder::build(Expression *expression) {
 	}
 
 	for (auto patch : pointers_to_patch) {
-		*(u64 *)&(*patch.in_section)[patch.in_section_offset] = patch.to_lambda->first_instruction_index;
+		patch.to.visit(Combine{
+			[&](Lambda *lambda) {
+				*(u64 *)&(*patch.in_section)[patch.in_section_offset] = lambda->first_instruction_index;
+			},
+			[&](PointerInSection::ToSection to) {
+				*(u64 *)&(*patch.in_section)[patch.in_section_offset] = (u64)(to.section->data + to.offset);
+			},
+		});
 	}
 
 	return output_bytecode;
@@ -235,7 +242,7 @@ void Builder::write(List<u8> &section, Value value, Type type) {
 
 				switch (value.pointer->kind) {
 					case ValueKind::lambda: {
-						pis.to_lambda = value.pointer->lambda;
+						pis.to = value.pointer->lambda;
 						break;
 					}
 					default: {
@@ -246,6 +253,20 @@ void Builder::write(List<u8> &section, Value value, Type type) {
 				pointers_to_patch.add(pis);
 			}
 			section.add({0,0,0,0,0,0,0,0});
+			break;
+		}
+		case ValueKind::String: {
+			pointers_to_patch.add({
+				.in_section = &section,
+				.in_section_offset = section.count,
+				.to = PointerInSection::ToSection{
+					.section = &output_bytecode.global_readonly_data,
+					.offset = string_literal_offset(value.String),
+				}
+			});
+
+			section.add({0,0,0,0,0,0,0,0});
+			section.add(value_as_bytes((u64)value.String.count));
 			break;
 		}
 		default:
@@ -427,6 +448,18 @@ bool Builder::is_addressable(Expression *expression) {
 	return false;
 }
 
+u64 Builder::string_literal_offset(String string) {
+	auto found = string_literal_offsets.find(string);
+	if (found) {
+		return *found.value;
+	} else {
+		auto offset = output_bytecode.global_readonly_data.count;
+		output_bytecode.global_readonly_data.add((Span<u8>)string);
+		output_bytecode.global_readonly_data.add('\0');
+		string_literal_offsets.insert(string, offset);
+		return offset;
+	}
+}
 void Builder::output_impl(Site destination, Block *block) {
 	scoped_replace(current_block, block);
 
@@ -579,18 +612,9 @@ void Builder::output_impl(Site destination, BooleanLiteral *literal) {
 } 
 void Builder::output_impl(Site destination, NoneLiteral *literal) {
 	I(copy, .d = destination, .s = 0, .size = get_size(literal->type));
-} 
+}
 void Builder::output_impl(Site destination, StringLiteral *literal) {
-	umm offset = -1;
-	auto found = string_literal_offsets.find(literal->value);
-	if (found) {
-		offset = *found.value;
-	} else {
-		offset = output_bytecode.global_readonly_data.count;
-		output_bytecode.global_readonly_data.add((Span<u8>)literal->value);
-		output_bytecode.global_readonly_data.add('\0');
-		string_literal_offsets.insert(literal->value, offset);
-	}
+	umm offset = string_literal_offset(literal->value);
 
 	assert(destination.is_address(), "not implemented");
 

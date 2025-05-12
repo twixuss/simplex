@@ -133,14 +133,13 @@ private:
 void assertion_failure_impl(char const *cause_string, char const *expression, char const *file, int line, char const *function, String location, Span<char> message) {
 	scoped(context_base->stdout_mutex);
 
-	if (!location.data)
-		location = debug_current_location;
-	immediate_reporter.error(debug_current_location, "COMPILER ERROR: {} {} at {}:{} in function {}", cause_string, expression, file, line, function);
-	if (message.count)
-		println("Message: {}", message);
-
 	println("Call stack:");
 	println(resolve_names(get_call_stack().skip(1).skip(-7)));
+
+	if (!location.data)
+		location = debug_current_location;
+
+	fatal(debug_current_location, "{} {} at {}:{} in function {}\n{}", cause_string, expression, file, line, function, message);
 }
 
 template <int byte_count>

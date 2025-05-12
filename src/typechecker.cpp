@@ -122,7 +122,7 @@ void Typechecker::debug_stop() {
 	// println("stopped typechecker {}", uid);
 }
 
-void Typechecker::fail_impl() {
+void Typechecker::fail() {
 	if (fail_strategy == FailStrategy::yield) {
 		yield(YieldResult::fail);
 	} else {
@@ -133,13 +133,8 @@ void Typechecker::fail_impl() {
 		}
 		longjmp(current_unwind_point.buf, fail_unwind_tag);
 	}
+	invalid_code_path();
 }
-
-#define fail()               \
-	do {                     \
-		fail_impl();         \
-		invalid_code_path(); \
-	} while (0)
 
 void Typechecker::yield(Typechecker::YieldResult result) {
 	yield_result = result;
@@ -2120,7 +2115,6 @@ Match            *Typechecker::typecheck_impl(Match *match, bool can_substitute)
 }
 Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute) {
 	typecheck(&unary->expression);
-	auto constant = get_constant_value(unary->expression);
 	switch (unary->operation) {
 		case UnaryOperation::star: {
 			if (types_match(unary->expression->type, BuiltinType::Type)) {
@@ -2213,9 +2207,11 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			unary->type = unary->expression->type;
 			break;
 		}
-		default:
-			not_implemented();
+		default: {
+			immediate_reporter.error(unary->location, "UnaryOperation::{} not handled", unary->operation);
+			fail();
 			break;
+		}
 	}
 
 	return unary;

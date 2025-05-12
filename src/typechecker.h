@@ -165,7 +165,9 @@ private:
 
 	void debug_start();
 	void debug_stop();
-	void fail_impl();
+
+	[[noreturn]]
+	void fail();
 
 	auto with_unwind_strategy(auto &&fn) -> decltype(fn()) {
 		scoped_replace(fail_strategy, FailStrategy::unwind);

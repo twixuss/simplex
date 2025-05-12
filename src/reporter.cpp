@@ -187,20 +187,22 @@ void print_source_chunk(SourceLocation source_location, int indentation, Console
 }
 ConsoleColor get_color(ReportKind kind) {
 	switch (kind) {
-		case ReportKind::info:    return ConsoleColor::cyan;
-		case ReportKind::warning: return ConsoleColor::yellow;
-		case ReportKind::error:   return ConsoleColor::red;
-		case ReportKind::help:    return ConsoleColor::green;
+		case ReportKind::internal_error: return ConsoleColor::red;
+		case ReportKind::error:          return ConsoleColor::red;
+		case ReportKind::warning:        return ConsoleColor::yellow;
+		case ReportKind::info:           return ConsoleColor::cyan;
+		case ReportKind::help:           return ConsoleColor::green;
 	}
 	return {};
 }
 
 umm print_report_kind(ReportKind kind) {
 	switch (kind) {
-		case ReportKind::info:    return with(get_color(kind), ::print("Info"));
-		case ReportKind::warning: return with(get_color(kind), ::print("Warning"));
-		case ReportKind::error:   return with(get_color(kind), ::print("Error"));
-		case ReportKind::help:    return with(get_color(kind), ::print("Help"));
+		case ReportKind::internal_error: return with(get_color(kind), ::print("INTERNAL ERROR"));
+		case ReportKind::error:          return with(get_color(kind), ::print("Error"));
+		case ReportKind::warning:        return with(get_color(kind), ::print("Warning"));
+		case ReportKind::info:           return with(get_color(kind), ::print("Info"));
+		case ReportKind::help:           return with(get_color(kind), ::print("Help"));
 	}
 	return 0;
 }
@@ -256,4 +258,12 @@ void Reporter::print_all() {
 void ImmediateReporter::on_report(Report report) {
 	scoped(context_base->stdout_mutex);
 	report.print();
+}
+
+void fatal_exit() {
+	#if BUILD_DEBUG
+	debug_break();
+	#else
+	abort();
+	#endif
 }

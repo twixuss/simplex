@@ -1,9 +1,14 @@
-// COMPILER OUTPUT 69\n42
+// COMPILER OUTPUT 69\n42\nhello\nworld
 
 var bar = 69
+var str = "hello"
 
-const main = fn () => {
+fn main() {
     println(bar)
     bar = 42
     println(bar)
+
+    println(str)
+    str = "world"
+    println(str)
 }

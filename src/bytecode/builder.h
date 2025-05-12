@@ -6,6 +6,7 @@
 #include "../target_platform.h"
 #include "bytecode.h"
 #include <tl/bucket_hash_map.h>
+#include <tl/variant.h>
 
 /*
 
@@ -118,7 +119,12 @@ struct Builder {
 		List<u8> *in_section = 0;
 		umm in_section_offset = 0;
 
-		Lambda *to_lambda = 0;
+		struct ToSection {
+			List<u8> *section = 0;
+			umm offset = 0;
+		};
+
+		Variant<Lambda *, ToSection> to;
 	};
 
 	List<PointerInSection> pointers_to_patch;
@@ -151,6 +157,8 @@ struct Builder {
 	Address get_definition_address(Definition *definition);
 
 	bool is_addressable(Expression *expression);
+
+	u64 string_literal_offset(String string);
 
 	void output_defers_up_until(Node *last_node);
 	
