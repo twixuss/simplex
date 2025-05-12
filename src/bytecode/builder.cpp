@@ -51,7 +51,19 @@ Bytecode Builder::build(Expression *expression) {
 			invalid_code_path();
 		}
 
-		i.call().d = lambda->first_instruction_index;
+		switch (i.kind) {
+			case InstructionKind::call: {
+				i.call().d = lambda->first_instruction_index;
+				break;
+			}
+			case InstructionKind::copy: {
+				i.copy().s = lambda->first_instruction_index;
+				break;
+			}
+			default: {
+				invalid_code_path("can't patch '{}' instruction", i.kind);
+			}
+		}
 	}
 		
 	for (auto relocation : lambda_relocations) {
@@ -560,7 +572,7 @@ void Builder::output_impl(Site destination, Call *call) {
 					I(callext, .lambda = lambda, .lib = lambda->extern_library, .name = lambda->definition->name);
 				} else {
 					calls_to_patch.add({output_bytecode.instructions.count, lambda});
-					I(call, .d = -1);
+					I(call, .d = 0);
 				}
 			} else {
 				// TODO: Can't distinguish externs and intrinsics here.
@@ -623,7 +635,10 @@ void Builder::output_impl(Site destination, StringLiteral *literal) {
 	destination.get_address().offset += 8;
 	I(copy, .d = destination, .s = (s64)literal->value.count, .size = 8);
 } 
-void Builder::output_impl(Site destination, Lambda *node) { not_implemented(); } 
+void Builder::output_impl(Site destination, Lambda *lambda) {
+	calls_to_patch.add({output_bytecode.instructions.count, lambda});
+	I(copy, .d = destination, .s = 0, .size = 8);
+} 
 void Builder::output_impl(Site destination, LambdaHead *node) { not_implemented(); } 
 void Builder::output_impl(Site destination, Name *name) {
 	auto definition = name->definition();

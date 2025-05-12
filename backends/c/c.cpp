@@ -44,7 +44,7 @@ void append(StringBuilder &builder, CName<Lambda *> lambda) {
 		return;
 	}
 
-	append(builder, '_');
+	append(builder, "fn_");
 	append(builder, lambda.value->uid);
 }
 void append(StringBuilder &builder, CName<Struct *> t) {
