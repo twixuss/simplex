@@ -212,6 +212,10 @@ void append_line(StringBuilder &builder, auto const &...args) {
 	append(builder, '\n');
 }
 
+// Format:
+// Values    - "_{id}"
+// Addresses - "a{id}"
+
 void append_node(StringBuilder &code, Node *node, bool define = true);
 
 void append_address(StringBuilder &code, Node *node) {
@@ -223,50 +227,61 @@ void append_address(StringBuilder &code, Node *node) {
 
 	visit_one(node, Combine{
 		[&](auto *node) {
-			append_line(code, "_{} = &(unknown_node {});", node->uid, node->kind);
+			append_line(code, "a{} = &(unknown_node {});", node->uid, node->kind);
 		},
 		[&](NoneLiteral *literal) {
-			append_line(code, "void* _{} = 0;", node->uid);
+			append_line(code, "void* a{} = 0;", node->uid);
 		},
 		//[&](StringLiteral *literal) {
 		//	append_line(code, "address_of_string_literal");
 		//},
+		[&](Definition *definition) {
+			if (definition->initial_value) {
+				append_node(code, definition->initial_value);
+				append_line(code, "{} _{} = _{};", ctype(definition->type), node->uid, definition->initial_value->uid);
+			} else {
+				append_line(code, "{} _{};", ctype(definition->type), node->uid);
+				append_line(code, "memset(&_{}, 0, sizeof(_{}));", node->uid, node->uid);
+			}
+			append_line(code, "{} *a{} = &_{};", ctype(definition->type), node->uid, definition->uid);
+		},
 		[&](Name *name) {
-			append_line(code, "{} *_{} = &_{};", ctype(name->type), node->uid, name->definition()->uid);
+			append_line(code, "{} *a{} = &_{};", ctype(name->type), node->uid, name->definition()->uid);
 		},
 		[&](Binary *binary) {
 			if (binary->operation == BinaryOperation::dot) {
 				if (as_pointer(binary->left->type)) {
 					append_node(code, binary->left);
+					append_line(code, "{} *a{} = &_{}->_{};", ctype(binary->type), node->uid, binary->left->uid, as<Name>(binary->right)->definition()->uid);
 				} else {
 					append_address(code, binary->left);
+					append_line(code, "{} *a{} = &a{}->_{};", ctype(binary->type), node->uid, binary->left->uid, as<Name>(binary->right)->definition()->uid);
 				}
-				append_line(code, "{} *_{} = &_{}->_{};", ctype(binary->type), node->uid, binary->left->uid, as<Name>(binary->right)->definition()->uid);
 				return;
 			}
-			append_line(code, "_{} = &(unknown_binary {});", node->uid, binary->operation);
+			append_line(code, "a{} = &(unknown_binary {});", node->uid, binary->operation);
 		},
 		[&](Unary *unary) {
 			if (unary->operation == UnaryOperation::dereference) {
 				append_node(code, unary->expression);
-				append_line(code, "{} *_{} = _{};", ctype(unary->type), node->uid, unary->expression->uid);
+				append_line(code, "{} *a{} = _{};", ctype(unary->type), node->uid, unary->expression->uid);
 				return;
 			}
-			append_line(code, "{} *_{} = &(unknown_unary {});", ctype(unary->type), node->uid, unary->operation);
+			append_line(code, "{} *a{} = &(unknown_unary {});", ctype(unary->type), node->uid, unary->operation);
 		},
 		[&](Block *block) {
-			append_line(code, "{} *_{} = 0;", ctype(block->type), node->uid);
+			append_line(code, "{} *a{} = 0;", ctype(block->type), node->uid);
 
 			for (auto child : block->children.skip(-1)) {
 				append_node(code, child);
 			}
 			append_address(code, block->children.back());
-			append_line(code, "_{} = _{};", node->uid, block->children.back()->uid);
+			append_line(code, "a{} = a{};", node->uid, block->children.back()->uid);
 		},
 		[&](Subscript *subscript) {
 			append_address(code, subscript->subscriptable);
 			append_node(code, subscript->index);
-			append_line(code, "{} *_{} = &_{}->data[_{}];", ctype(subscript->type), node->uid, subscript->subscriptable->uid, subscript->index->uid);
+			append_line(code, "{} *a{} = &a{}->data[_{}];", ctype(subscript->type), node->uid, subscript->subscriptable->uid, subscript->index->uid);
 		},
 	});
 }
@@ -315,7 +330,11 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			append_line(code, "end_{}:;", block->uid);
 
 			for (auto Defer : block->defers) {
+				append_line(code, "{");
+				++tabs;
 				append_node(code, Defer->body, false);
+				--tabs;
+				append_line(code, "}");
 			}
 			--tabs;
 			append_line(code, "}");
@@ -352,7 +371,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 		[&](Unary *unary) {
 			if (unary->operation == UnaryOperation::addr) {
 				append_address(code, unary->expression);
-				append_line(code, "_{} = _{};", node->uid, unary->expression->uid);
+				append_line(code, "_{} = a{};", node->uid, unary->expression->uid);
 				return;
 			}
 			append_node(code, unary->expression);
@@ -371,7 +390,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			if (is_ass(binary->operation)) {
 				append_address(code, binary->left);
 				append_node(code, binary->right);
-				append_line(code, "*_{} {} _{};", binary->left->uid, CBinaryOperation{binary->operation}, binary->right->uid);
+				append_line(code, "*a{} {} _{};", binary->left->uid, CBinaryOperation{binary->operation}, binary->right->uid);
 				return;
 			}
 
@@ -391,7 +410,11 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			}
 
 			for (auto Defer : ret->defers) {
+				append_line(code, "{");
+				++tabs;
 				append_node(code, Defer->body, false);
+				--tabs;
+				append_line(code, "}");
 			}
 
 			if (ret->value) {
@@ -401,8 +424,6 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			}
 		},
 		[&](Call *call) {
-			append_line(code, "{");
-			++tabs;
 			switch (call->call_kind) {
 				case CallKind::lambda: {
 					append_node(code, call->callable);
@@ -447,8 +468,6 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 					break;
 				}
 			}
-			--tabs;
-			append_line(code, "}");
 		},
 		[&](Match *match) {
 			if (types_match(match->type, BuiltinType::None)) {
@@ -515,14 +534,22 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 		},
 		[&](Continue *Continue) {
 			for (auto Defer : Continue->defers) {
+				append_line(code, "{");
+				++tabs;
 				append_node(code, Defer->body, false);
+				--tabs;
+				append_line(code, "}");
 			}
 			append_line(code, "goto continue_{};", Continue->loop->uid);
 		},
 		[&](Break *Break) {
 			if (Break->loop) {
 				for (auto Defer : Break->defers) {
+					append_line(code, "{");
+					++tabs;
 					append_node(code, Defer->body, false);
+					--tabs;
+					append_line(code, "}");
 				}
 				append_line(code, "goto break_{};", Break->loop->uid);
 			} else {
@@ -531,7 +558,11 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				append_line(code, "{} _{} = _{};", ctype(Break->value->type), node->uid, Break->value->uid);
 				append_line(code, "_{} = _{};", Break->tag_block->uid, node->uid);
 				for (auto Defer : Break->defers) {
+					append_line(code, "{");
+					++tabs;
 					append_node(code, Defer->body, false);
+					--tabs;
+					append_line(code, "}");
 				}
 				append_line(code, "goto end_{};", Break->tag_block->uid);
 			}
@@ -569,7 +600,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 		[&](Subscript *subscript) {
 			append_address(code, subscript->subscriptable);
 			append_node(code, subscript->index);
-			append_line(code, "_{} = _{}->data[_{}];", node->uid, subscript->subscriptable->uid, subscript->index->uid);
+			append_line(code, "_{} = a{}->data[_{}];", node->uid, subscript->subscriptable->uid, subscript->index->uid);
 		},
 		[&](ArrayConstructor *constructor) {
 			for (auto e : constructor->elements) {
@@ -614,6 +645,8 @@ typedef int8_t S8;
 typedef int16_t S16;
 typedef int32_t S32;
 typedef int64_t S64;
+
+#pragma warning(push, 0)
 
 )");
 	

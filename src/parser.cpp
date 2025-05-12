@@ -317,73 +317,14 @@ void Parser::parse_name(String *location, String *name) {
 	}
 }
 
+void add_definition_to_block(Definition *definition, Block *block) {
+	scoped_if(context->global_block._lock, block == &context->global_block.unprotected);
+	block->definition_list.add(definition);
+	block->definition_map.get_or_insert(definition->name).add(definition);
+}
+
 // Parses parse_expression_2 with binary operators and definitions.
 Expression *Parser::parse_expression(bool whitespace_is_skippable_before_binary_operator, u32 right_precedence) {
-	switch (token.kind) {
-		case Token_var:
-		case Token_let:
-		case Token_const: {
-			auto definition = Definition::create();
-			definition->mutability = to_mutability(token.kind).value();
-
-			definition->container = current_container;
-			if (current_container) {
-				if (auto lambda = as<Lambda>(current_container)) {
-					lambda->locals.add(definition);
-				}
-			}
-				
-			next();
-			skip_lines();
-
-			parse_name(&definition->location, &definition->name);
-
-			skip_lines();
-
-			expect({':', '='});
-
-			if (token.kind == ':') {
-				next();
-				skip_lines();
-
-				definition->parsed_type = parse_expression_2(); // NOTE: don't parse '='
-
-				switch (definition->parsed_type->kind) {
-					case NodeKind::Name:
-					case NodeKind::BuiltinTypeName:
-					case NodeKind::Unary:
-					case NodeKind::ArrayType:
-						break;
-					default:
-						reporter.error(definition->parsed_type->location, "{} is not allowed in type context.", definition->parsed_type->kind);
-						yield(YieldResult::fail);
-				}
-			}
-
-			if (token.kind == '=') {
-				next();
-				skip_lines();
-
-				definition->initial_value = parse_expression();
-
-				if (definition->mutability == Mutability::constant) {
-					link_constant_definition_to_initial_value(definition);
-				}
-			} else {
-				//if (definition->mutability != Mutability::variable) {
-				//	reporter.error(definition->location, "Definitions can't be marked as {} and have no initial expression.", definition->mutability);
-				//	reporter.help(definition->location, "You can either change {} to {}, or provide an initial expression.", definition->mutability, Mutability::variable);
-				//	yield(YieldResult::fail);
-				//}
-
-				expect({Token_eol, Token_eof, ';'});
-			}
-
-			return finish_node(definition);
-		}
-	}
-
-
 	//null denotation
 	auto left = parse_expression_2();
 
@@ -545,6 +486,61 @@ Expression *Parser::parse_expression_1() {
 // Parses single-part expressions
 Expression *Parser::parse_expression_0() {
 	switch (token.kind) {
+		case Token_var:
+		case Token_let:
+		case Token_const: {
+			auto definition = Definition::create();
+			definition->mutability = to_mutability(token.kind).value();
+
+			definition->container = current_container;
+			if (current_container) {
+				if (auto lambda = as<Lambda>(current_container)) {
+					lambda->locals.add(definition);
+				}
+			}
+			
+			next();
+			skip_lines();
+
+			parse_name(&definition->location, &definition->name);
+
+			skip_lines();
+
+			expect({':', '='});
+
+			if (token.kind == ':') {
+				next();
+				skip_lines();
+
+				definition->parsed_type = parse_expression_2(); // NOTE: don't parse '='
+
+				switch (definition->parsed_type->kind) {
+					case NodeKind::Name:
+					case NodeKind::BuiltinTypeName:
+					case NodeKind::Unary:
+					case NodeKind::ArrayType:
+						break;
+					default:
+						reporter.error(definition->parsed_type->location, "{} is not allowed in type context.", definition->parsed_type->kind);
+						yield(YieldResult::fail);
+				}
+			}
+
+			if (token.kind == '=') {
+				next();
+				skip_lines();
+
+				definition->initial_value = parse_expression();
+
+				if (definition->mutability == Mutability::constant) {
+					link_constant_definition_to_initial_value(definition);
+				}
+			}
+			
+			add_definition_to_block(definition, current_block);
+
+			return finish_node(definition);
+		}
 		case Token_fn: return parse_lambda().lambda_or_head;
 		case '(': {
 			next();
@@ -594,7 +590,7 @@ Expression *Parser::parse_expression_0() {
 
 				auto child = parse_statement();
 
-				block->add(child);
+				block->children.add(child);
 			}
 			block->location = {block->location.begin(), token.string.end()};
 			next();
@@ -1196,6 +1192,7 @@ Node *Parser::parse_statement() {
 			definition->location = parsed.name;
 			definition->mutability = Mutability::constant;
 			link_constant_definition_to_initial_value(definition);
+			add_definition_to_block(definition, current_block);
 			return definition;
 		}
 	}
@@ -1391,7 +1388,7 @@ bool read_file_and_parse_into_global_block(String import_location, String path) 
 
 	bool success = parse_source(source, [&](Node *node) {
 		locked_use_expr(global_block, context->global_block) {
-			global_block.add(node);
+			global_block.children.add(node);
 		};
 	});
 	

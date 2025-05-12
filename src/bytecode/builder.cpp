@@ -1139,8 +1139,11 @@ void Builder::load_address_impl(Site destination, Block *block) {
 	}
 	return load_address(destination, as<Expression>(block->children.back()));
 }
-void Builder::load_address_impl(Site destination, Call *node) { not_implemented(); }
-void Builder::load_address_impl(Site destination, Definition *node) { not_implemented(); }
+void Builder::load_address_impl(Site destination, Call *node) { invalid_code_path(); }
+void Builder::load_address_impl(Site destination, Definition *definition) {
+	output_local_definition({}, definition);
+	I(lea, .d = destination, .s = get_definition_address(definition));
+}
 void Builder::load_address_impl(Site destination, IntegerLiteral *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, BooleanLiteral *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, NoneLiteral *node) { not_implemented(); }

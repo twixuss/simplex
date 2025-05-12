@@ -302,7 +302,7 @@ void Typechecker::why_is_this_immutable(Expression *expr) {
 			if (auto name = as<Name>(unary->expression)) {
 				auto definition = name->definition();
 				assert(definition);
-				reporter.info(definition->location, "Because {} is a pointer to {}.", name->name, Meaning(definition->mutability));
+				reporter.help(definition->location, "Because {} is a pointer to {}.", name->name, Meaning(definition->mutability));
 				if (definition->initial_value) {
 					why_is_this_immutable(definition->initial_value);
 				}
@@ -311,13 +311,13 @@ void Typechecker::why_is_this_immutable(Expression *expr) {
 			if (auto name = as<Name>(unary->expression)) {
 				auto definition = name->definition();
 				assert(definition);
-				reporter.info(definition->location, "Because {} is marked as {}. Mark it with `var` instead to make it mutable.", name->name, definition->mutability);
+				reporter.help(definition->location, "Because {} is marked as {}. Mark it with `var` instead to make it mutable.", name->name, definition->mutability);
 			}
 		}
 	} else if (auto name = as<Name>(expr)) {
 		auto definition = name->definition();
 		assert(definition);
-		reporter.info(definition->location, "Because {} is {}.", name->name, Meaning(definition->mutability));
+		reporter.help(definition->location, "Because {} is {}.", name->name, Meaning(definition->mutability));
 		why_is_this_immutable(definition->initial_value);
 	}
 }
@@ -1211,7 +1211,8 @@ Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_s
 	}
 
 	if (!current_container || !as<Struct>(current_container)) {
-		assert(find(current_block->children, definition));
+		// This is false when definition is used as a expression inside something
+		// assert(find(current_block->children, definition));
 		assert(find(current_block->definition_list, definition));
 		assert(current_block->definition_map.find(definition->name));
 	}
@@ -1468,20 +1469,23 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 
 			for (auto definition : definitions) {
 				auto definition_index = find_index_of(block->children, definition);
-				assert_less(definition_index, block->children.count);
-
-				if (block->container && as<Lambda>(block->container)) {
-					// Find our parent node in found definition's block
-					for (auto node : reversed(node_stack)) {
-						auto parent_index = find_index_of(block->children, node);
-						if (parent_index < block->children.count) {
-							if (parent_index < definition_index) {
-								// Can't access definition because it is declared after. Skip it.
-								goto next_definition;
+				if (definition_index < block->children.count) {
+					if (block->container && as<Lambda>(block->container)) {
+						// Find our parent node in found definition's block
+						for (auto node : reversed(node_stack)) {
+							auto parent_index = find_index_of(block->children, node);
+							if (parent_index < block->children.count) {
+								if (parent_index < definition_index) {
+									// Can't access definition because it is declared after. Skip it.
+									goto next_definition;
+								}
+								break;
 							}
-							break;
 						}
 					}
+				} else {
+					// Definition is not a direct child of the block.
+					// TODO: check that definition is earlier than the name.
 				}
 					
 				name->possible_definitions.add(definition);
@@ -2131,12 +2135,15 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			break;
 		}
 		case UnaryOperation::addr: {
-			if (auto name = as<Name>(get_last_child_recursive(unary->expression))) {
+			auto last_child = get_last_child_recursive(unary->expression);
+			if (auto name = as<Name>(last_child)) {
 				auto definition = name->definition();
 				assert(definition);
 				unary->type = make_pointer(unary->expression->type, definition->mutability);
+			} else if (auto definition = as<Definition>(last_child)) {
+				unary->type = make_pointer(unary->expression->type, definition->mutability);
 			} else {
-				reporter.error(unary->location, "You can only take address of names, or blocks that end with a name.");
+				reporter.error(unary->location, "You can only take address of names, blocks that end with a name, or definitions.");
 				fail();
 			}
 			break;

@@ -1,7 +1,7 @@
 # Simplex
 ---
 # 🚧 This project is unfinished 🚧
-## Stuff in this readme that is not yet implemented is marked with 🚧
+## Stuff in this readme that is incomplete or not implemented is marked with 🚧
 ---
 
 # Syntax
@@ -47,25 +47,26 @@ To disambiguate you can:
 ### Primary
 #### Names (Identifiers)
 A sequence of characters that starts with `_` or `a-Z`, and continues with `_` or ` ` (space, experimental) or `a-Z` or `0-9`.
-I'm experimenting with multi-word names. For example
-`hello world` is a single identifier, like `hello_world`. If there are multiple spaces between names, they are not merged and treated as two separate tokens.
+*I'm experimenting with multi-word names. For example
+`hello world` is a single identifier, like `hello_world`. If there are multiple spaces between names, they are not merged and treated as two separate tokens.*
 ...
-I think only one space should be allowed. That way there will not be different text that results in same name, which helps with search. If there are multiple spaces, treat as two separate names, this can reduce separator usage (`then`/`do`).
+*I think only one space should be allowed. That way there will not be different text that results in same name, which helps with search. If there are multiple spaces, treat as two separate names, this can reduce separator usage (`then`/`do`).*
 #### None literal
 `none`
 A value that represents nothing. 
-Has type `None`, which is like `void` in C.
+Has type [`None`](#none), which is like `void` in C.
 It is implicitly convertible to:
 * Pointers
 * 🚧 Options
-Explicitly it is convertible to any type, resulting in all bytes being set to zero, equivalent to `memset(&value, 0, sizeof(value))`
+
+🚧 Explicitly it is convertible to any type, resulting in all bytes being set to zero, equivalent to `memset(&value, 0, sizeof(value))`.
 
 ---
 #### Boolean Literal
 `true`
 `false`
 
-Type: `Bool`.
+Type: [`Bool`](#bool).
 
 ---
 #### Integer Literal
@@ -77,14 +78,20 @@ Type: `Bool`.
 
 Use underscore `_` as a separator.
 
-Type: `UnsizedInteger`, which is implicitly convertible to any sized integer type if there is no data loss. See [Unsized Integer](#unsizedinteger) for more details.
+Type: [`UnsizedInteger`](#unsizedinteger), which is implicitly convertible to any sized integer type if there is no data loss.
 
 ---
 #### String literal
 ```simplex
 "Hello, world!\n"
 ```
-Enclosed in double quotes `"`. Escaped with backslash `\`. Supports hex bytes using `\xFF`. Terminates only when encoutering unescaped double quote `"`, meaning that multiline literals just work. Line endings are not changed, so they are whatever is in your source file () (🚧 user-defined line endings might be useful?). 
+Type: [`String`](#string).
+Enclosed in double quotes `"`. Escaped with backslash `\`. Supports hex bytes using `\xFF`. Terminates only when encoutering unescaped double quote `"`, meaning that multiline literals just work. Line endings are not changed, so they are whatever is in your source file.
+<i>
+* 🚧 should they always be \n?
+* 🚧 user-defined line endings might be useful?
+* 🚧 custom begin/end tokens
+</i>
 
 ---
 #### Definition
@@ -98,8 +105,16 @@ let condition = true
 `let` - runtime immutable.
 `const` - compile time constant.
 
-🚧 Definitions are *expressions*, meaning you can place them in unusual places, for example in `if` conditions:
-
+Definitions are *expressions*, meaning you can place them in unusual places, for example as function outputs: 
+```simplex
+let pixels = stbi_load("image.png", &let width: Int, &let height: Int, 0, 4);
+// use width and height here
+```
+🚧 *Would be cool to be able to omit types here:*
+```simplex
+let pixels = stbi_load("image.png", &let width, &let height, 0, 4);
+```
+🚧 Or in `if` conditions:
 ```simplex
 if let found = find(array, needle) {
     println(*found)
@@ -116,7 +131,9 @@ This syntax is a bit cumbersome, so there is an easier way:
 fn my_function() {}
 ```
 This is transformed into the version above, so they are identical.
-This currently works for `fn` and `struct`.
+This works for:
+* `fn`
+* 🚧 `struct`
 
 ---
 #### Block
@@ -180,6 +197,7 @@ fn (arg: Type): ReturnType => body
 fn (arg: Type) => body             // return type is inferred from body
 ```
 Lambda's type is its head. Lambda's body is executed when you call it. Any expression can be the body.
+<i>
 🚧 What should the result type of `typeof lambda`?
 1. Generic function type, to which any lambda with matching signature can be implicitly casted.
 1. Unique function type that only that lambda has.
@@ -202,7 +220,33 @@ Here you probably want the second option so inlining works
 ...
 though that might be solved by constant propagation.
 probably just stick with first one. idk.
+</i>
 
+---
+#### Unary
+##### 🚧 Autocast
+```simplex
+@expression
+```
+Automatically cast expression to the required type. That type should be inferrable from the context, e.g. assigning to a variable with a known type, passing as an argument to a function, etc. Ignored in cases where it does not make sense.
+```simplex
+var a: Int = @get_uint()
+// becomes
+var a: Int = get_uint() as Int
+```
+```simplex
+var a = @get_uint()
+// here the type of a is unknown yet when performing autocast.
+// it is ignored and a gets the type of get_uint()
+```
+```simplex
+fn foo(x: Int) {...}
+let f = 1.5
+
+foo(@f)
+// becomes
+foo(f as Int)
+```
 ---
 ## Statements
 ### If Statement
