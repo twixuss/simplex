@@ -105,15 +105,22 @@ let condition = true
 `let` - runtime immutable.
 `const` - compile time constant.
 
-Definitions are *expressions*, meaning you can place them in unusual places, for example as function outputs: 
+Definitions are *expressions*, meaning you can have them as function outputs: 
 ```simplex
-let pixels = stbi_load("image.png", &let width: Int, &let height: Int, 0, 4);
+let pixels = stbi_load("image.png", &var width: Int, &var height: Int, 0, 4);
 // use width and height here
 ```
-🚧 *Would be cool to be able to omit types here:*
-```simplex
-let pixels = stbi_load("image.png", &let width, &let height, 0, 4);
-```
+<details><summary>Notes</summary>
+🚧 Would be cool to be able to omit types here:
+<pre><code>
+let pixels = stbi_load("image.png", &var width, &var height, 0, 4);
+</code></pre>
+🚧 You can use let with autocast instead of var:
+<pre><code>
+let pixels = stbi_load("image.png", @&let width, @&let height, 0, 4);
+</code></pre>
+</details>
+
 🚧 Or in `if` conditions:
 ```simplex
 if let found = find(array, needle) {
