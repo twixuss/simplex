@@ -663,32 +663,44 @@ void Builder::output_impl(Site destination, BuiltinTypeName *node) {
 	I(copy, destination, (s64)node->type_kind, 8);
 } 
 void Builder::output_impl(Site destination, Binary *binary) {
-	//switch (binary->low_operation) {
-	//	case LowBinaryOperation::equ8:
-	//	case LowBinaryOperation::equ16:
-	//	case LowBinaryOperation::equ32:
-	//	case LowBinaryOperation::equ64:
-	//	case LowBinaryOperation::neq8:
-	//	case LowBinaryOperation::neq16:
-	//	case LowBinaryOperation::neq32:
-	//	case LowBinaryOperation::neq64: {
-	//		tmpreg(left);
-	//		output(left, binary->left);
-	//		tmpreg(right);
-	//		output(right, binary->right);
-	//		switch (binary->low_operation) {
-	//			case LowBinaryOperation::equ8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
-	//			case LowBinaryOperation::equ16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
-	//			case LowBinaryOperation::equ32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
-	//			case LowBinaryOperation::equ64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
-	//			case LowBinaryOperation::neq8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
-	//			case LowBinaryOperation::neq16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
-	//			case LowBinaryOperation::neq32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
-	//			case LowBinaryOperation::neq64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
-	//		}
-	//		break;
-	//	}
-	//}
+	switch (binary->low_operation) {
+		//case LowBinaryOperation::equ8:
+		//case LowBinaryOperation::equ16:
+		//case LowBinaryOperation::equ32:
+		//case LowBinaryOperation::equ64:
+		//case LowBinaryOperation::neq8:
+		//case LowBinaryOperation::neq16:
+		//case LowBinaryOperation::neq32:
+		//case LowBinaryOperation::neq64: {
+		//	tmpreg(left);
+		//	output(left, binary->left);
+		//	tmpreg(right);
+		//	output(right, binary->right);
+		//	switch (binary->low_operation) {
+		//		case LowBinaryOperation::equ8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
+		//		case LowBinaryOperation::equ16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
+		//		case LowBinaryOperation::equ32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
+		//		case LowBinaryOperation::equ64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
+		//		case LowBinaryOperation::neq8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
+		//		case LowBinaryOperation::neq16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
+		//		case LowBinaryOperation::neq32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
+		//		case LowBinaryOperation::neq64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
+		//	}
+		//	break;
+		//}
+		case LowBinaryOperation::add64:
+		case LowBinaryOperation::sub64: {
+			tmpreg(left);
+			output(left, binary->left);
+			tmpreg(right);
+			output(right, binary->right);
+			switch (binary->low_operation) {
+				case LowBinaryOperation::add64: I(add8, destination, left, right); break;
+				case LowBinaryOperation::sub64: I(sub8, destination, left, right); break;
+			}
+			return;
+		}
+	}
 		
 	auto dleft  = binary->left->type ? direct(binary->left->type) : 0;
 	auto dright = binary->right->type ? direct(binary->right->type) : 0;

@@ -1211,6 +1211,7 @@ Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_s
 	}
 
 	if (!current_container || !as<Struct>(current_container)) {
+		scoped_lock_if_block_is_global(current_block);
 		// This is false when definition is used as a expression inside something
 		// assert(find(current_block->children, definition));
 		assert(find(current_block->definition_list, definition));
@@ -1460,6 +1461,8 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 	name->possible_definitions.clear();
 
 	for (auto block = current_block; block; block = block->parent) {
+		scoped_lock_if_block_is_global(block);
+
 		if (auto found_definitions = block->definition_map.find(name->name)) {
 			auto definitions = *found_definitions.value;
 				
@@ -1939,6 +1942,44 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 
 		auto dleft  = direct(binary->left->type);
 		auto dright = direct(binary->right->type);
+
+		// 
+		// Pointer arithmetic
+		//
+		switch (binary->operation) {
+			case BinaryOperation::add:
+			case BinaryOperation::sub: {
+				if (auto left_pointer = as_pointer(dleft)) {
+					auto low_operation = [&] {
+						switch (binary->operation) {
+							case BinaryOperation::add: return LowBinaryOperation::add64;
+							case BinaryOperation::sub: return LowBinaryOperation::sub64;
+							default: invalid_code_path();
+						}
+					}();
+
+					if (is_concrete_integer(dright)) {
+						if (get_size(dright) != 8) {
+							binary->right = make_cast(binary->right, get_builtin_type(BuiltinType::S64));
+						}
+						binary->type = binary->left->type;
+						binary->low_operation = low_operation;
+						return binary;
+					} else if (auto literal = as<IntegerLiteral>(binary->right)) {
+						literal->type = get_builtin_type(BuiltinType::S64);
+						binary->type = binary->left->type;
+						binary->low_operation = low_operation;
+						return binary;
+					} else if (types_match(dright, BuiltinType::UnsizedInteger)) {
+						binary->right = make_cast(binary->right, get_builtin_type(BuiltinType::S64));
+						binary->type = binary->left->type;
+						binary->low_operation = low_operation;
+						return binary;
+					}
+				}
+				break;
+			}
+		}
 
 		if (auto found = binary_typecheckers.find({ dleft, dright, binary->operation })) {
 			return (this->*(*found.value))(binary);

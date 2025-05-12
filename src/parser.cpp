@@ -318,7 +318,7 @@ void Parser::parse_name(String *location, String *name) {
 }
 
 void add_definition_to_block(Definition *definition, Block *block) {
-	scoped_if(context->global_block._lock, block == &context->global_block.unprotected);
+	scoped_lock_if_block_is_global(block);
 	block->definition_list.add(definition);
 	block->definition_map.get_or_insert(definition->name).add(definition);
 }

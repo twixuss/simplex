@@ -12,3 +12,6 @@ struct CompilerContext : CompilerContextBase {
 
 inline LockProtected<Block, SpinLock> *get_global_block() { return &context->global_block; }
 inline Block *get_global_block_unprotected() { return &context->global_block.unprotected; }
+
+#define scoped_lock_if_block_is_global(block) \
+	scoped_if(context->global_block._lock, block == &context->global_block.unprotected);

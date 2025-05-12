@@ -134,4 +134,18 @@ enum class LowBinaryOperation : u8 {
 	land,
 	// logical or with short circuiting
 	lor,
+	// zero extension
+	zex8to16,
+	zex8to32,
+	zex16to32,
+	zex8to64,
+	zex16to64,
+	zex32to64,
+	// sign extension
+	sex8to16,
+	sex8to32,
+	sex16to32,
+	sex8to64,
+	sex16to64,
+	sex32to64,
 };
