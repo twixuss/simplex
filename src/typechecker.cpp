@@ -18,6 +18,18 @@
 
 #define ENABLE_TYPECHECKER_REUSE 0
 
+#define scoped_lock_if_block_is_global(block)              \
+	if (block == &context->global_block.unprotected) {     \
+		lock(context->global_block._lock);                 \
+		++global_block_locks_count;                        \
+	}                                                      \
+	defer {                                                \
+		if (block == &context->global_block.unprotected) { \
+			unlock(context->global_block._lock);           \
+			--global_block_locks_count;                    \
+		}                                                  \
+	};
+
 Typechecker *Typechecker::create(Node *node) {
 	assert(node);
 
@@ -139,10 +151,18 @@ void Typechecker::fail() {
 void Typechecker::yield(Typechecker::YieldResult result) {
 	yield_result = result;
 	scoped_replace(debug_current_location, {});
+	
+	for (u32 i = 0; i < global_block_locks_count; ++i)
+		unlock(context->global_block._lock);
+
+
 	tl::yield_reuse(parent_fiber, fiber);
 	if (result == YieldResult::fail) {
 		longjmp(main_loop_unwind_point.buf, 1);
 	}
+
+	for (u32 i = 0; i < global_block_locks_count; ++i)
+		lock(context->global_block._lock);
 }
 
 void Typechecker::fiber_main() {
@@ -1461,6 +1481,9 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 	name->possible_definitions.clear();
 
 	for (auto block = current_block; block; block = block->parent) {
+		// TODO: should take the lock if block is global, but
+		// 
+		// make_scoped(lock, LockIfBlockIsGlobal{block});
 		scoped_lock_if_block_is_global(block);
 
 		if (auto found_definitions = block->definition_map.find(name->name)) {
@@ -1849,7 +1872,7 @@ BuiltinTypeName  *Typechecker::typecheck_impl(BuiltinTypeName *type, bool can_su
 	return type;
 }
 Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitute) {
-	if (binary->location == "v.x + v.y") {
+	if (binary->uid == 332) {
 		int x = 4;
 	}
 	if (binary->operation == BinaryOperation::dot) {
@@ -1885,12 +1908,6 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 				return binary;
 			}
 			case BinaryOperation::as: {
-				if (implicitly_cast(&binary->left, binary->right, 0, false)) {
-					implicitly_cast(&binary->left, binary->right, &reporter, true);
-					binary->type = binary->right;
-					return binary;
-				}
-
 				auto source_type = direct(binary->left->type);
 				auto target_type = direct(binary->right);
 
@@ -1932,7 +1949,14 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 						return binary;
 					}
 				}
-
+				
+				// Try implicit cast last
+				// because of auto dereference
+				if (implicitly_cast(&binary->left, binary->right, 0, false)) {
+					implicitly_cast(&binary->left, binary->right, &reporter, true);
+					binary->type = binary->right;
+					return binary;
+				}
 
 				reporter.error(binary->location, "No conversion from {} to {} is available.", binary->left->type, binary->right);
 				fail();
@@ -1949,7 +1973,14 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 		switch (binary->operation) {
 			case BinaryOperation::add:
 			case BinaryOperation::sub: {
-				if (auto left_pointer = as_pointer(dleft)) {
+				Unary *pointer = as_pointer(dleft);
+				Expression *addend_type = dright;
+				if (!pointer) {
+					pointer = as_pointer(dright);
+					addend_type = dleft;
+				}
+
+				if (pointer) {
 					auto low_operation = [&] {
 						switch (binary->operation) {
 							case BinaryOperation::add: return LowBinaryOperation::add64;
@@ -1964,20 +1995,64 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 						}
 						binary->type = binary->left->type;
 						binary->low_operation = low_operation;
-						return binary;
 					} else if (auto literal = as<IntegerLiteral>(binary->right)) {
 						literal->type = get_builtin_type(BuiltinType::S64);
 						binary->type = binary->left->type;
 						binary->low_operation = low_operation;
-						return binary;
 					} else if (types_match(dright, BuiltinType::UnsizedInteger)) {
 						binary->right = make_cast(binary->right, get_builtin_type(BuiltinType::S64));
 						binary->type = binary->left->type;
 						binary->low_operation = low_operation;
+					}
+
+					if (binary->type) {
+						// Multiply integer by size of pointer's type.
+						auto mul = Binary::create();
+						mul->left = binary->right;
+						mul->right = make_integer(get_size(pointer->expression), get_builtin_type(BuiltinType::S64));
+						mul->operation = BinaryOperation::mul;
+						mul->low_operation = LowBinaryOperation::mul64;
+						mul->location = binary->right->location;
+						mul->type = get_builtin_type(BuiltinType::S64);
+						binary->right = mul;
+
 						return binary;
 					}
 				}
 				break;
+			}
+		}
+		
+		// 
+		// Pointer comparison
+		//
+		switch (binary->operation) {
+			case BinaryOperation::equ:
+			case BinaryOperation::neq:
+			case BinaryOperation::les:
+			case BinaryOperation::leq:
+			case BinaryOperation::grt:
+			case BinaryOperation::grq: {
+				if (auto left_pointer = as_pointer(dleft)) {
+					if (auto right_pointer = as_pointer(dright)) {
+						if (types_match(left_pointer->expression, right_pointer->expression)) {
+							binary->low_operation = [&]{
+								switch (binary->operation) {
+									case BinaryOperation::equ: return LowBinaryOperation::equ64;
+									case BinaryOperation::neq: return LowBinaryOperation::neq64;
+									case BinaryOperation::les: return LowBinaryOperation::ltu64;
+									case BinaryOperation::leq: return LowBinaryOperation::leu64;
+									case BinaryOperation::grt: return LowBinaryOperation::gtu64;
+									case BinaryOperation::grq: return LowBinaryOperation::geu64;
+									default: invalid_code_path();
+								}
+							}();
+							binary->type = get_builtin_type(BuiltinType::Bool);
+							return binary;
+						}
+						break;
+					}
+				}
 			}
 		}
 
@@ -2452,7 +2527,17 @@ Expression *Typechecker::bt_take_left(Binary *binary) {
 Expression *Typechecker::bt_set_bool(Binary *binary) {
 	binary->type = get_builtin_type(BuiltinType::Bool);
 	return binary;
-};
+}
+Expression *Typechecker::bt_equ(Binary *binary) {
+	binary->type = get_builtin_type(BuiltinType::Bool);
+	binary->low_operation = LowBinaryOperation::memcmp_equ;
+	return binary;
+}
+Expression *Typechecker::bt_neq(Binary *binary) {
+	binary->type = get_builtin_type(BuiltinType::Bool);
+	binary->low_operation = LowBinaryOperation::memcmp_neq;
+	return binary;
+}
 Expression *Typechecker::bt_unsized_int_and_sized_int_math(Binary *binary) {
 	auto sized = binary->left;
 	auto unsized = binary->right;
@@ -2534,8 +2619,8 @@ void Typechecker::init_binary_typecheckers() {
 	// Every type is equatable
 	// 
 	for (u32 i = 0; i < (u32)BuiltinType::count; ++i) {
-		y((BuiltinType)i, (BuiltinType)i, BinaryOperation::equ) = &bt_set_bool;
-		y((BuiltinType)i, (BuiltinType)i, BinaryOperation::neq) = &bt_set_bool;
+		y((BuiltinType)i, (BuiltinType)i, BinaryOperation::equ) = &bt_equ;
+		y((BuiltinType)i, (BuiltinType)i, BinaryOperation::neq) = &bt_neq;
 	}
 
 	x(Type, Type, equ) = &bt_comp_Type<false>;

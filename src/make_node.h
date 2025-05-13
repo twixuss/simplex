@@ -24,4 +24,5 @@ Type make_pointer(Type type, Mutability mutability);
 
 ArrayType *make_array_type(Type element_type, u64 count);
 
+Binary *make_binary(BinaryOperation operation, Expression *left, Expression *right, Type type, String location = {});
 Binary *make_cast(Expression *expression, Type type);

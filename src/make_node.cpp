@@ -63,6 +63,16 @@ ArrayType *make_array_type(Type element_type, u64 count) {
 	return result;
 }
 
+Binary *make_binary(BinaryOperation operation, Expression *left, Expression *right, Type type, String location) {
+	auto as = Binary::create();
+	as->operation = operation;
+	as->left = left;
+	as->right = right;
+	as->type = type;
+	as->location = location;
+	return as;
+}
+
 Binary *make_cast(Expression *expression, Type type) {
 	auto as = Binary::create();
 	as->operation = BinaryOperation::as;

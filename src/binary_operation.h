@@ -148,4 +148,7 @@ enum class LowBinaryOperation : u8 {
 	sex8to64,
 	sex16to64,
 	sex32to64,
+	// memory comparisons
+	memcmp_equ,
+	memcmp_neq,
 };

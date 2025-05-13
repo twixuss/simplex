@@ -26,7 +26,5 @@ struct Node {
 	NodeKind kind = {};
 	String location;
 
-	Node() {
-		int x = 0;
-	}
+	Node();
 };

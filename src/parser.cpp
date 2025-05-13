@@ -8,6 +8,31 @@
 #include "debug.h"
 #include "compiler_context.h"
 
+struct LockIfBlockIsGlobal {
+	Block *block;
+};
+
+template <>
+struct Scoped<LockIfBlockIsGlobal> {
+	LockIfBlockIsGlobal x;
+
+	void enter(LockIfBlockIsGlobal x) {
+		this->x = x;
+		enter();
+	}
+
+	void enter() {
+		if (x.block == &context->global_block.unprotected) {
+			lock(context->global_block._lock);
+		}
+	}
+	void exit() {
+		if (x.block == &context->global_block.unprotected) {
+			unlock(context->global_block._lock);
+		}
+	}
+};
+
 LockProtected<Imports, SpinLock> imports;
 
 List<utf8> Parser::unescape_string_or_fail(String string) {
@@ -318,7 +343,7 @@ void Parser::parse_name(String *location, String *name) {
 }
 
 void add_definition_to_block(Definition *definition, Block *block) {
-	scoped_lock_if_block_is_global(block);
+	scoped(LockIfBlockIsGlobal{block});
 	block->definition_list.add(definition);
 	block->definition_map.get_or_insert(definition->name).add(definition);
 }

@@ -113,6 +113,14 @@ TYPECHECKER_GLOBAL LockProtected<GList<struct Typechecker *>, SpinLock> retired_
 TYPECHECKER_GLOBAL LockProtected<GList<Report>, SpinLock> deferred_reports;
 TYPECHECKER_GLOBAL bool no_more_progress;
 
+void call_each_reverse(auto call) {
+
+}
+void call_each_reverse(auto call, auto ...args, auto last) {
+	call(last);
+	call_each_reverse(call, args...);
+}
+
 struct Typechecker {
 	enum class YieldResult : u8 {
 		fail,
@@ -160,6 +168,10 @@ private:
 	List<TemplateInstantiationForReport> template_instantiation_stack_for_reports;
 	FailStrategy fail_strategy = FailStrategy::yield;
 
+	// Yield may occur while holding a global block lock.
+	// Before yield fully release the lock, aquire it back after.
+	u32 global_block_locks_count;
+
 	u32 debug_thread_id = 0;
 	bool debug_stopped = false;
 
@@ -190,9 +202,9 @@ private:
 
 				yield_smt();
 				switch_thread();
-
+				
 				yield(YieldResult::wait);
-
+	
 				if (no_more_progress)
 					return false;
 			} else {
@@ -321,6 +333,8 @@ public:
 
 	Expression *bt_take_left(Binary *binary);
 	Expression *bt_set_bool(Binary *binary);
+	Expression *bt_equ(Binary *binary);
+	Expression *bt_neq(Binary *binary);
 	Expression *bt_unsized_int_and_sized_int_math(Binary *binary);
 	Expression *bt_unsized_int_and_sized_int_comp(Binary *binary);
 	Expression *bt_unsized_int(Binary *binary);

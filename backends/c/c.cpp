@@ -399,6 +399,20 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				append_line(code, "_{} = ({})(_{});", node->uid, ctype(binary->right), binary->left->uid);
 				return;
 			}
+			
+			if (as_pointer(binary->left->type)) {
+				append_node(code, binary->left);
+				append_node(code, binary->right);
+				append_line(code, "_{} = (char *)_{} {} _{};", node->uid, binary->left->uid, CBinaryOperation{binary->operation}, binary->right->uid);
+				return;
+			}
+
+			if (as_pointer(binary->right->type)) {
+				append_node(code, binary->left);
+				append_node(code, binary->right);
+				append_line(code, "_{} = _{} {} (char *)_{};", node->uid, binary->left->uid, CBinaryOperation{binary->operation}, binary->right->uid);
+				return;
+			}
 
 			append_node(code, binary->left);
 			append_node(code, binary->right);

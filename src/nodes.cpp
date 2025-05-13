@@ -1,5 +1,11 @@
 #include "nodes.h"
 
+Node::Node() {
+	if (uid == 236) {
+		int x = 4;
+	}
+}
+
 void append(StringBuilder &builder, Node *node) {
 	switch (node->kind) {
 		case NodeKind::Name: {
