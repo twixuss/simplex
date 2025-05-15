@@ -1,19 +1,35 @@
 
 import "c_types"
+const CHAR = U8
+const WCHAR = U16
 const BOOL = Bool
 const LONG = S32
+const ULONG = U32
+const LONGLONG = S64
+const ULONGLONG = U64
 const UINT = U32
 const DWORD = U32
+const LPDWORD = *U32
+
+const LARGE_INTEGER = S64
+const PLARGE_INTEGER = *LARGE_INTEGER
+const ULARGE_INTEGER = U64
+const PULARGE_INTEGER = *ULARGE_INTEGER
 
 const SIZE_T = U64
 
 const WPARAM = U64
 const LPARAM = S64
 const LRESULT = S64
+const HRESULT = S32
 
 const HWND = *None
-const LPCSTR = *U8
+const LPSTR = *var CHAR
+const LPCSTR = *CHAR
+const LPWSTR = *var WCHAR
+const LPCWSTR = *WCHAR
 const HANDLE = *None
+const LPHANDLE = *var *None
 const HMENU = *None
 const HMODULE = *None
 const HINSTANCE = *None
@@ -56,8 +72,16 @@ const SECURITY_ATTRIBUTES = struct {
     lpSecurityDescriptor: LPVOID
     bInheritHandle: BOOL
 }
-
 const LPSECURITY_ATTRIBUTES = *SECURITY_ATTRIBUTES
+
+const FILETIME = struct {
+    dwLowDateTime:  DWORD
+    dwHighDateTime: DWORD
+}
+const PFILETIME = *FILETIME
+const LPFILETIME = *FILETIME
+
+const MAX_PATH = 260
 
 const WM_NULL                         = 0x0000
 const WM_CREATE                       = 0x0001
@@ -396,10 +420,188 @@ const MEM_DECOMMIT                    = 0x00004000
 const MEM_RELEASE                     = 0x00008000  
 const MEM_FREE                        = 0x00010000  
 
+// begin_wdm
+//
+//  The following are masks for the predefined standard access types
+//
+
+const DELETE                           = (0x00010000)
+const READ_CONTROL                     = (0x00020000)
+const WRITE_DAC                        = (0x00040000)
+const WRITE_OWNER                      = (0x00080000)
+const SYNCHRONIZE                      = (0x00100000)
+
+const STANDARD_RIGHTS_REQUIRED         = (0x000F0000)
+
+const STANDARD_RIGHTS_READ             = (READ_CONTROL)
+const STANDARD_RIGHTS_WRITE            = (READ_CONTROL)
+const STANDARD_RIGHTS_EXECUTE          = (READ_CONTROL)
+
+const STANDARD_RIGHTS_ALL              = (0x001F0000)
+
+const SPECIFIC_RIGHTS_ALL              = (0x0000FFFF)
+
+//
+// AccessSystemAcl access type
+//
+
+const ACCESS_SYSTEM_SECURITY           = (0x01000000)
+
+//
+// MaximumAllowed access type
+//
+
+const MAXIMUM_ALLOWED                  = (0x02000000)
+
+//
+//  These are the generic rights.
+//
+
 const GENERIC_READ    = 0x80000000
 const GENERIC_WRITE   = 0x40000000
 const GENERIC_EXECUTE = 0x20000000
 const GENERIC_ALL     = 0x10000000
+
+const FILE_READ_DATA            = ( 0x0001 )    // file & pipe
+const FILE_LIST_DIRECTORY       = ( 0x0001 )    // directory
+
+const FILE_WRITE_DATA           = ( 0x0002 )    // file & pipe
+const FILE_ADD_FILE             = ( 0x0002 )    // directory
+
+const FILE_APPEND_DATA          = ( 0x0004 )    // file
+const FILE_ADD_SUBDIRECTORY     = ( 0x0004 )    // directory
+const FILE_CREATE_PIPE_INSTANCE = ( 0x0004 )    // named pipe
+
+
+const FILE_READ_EA              = ( 0x0008 )    // file & directory
+
+const FILE_WRITE_EA             = ( 0x0010 )    // file & directory
+
+const FILE_EXECUTE              = ( 0x0020 )    // file
+const FILE_TRAVERSE             = ( 0x0020 )    // directory
+
+const FILE_DELETE_CHILD         = ( 0x0040 )    // directory
+
+const FILE_READ_ATTRIBUTES      = ( 0x0080 )    // all
+
+const FILE_WRITE_ATTRIBUTES     = ( 0x0100 )    // all
+
+const FILE_ALL_ACCESS = (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x1FF)
+
+const FILE_GENERIC_READ         = (STANDARD_RIGHTS_READ     |
+                                   FILE_READ_DATA           |
+                                   FILE_READ_ATTRIBUTES     |
+                                   FILE_READ_EA             |
+                                   SYNCHRONIZE)
+
+
+const FILE_GENERIC_WRITE        = (STANDARD_RIGHTS_WRITE    |
+                                   FILE_WRITE_DATA          |
+                                   FILE_WRITE_ATTRIBUTES    |
+                                   FILE_WRITE_EA            |
+                                   FILE_APPEND_DATA         |
+                                   SYNCHRONIZE)
+
+
+const FILE_GENERIC_EXECUTE      = (STANDARD_RIGHTS_EXECUTE  |
+                                   FILE_READ_ATTRIBUTES     |
+                                   FILE_EXECUTE             |
+                                   SYNCHRONIZE)
+
+// end_access
+const FILE_SHARE_READ                 = 0x00000001  
+const FILE_SHARE_WRITE                = 0x00000002  
+const FILE_SHARE_DELETE               = 0x00000004  
+const FILE_ATTRIBUTE_READONLY             = 0x00000001  
+const FILE_ATTRIBUTE_HIDDEN               = 0x00000002  
+const FILE_ATTRIBUTE_SYSTEM               = 0x00000004  
+const FILE_ATTRIBUTE_DIRECTORY            = 0x00000010  
+const FILE_ATTRIBUTE_ARCHIVE              = 0x00000020  
+const FILE_ATTRIBUTE_DEVICE               = 0x00000040  
+const FILE_ATTRIBUTE_NORMAL               = 0x00000080  
+const FILE_ATTRIBUTE_TEMPORARY            = 0x00000100  
+const FILE_ATTRIBUTE_SPARSE_FILE          = 0x00000200  
+const FILE_ATTRIBUTE_REPARSE_POINT        = 0x00000400  
+const FILE_ATTRIBUTE_COMPRESSED           = 0x00000800  
+const FILE_ATTRIBUTE_OFFLINE              = 0x00001000  
+const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED  = 0x00002000  
+const FILE_ATTRIBUTE_ENCRYPTED            = 0x00004000  
+const FILE_ATTRIBUTE_INTEGRITY_STREAM     = 0x00008000  
+const FILE_ATTRIBUTE_VIRTUAL              = 0x00010000  
+const FILE_ATTRIBUTE_NO_SCRUB_DATA        = 0x00020000  
+const FILE_ATTRIBUTE_EA                   = 0x00040000  
+const FILE_ATTRIBUTE_PINNED               = 0x00080000  
+const FILE_ATTRIBUTE_UNPINNED             = 0x00100000  
+const FILE_ATTRIBUTE_RECALL_ON_OPEN       = 0x00040000  
+const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x00400000 
+const TREE_CONNECT_ATTRIBUTE_PRIVACY      = 0x00004000  
+const TREE_CONNECT_ATTRIBUTE_INTEGRITY    = 0x00008000  
+const TREE_CONNECT_ATTRIBUTE_GLOBAL       = 0x00000004  
+const TREE_CONNECT_ATTRIBUTE_PINNED       = 0x00000002  
+const FILE_ATTRIBUTE_STRICTLY_SEQUENTIAL  = 0x20000000  
+const FILE_NOTIFY_CHANGE_FILE_NAME    = 0x00000001   
+const FILE_NOTIFY_CHANGE_DIR_NAME     = 0x00000002   
+const FILE_NOTIFY_CHANGE_ATTRIBUTES   = 0x00000004   
+const FILE_NOTIFY_CHANGE_SIZE         = 0x00000008   
+const FILE_NOTIFY_CHANGE_LAST_WRITE   = 0x00000010   
+const FILE_NOTIFY_CHANGE_LAST_ACCESS  = 0x00000020   
+const FILE_NOTIFY_CHANGE_CREATION     = 0x00000040   
+const FILE_NOTIFY_CHANGE_SECURITY     = 0x00000100   
+const FILE_ACTION_ADDED                   = 0x00000001   
+const FILE_ACTION_REMOVED                 = 0x00000002   
+const FILE_ACTION_MODIFIED                = 0x00000003   
+const FILE_ACTION_RENAMED_OLD_NAME        = 0x00000004   
+const FILE_ACTION_RENAMED_NEW_NAME        = 0x00000005   
+const MAILSLOT_NO_MESSAGE             = -1
+const MAILSLOT_WAIT_FOREVER           = -1
+const FILE_CASE_SENSITIVE_SEARCH          = 0x00000001  
+const FILE_CASE_PRESERVED_NAMES           = 0x00000002  
+const FILE_UNICODE_ON_DISK                = 0x00000004  
+const FILE_PERSISTENT_ACLS                = 0x00000008  
+const FILE_FILE_COMPRESSION               = 0x00000010  
+const FILE_VOLUME_QUOTAS                  = 0x00000020  
+const FILE_SUPPORTS_SPARSE_FILES          = 0x00000040  
+const FILE_SUPPORTS_REPARSE_POINTS        = 0x00000080  
+const FILE_SUPPORTS_REMOTE_STORAGE        = 0x00000100  
+const FILE_RETURNS_CLEANUP_RESULT_INFO    = 0x00000200  
+const FILE_SUPPORTS_POSIX_UNLINK_RENAME   = 0x00000400  
+
+
+
+
+const FILE_VOLUME_IS_COMPRESSED           = 0x00008000  
+const FILE_SUPPORTS_OBJECT_IDS            = 0x00010000  
+const FILE_SUPPORTS_ENCRYPTION            = 0x00020000  
+const FILE_NAMED_STREAMS                  = 0x00040000  
+const FILE_READ_ONLY_VOLUME               = 0x00080000  
+const FILE_SEQUENTIAL_WRITE_ONCE          = 0x00100000  
+const FILE_SUPPORTS_TRANSACTIONS          = 0x00200000  
+const FILE_SUPPORTS_HARD_LINKS            = 0x00400000  
+const FILE_SUPPORTS_EXTENDED_ATTRIBUTES   = 0x00800000  
+const FILE_SUPPORTS_OPEN_BY_FILE_ID       = 0x01000000  
+const FILE_SUPPORTS_USN_JOURNAL           = 0x02000000  
+const FILE_SUPPORTS_INTEGRITY_STREAMS     = 0x04000000  
+const FILE_SUPPORTS_BLOCK_REFCOUNTING     = 0x08000000  
+const FILE_SUPPORTS_SPARSE_VDL            = 0x10000000  
+const FILE_DAX_VOLUME                     = 0x20000000  
+const FILE_SUPPORTS_GHOSTING              = 0x40000000  
+
+const FILE_INVALID_FILE_ID               = -1
+
+//
+// Constants
+//
+const CREATE_NEW          = 1
+const CREATE_ALWAYS       = 2
+const OPEN_EXISTING       = 3
+const OPEN_ALWAYS         = 4
+const TRUNCATE_EXISTING   = 5
+
+const INVALID_FILE_SIZE = 0xFFFFFFFF
+const INVALID_SET_FILE_POINTER = -1
+const INVALID_FILE_ATTRIBUTES = -1
+
+const INVALID_HANDLE_VALUE = (-1 as HANDLE)
 
 #extern "user32"
 fn RegisterClassExA(class: *WNDCLASSEXA): *None => #extern
@@ -442,6 +644,11 @@ fn TranslateMessage(lpMsg: *var MSG): BOOL => #extern
 fn DispatchMessageA(lpMsg: *var MSG): LRESULT => #extern;
 
 #extern "kernel32"
+fn CloseHandle(hObject: HANDLE): BOOL => #extern
+fn DuplicateHandle(hSourceProcessHandle: HANDLE, hSourceHandle: HANDLE, hTargetProcessHandle: HANDLE, lpTargetHandle: LPHANDLE, dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwOptions: DWORD): BOOL => #extern
+fn CompareObjectHandles(hFirstObjectHandle: HANDLE, hSecondObjectHandle: HANDLE): BOOL => #extern
+fn GetHandleInformation(hObject: HANDLE, lpdwFlags: LPDWORD): BOOL => #extern
+fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD): BOOL => #extern
 fn GetModuleHandleA(module_name: LPCSTR): HMODULE => #extern
 
 fn VirtualAlloc(
@@ -459,12 +666,224 @@ fn VirtualFree(
 
 fn GetLastError(): DWORD => #extern;
 
-fn CreateFileA(
-    lpFileName: LPCSTR,
-    dwDesiredAccess: DWORD,
-    dwShareMode: DWORD,
-    lpSecurityAttributes: LPSECURITY_ATTRIBUTES,
-    dwCreationDisposition: DWORD,
-    dwFlagsAndAttributes: DWORD,
-    hTemplateFile: HANDLE                
-  ): HANDLE => #extern;
+//
+// fileapi.h
+//
+
+const DISK_SPACE_INFORMATION = struct {
+    ActualAvailableAllocationUnits:       ULONGLONG
+    ActualPoolUnavailableAllocationUnits: ULONGLONG
+    CallerTotalAllocationUnits:           ULONGLONG
+    CallerAvailableAllocationUnits:       ULONGLONG
+    CallerPoolUnavailableAllocationUnits: ULONGLONG
+    UsedAllocationUnits:                  ULONGLONG
+    TotalReservedAllocationUnits:         ULONGLONG
+    VolumeStorageReserveAllocationUnits:  ULONGLONG
+    AvailableCommittedAllocationUnits:    ULONGLONG
+    PoolAvailableAllocationUnits:         ULONGLONG
+    SectorsPerAllocationUnit:             DWORD
+    BytesPerSector:                       DWORD
+}
+
+const WIN32_FILE_ATTRIBUTE_DATA = struct {
+    dwFileAttributes: DWORD
+    ftCreationTime:   FILETIME
+    ftLastAccessTime: FILETIME
+    ftLastWriteTime:  FILETIME
+    nFileSizeHigh:    DWORD
+    nFileSizeLow:     DWORD
+}
+const LPWIN32_FILE_ATTRIBUTE_DATA = *WIN32_FILE_ATTRIBUTE_DATA
+
+const BY_HANDLE_FILE_INFORMATION = struct {
+    dwFileAttributes:     DWORD
+    ftCreationTime:       FILETIME
+    ftLastAccessTime:     FILETIME
+    ftLastWriteTime:      FILETIME
+    dwVolumeSerialNumber: DWORD
+    nFileSizeHigh:        DWORD
+    nFileSizeLow:         DWORD
+    nNumberOfLinks:       DWORD
+    nFileIndexHigh:       DWORD
+    nFileIndexLow:        DWORD
+}
+const PBY_HANDLE_FILE_INFORMATION = *BY_HANDLE_FILE_INFORMATION
+const LPBY_HANDLE_FILE_INFORMATION = *BY_HANDLE_FILE_INFORMATION
+
+const CREATEFILE2_EXTENDED_PARAMETERS = struct {
+    dwSize:               DWORD
+    dwFileAttributes:     DWORD
+    dwFileFlags:          DWORD
+    dwSecurityQosFlags:   DWORD
+    lpSecurityAttributes: LPSECURITY_ATTRIBUTES
+    hTemplateFile:        HANDLE
+}
+const PCREATEFILE2_EXTENDED_PARAMETERS = *CREATEFILE2_EXTENDED_PARAMETERS
+const LPCREATEFILE2_EXTENDED_PARAMETERS = *CREATEFILE2_EXTENDED_PARAMETERS
+
+const STREAM_INFO_LEVELS = S32
+const FindStreamInfoStandard = 0
+const FindStreamInfoMaxInfoLevel = 1
+
+const WIN32_FIND_STREAM_DATA = struct {
+    StreamSize:  LARGE_INTEGER
+    cStreamName: [MAX_PATH + 36]WCHAR
+}
+const PWIN32_FIND_STREAM_DATA = *WIN32_FIND_STREAM_DATA
+
+fn CompareFileTime(lpFileTime1: *let FILETIME, lpFileTime2: *let FILETIME): LONG => #extern
+fn CreateDirectoryA(lpPathName: LPCSTR, lpSecurityAttributes: LPSECURITY_ATTRIBUTES): BOOL => #extern
+fn CreateDirectoryW(lpPathName: LPCWSTR, lpSecurityAttributes: LPSECURITY_ATTRIBUTES): BOOL => #extern
+fn CreateFileA(lpFileName: LPCSTR, dwDesiredAccess: DWORD, dwShareMode: DWORD, lpSecurityAttributes: LPSECURITY_ATTRIBUTES, dwCreationDisposition: DWORD, dwFlagsAndAttributes: DWORD, hTemplateFile: HANDLE): HANDLE => #extern
+fn CreateFileW(lpFileName: LPCWSTR, dwDesiredAccess: DWORD, dwShareMode: DWORD, lpSecurityAttributes: LPSECURITY_ATTRIBUTES, dwCreationDisposition: DWORD, dwFlagsAndAttributes: DWORD, hTemplateFile: HANDLE): HANDLE => #extern
+fn DefineDosDeviceW(dwFlags: DWORD, lpDeviceName: LPCWSTR, lpTargetPath: LPCWSTR): BOOL => #extern
+fn DeleteFileA(lpFileName: LPCSTR): BOOL => #extern
+fn DeleteFileW(lpFileName: LPCWSTR): BOOL => #extern
+fn DeleteVolumeMountPointW(lpszVolumeMountPoint: LPCWSTR): BOOL => #extern
+fn FileTimeToLocalFileTime(lpFileTime: *let FILETIME, lpLocalFileTime: LPFILETIME): BOOL => #extern
+fn FindClose(hFindFile: HANDLE): BOOL => #extern
+fn FindCloseChangeNotification(hChangeHandle: HANDLE): BOOL => #extern
+fn FindFirstChangeNotificationA(lpPathName: LPCSTR, bWatchSubtree: BOOL, dwNotifyFilter: DWORD): HANDLE => #extern
+fn FindFirstChangeNotificationW(lpPathName: LPCWSTR, bWatchSubtree: BOOL, dwNotifyFilter: DWORD): HANDLE => #extern
+fn FindFirstFileA(lpFileName: LPCSTR, lpFindFileData: LPWIN32_FIND_DATAA): HANDLE => #extern
+fn FindFirstFileW(lpFileName: LPCWSTR, lpFindFileData: LPWIN32_FIND_DATAW): HANDLE => #extern
+fn FindFirstFileExA(lpFileName: LPCSTR, fInfoLevelId: FINDEX_INFO_LEVELS, lpFindFileData: LPVOID, fSearchOp: FINDEX_SEARCH_OPS, lpSearchFilter: LPVOID, dwAdditionalFlags: DWORD): HANDLE => #extern
+fn FindFirstFileExW(lpFileName: LPCWSTR, fInfoLevelId: FINDEX_INFO_LEVELS, lpFindFileData: LPVOID, fSearchOp: FINDEX_SEARCH_OPS, lpSearchFilter: LPVOID, dwAdditionalFlags: DWORD): HANDLE => #extern
+fn FindFirstVolumeW(lpszVolumeName: LPWSTR, cchBufferLength: DWORD): HANDLE => #extern
+fn FindNextChangeNotification(hChangeHandle: HANDLE): BOOL => #extern
+fn FindNextFileA(hFindFile: HANDLE, lpFindFileData: LPWIN32_FIND_DATAA): BOOL => #extern
+fn FindNextFileW(hFindFile: HANDLE, lpFindFileData: LPWIN32_FIND_DATAW): BOOL => #extern
+fn FindNextVolumeW(hFindVolume: HANDLE, lpszVolumeName: LPWSTR, cchBufferLength: DWORD): BOOL => #extern
+fn FindVolumeClose(hFindVolume: HANDLE): BOOL => #extern
+fn FlushFileBuffers(hFile: HANDLE): BOOL => #extern
+fn GetDiskFreeSpaceA(lpRootPathName: LPCSTR, lpSectorsPerCluster: LPDWORD, lpBytesPerSector: LPDWORD, lpNumberOfFreeClusters: LPDWORD, lpTotalNumberOfClusters: LPDWORD): BOOL => #extern
+fn GetDiskFreeSpaceW(lpRootPathName: LPCWSTR, lpSectorsPerCluster: LPDWORD, lpBytesPerSector: LPDWORD, lpNumberOfFreeClusters: LPDWORD, lpTotalNumberOfClusters: LPDWORD): BOOL => #extern
+fn GetDiskFreeSpaceExA(lpDirectoryName: LPCSTR, lpFreeBytesAvailableToCaller: PULARGE_INTEGER, lpTotalNumberOfBytes: PULARGE_INTEGER, lpTotalNumberOfFreeBytes: PULARGE_INTEGER): BOOL => #extern
+fn GetDiskFreeSpaceExW(lpDirectoryName: LPCWSTR, lpFreeBytesAvailableToCaller: PULARGE_INTEGER, lpTotalNumberOfBytes: PULARGE_INTEGER, lpTotalNumberOfFreeBytes: PULARGE_INTEGER): BOOL => #extern
+fn GetDiskSpaceInformationA(rootPath: LPCSTR, diskSpaceInfo: *var DISK_SPACE_INFORMATION): HRESULT => #extern
+fn GetDiskSpaceInformationW(rootPath: LPCWSTR, diskSpaceInfo: *var DISK_SPACE_INFORMATION): HRESULT => #extern
+fn GetDriveTypeA(lpRootPathName: LPCSTR): UINT => #extern
+fn GetDriveTypeW(lpRootPathName: LPCWSTR): UINT => #extern
+fn GetFileAttributesA(lpFileName: LPCSTR): DWORD => #extern
+fn GetFileAttributesW(lpFileName: LPCWSTR): DWORD => #extern
+fn GetFileAttributesExA(lpFileName: LPCSTR, fInfoLevelId: GET_FILEEX_INFO_LEVELS, lpFileInformation: LPVOID): BOOL => #extern
+fn GetFileAttributesExW(lpFileName: LPCWSTR, fInfoLevelId: GET_FILEEX_INFO_LEVELS, lpFileInformation: LPVOID): BOOL => #extern
+fn GetFileInformationByHandle(hFile: HANDLE, lpFileInformation: LPBY_HANDLE_FILE_INFORMATION): BOOL => #extern
+fn GetFileSize(hFile: HANDLE, lpFileSizeHigh: LPDWORD): DWORD => #extern
+fn GetFileSizeEx(hFile: HANDLE, lpFileSize: PLARGE_INTEGER): BOOL => #extern
+fn GetFileType(hFile: HANDLE): DWORD => #extern
+fn GetFinalPathNameByHandleA(hFile: HANDLE, lpszFilePath: LPSTR, cchFilePath: DWORD, dwFlags: DWORD): DWORD => #extern
+fn GetFinalPathNameByHandleW(hFile: HANDLE, lpszFilePath: LPWSTR, cchFilePath: DWORD, dwFlags: DWORD): DWORD => #extern
+fn GetFileTime(hFile: HANDLE, lpCreationTime: LPFILETIME, lpLastAccessTime: LPFILETIME, lpLastWriteTime: LPFILETIME): BOOL => #extern
+fn GetFullPathNameW(lpFileName: LPCWSTR, nBufferLength: DWORD, lpBuffer: LPWSTR, lpFilePart: *var LPWSTR): DWORD => #extern
+fn GetFullPathNameA(lpFileName: LPCSTR, nBufferLength: DWORD, lpBuffer: LPSTR, lpFilePart: *var LPSTR): DWORD => #extern
+fn GetLogicalDrives(): DWORD => #extern
+fn GetLogicalDriveStringsW(nBufferLength: DWORD, lpBuffer: LPWSTR): DWORD => #extern
+fn GetLongPathNameA(lpszShortPath: LPCSTR, lpszLongPath: LPSTR, cchBuffer: DWORD): DWORD => #extern
+fn GetLongPathNameW(lpszShortPath: LPCWSTR, lpszLongPath: LPWSTR, cchBuffer: DWORD): DWORD => #extern
+fn GetShortPathNameW(lpszLongPath: LPCWSTR, lpszShortPath: LPWSTR, cchBuffer: DWORD): DWORD => #extern
+fn GetTempFileNameW(lpPathName: LPCWSTR, lpPrefixString: LPCWSTR, uUnique: UINT, lpTempFileName: LPWSTR): UINT => #extern
+fn GetVolumeInformationByHandleW(hFile: HANDLE, lpVolumeNameBuffer: LPWSTR, nVolumeNameSize: DWORD, lpVolumeSerialNumber: LPDWORD, lpMaximumComponentLength: LPDWORD, lpFileSystemFlags: LPDWORD, lpFileSystemNameBuffer: LPWSTR, nFileSystemNameSize: DWORD): BOOL => #extern
+fn GetVolumeInformationW(lpRootPathName: LPCWSTR, lpVolumeNameBuffer: LPWSTR, nVolumeNameSize: DWORD, lpVolumeSerialNumber: LPDWORD, lpMaximumComponentLength: LPDWORD, lpFileSystemFlags: LPDWORD, lpFileSystemNameBuffer: LPWSTR, nFileSystemNameSize: DWORD): BOOL => #extern
+fn GetVolumePathNameW(lpszFileName: LPCWSTR, lpszVolumePathName: LPWSTR, cchBufferLength: DWORD): BOOL => #extern
+fn LocalFileTimeToFileTime(lpLocalFileTime: *let FILETIME, lpFileTime: LPFILETIME): BOOL => #extern
+fn LockFile(hFile: HANDLE, dwFileOffsetLow: DWORD, dwFileOffsetHigh: DWORD, nNumberOfBytesToLockLow: DWORD, nNumberOfBytesToLockHigh: DWORD): BOOL => #extern
+fn LockFileEx(hFile: HANDLE, dwFlags: DWORD, dwReserved: DWORD, nNumberOfBytesToLockLow: DWORD, nNumberOfBytesToLockHigh: DWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
+fn QueryDosDeviceW(lpDeviceName: LPCWSTR, lpTargetPath: LPWSTR, ucchMax: DWORD): DWORD => #extern
+fn ReadFile(hFile: HANDLE, lpBuffer: LPVOID, nNumberOfBytesToRead: DWORD, lpNumberOfBytesRead: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
+fn ReadFileEx(hFile: HANDLE, lpBuffer: LPVOID, nNumberOfBytesToRead: DWORD, lpOverlapped: LPOVERLAPPED, lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE): BOOL => #extern
+fn ReadFileScatter(hFile: HANDLE, aSegmentArray: *var FILE_SEGMENT_ELEMENT, nNumberOfBytesToRead: DWORD, lpReserved: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
+fn RemoveDirectoryA(lpPathName: LPCSTR): BOOL => #extern
+fn RemoveDirectoryW(lpPathName: LPCWSTR): BOOL => #extern
+fn SetEndOfFile(hFile: HANDLE): BOOL => #extern
+fn SetFileAttributesA(lpFileName: LPCSTR, dwFileAttributes: DWORD): BOOL => #extern
+fn SetFileAttributesW(lpFileName: LPCWSTR, dwFileAttributes: DWORD): BOOL => #extern
+fn SetFileInformationByHandle(hFile: HANDLE, FileInformationClass: FILE_INFO_BY_HANDLE_CLASS, lpFileInformation: LPVOID, dwBufferSize: DWORD): BOOL => #extern
+fn SetFilePointer(hFile: HANDLE, lDistanceToMove: LONG, lpDistanceToMoveHigh: PLONG, dwMoveMethod: DWORD): DWORD => #extern
+fn SetFilePointerEx(hFile: HANDLE, liDistanceToMove: LARGE_INTEGER, lpNewFilePointer: PLARGE_INTEGER, dwMoveMethod: DWORD): BOOL => #extern
+fn SetFileTime(hFile: HANDLE, lpCreationTime: *let FILETIME, lpLastAccessTime: *let FILETIME, lpLastWriteTime: *let FILETIME): BOOL => #extern
+fn SetFileValidData(hFile: HANDLE, ValidDataLength: LONGLONG): BOOL => #extern
+fn UnlockFile(hFile: HANDLE, dwFileOffsetLow: DWORD, dwFileOffsetHigh: DWORD, nNumberOfBytesToUnlockLow: DWORD, nNumberOfBytesToUnlockHigh: DWORD): BOOL => #extern
+fn UnlockFileEx(hFile: HANDLE, dwReserved: DWORD, nNumberOfBytesToUnlockLow: DWORD, nNumberOfBytesToUnlockHigh: DWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
+fn WriteFile(hFile: HANDLE, lpBuffer: LPCVOID, nNumberOfBytesToWrite: DWORD, lpNumberOfBytesWritten: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
+fn WriteFileEx(hFile: HANDLE, lpBuffer: LPCVOID, nNumberOfBytesToWrite: DWORD, lpOverlapped: LPOVERLAPPED, lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE): BOOL => #extern
+fn WriteFileGather(hFile: HANDLE, aSegmentArray: *var FILE_SEGMENT_ELEMENT, nNumberOfBytesToWrite: DWORD, lpReserved: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
+fn GetTempPathW(nBufferLength: DWORD, lpBuffer: LPWSTR): DWORD => #extern
+fn GetVolumeNameForVolumeMountPointW(lpszVolumeMountPoint: LPCWSTR, lpszVolumeName: LPWSTR, cchBufferLength: DWORD): BOOL => #extern
+fn GetVolumePathNamesForVolumeNameW(lpszVolumeName: LPCWSTR, lpszVolumePathNames: LPWCH, cchBufferLength: DWORD, lpcchReturnLength: PDWORD): BOOL => #extern
+fn CreateFile2(lpFileName: LPCWSTR, dwDesiredAccess: DWORD, dwShareMode: DWORD, dwCreationDisposition: DWORD, pCreateExParams: LPCREATEFILE2_EXTENDED_PARAMETERS): HANDLE => #extern
+fn SetFileIoOverlappedRange(FileHandle: HANDLE, OverlappedRangeStart: PUCHAR, Length: ULONG): BOOL => #extern
+fn GetCompressedFileSizeA(lpFileName: LPCSTR, lpFileSizeHigh: LPDWORD): DWORD => #extern
+fn GetCompressedFileSizeW(lpFileName: LPCWSTR, lpFileSizeHigh: LPDWORD): DWORD => #extern
+fn FindFirstStreamW(lpFileName: LPCWSTR, InfoLevel: STREAM_INFO_LEVELS, lpFindStreamData: LPVOID, dwFlags: DWORD): HANDLE => #extern
+fn FindNextStreamW(hFindStream: HANDLE, lpFindStreamData: LPVOID): BOOL => #extern
+fn AreFileApisANSI(): BOOL => #extern
+fn GetTempPathA(nBufferLength: DWORD, lpBuffer: LPSTR): DWORD => #extern
+fn FindFirstFileNameW(lpFileName: LPCWSTR, dwFlags: DWORD, StringLength: LPDWORD, LinkName: PWSTR): HANDLE => #extern
+fn FindNextFileNameW(hFindStream: HANDLE, StringLength: LPDWORD, LinkName: PWSTR): BOOL => #extern
+fn GetVolumeInformationA(lpRootPathName: LPCSTR, lpVolumeNameBuffer: LPSTR, nVolumeNameSize: DWORD, lpVolumeSerialNumber: LPDWORD, lpMaximumComponentLength: LPDWORD, lpFileSystemFlags: LPDWORD, lpFileSystemNameBuffer: LPSTR, nFileSystemNameSize: DWORD): BOOL => #extern
+fn GetTempFileNameA(lpPathName: LPCSTR, lpPrefixString: LPCSTR, uUnique: UINT, lpTempFileName: LPSTR): UINT => #extern
+fn SetFileApisToOEM(): VOID => #extern
+fn SetFileApisToANSI(): VOID => #extern
+
+//
+// minwinbase.h
+//
+
+const SECURITY_ATTRIBUTES = struct {
+    nLength: DWORD
+    lpSecurityDescriptor: LPVOID
+    bInheritHandle: BOOL
+}
+const PSECURITY_ATTRIBUTES = *SECURITY_ATTRIBUTES
+const LPSECURITY_ATTRIBUTES = *SECURITY_ATTRIBUTES
+
+const OVERLAPPED = struct {
+    Internal:     ULONG_PTR
+    InternalHigh: ULONG_PTR
+    Pointer:      PVOID
+    hEvent:       HANDLE
+}
+const LPOVERLAPPED = OVERLAPPED
+
+const FILETIME = struct {
+    dwLowDateTime:  DWORD
+    dwHighDateTime: DWORD
+}
+const PFILETIME = *FILETIME
+const LPFILETIME = *FILETIME
+
+const WIN32_FIND_DATAA = struct {
+    dwFileAttributes:   DWORD
+    ftCreationTime:     FILETIME
+    ftLastAccessTime:   FILETIME
+    ftLastWriteTime:    FILETIME
+    nFileSizeHigh:      DWORD
+    nFileSizeLow:       DWORD
+    dwReserved0:        DWORD
+    dwReserved1:        DWORD
+    cFileName:          [MAX_PATH]CHAR
+    cAlternateFileName: [14]CHAR
+}
+const PWIN32_FIND_DATAA = *WIN32_FIND_DATAA
+const LPWIN32_FIND_DATAA = *WIN32_FIND_DATAA
+
+const WIN32_FIND_DATAW = struct {
+    dwFileAttributes:   DWORD
+    ftCreationTime:     FILETIME
+    ftLastAccessTime:   FILETIME
+    ftLastWriteTime:    FILETIME
+    nFileSizeHigh:      DWORD
+    nFileSizeLow:       DWORD
+    dwReserved0:        DWORD
+    dwReserved1:        DWORD
+    cFileName:          [MAX_PATH]WCHAR
+    cAlternateFileName: [14]WCHAR
+}
+const PWIN32_FIND_DATAW = *WIN32_FIND_DATAW
+const LPWIN32_FIND_DATAW = *WIN32_FIND_DATAW
+
+const FINDEX_INFO_LEVELS = S32
+const FindExInfoStandard     = 0
+const FindExInfoBasic        = 1
+const FindExInfoMaxInfoLevel = 2

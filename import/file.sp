@@ -16,7 +16,7 @@ fn create_buffer(size: Int, alignment: Int = 8, is_zeroed: Bool = false): Buffer
 }
 
 fn free(buffer: *Buffer): None => {
-    buffer.allocator.free(Allocation(data = buffer.span.data, size = buffer.span.size))
+    buffer.allocator.free(Allocation(data = buffer.span.data, size = buffer.span.count))
     *buffer = none as Buffer
 }
 
@@ -28,7 +28,7 @@ const OpenFileOptions = struct {
 }
 
 fn open_file(path: String, options: OpenFileOptions): File => {
-    return CreateFileA(path.data, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0)
+    return CreateFileA(path.data, GENERIC_READ, FILE_SHARE_READ, none, OPEN_EXISTING, 0, none)
 }
 
 // If anything goes wrong, returns an empty buffer
@@ -36,7 +36,7 @@ fn open_file(path: String, options: OpenFileOptions): File => {
 fn read_entire_file(path: String, out_result: *var Buffer): Bool => {
     var ok: Bool = true
 
-    var file = CreateFileA(path.data, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0)
+    var file = CreateFileA(path.data, GENERIC_READ, FILE_SHARE_READ, none, OPEN_EXISTING, 0, none)
     defer CloseHandle(file)
 
     SetFilePointerEx(file, 0, 0, FILE_END);
@@ -71,6 +71,7 @@ fn read_entire_file(path: String, out_result: *var Buffer): Bool => {
     return ok
 }
 
+// TODO
 // private
 
 const WinOpenFileOptions = struct {

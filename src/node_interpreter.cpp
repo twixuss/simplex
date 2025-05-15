@@ -523,6 +523,17 @@ Value NodeInterpreter::execute_impl(Binary *binary) {
 
 			return struct_value.elements[find_index_of(struct_->members, name->definition())];
 		}
+		case BinaryOperation::as: {
+			EXECUTE_DEFN(val, binary->left);
+			auto type = binary->right;
+			if (is_concrete_integer(binary->left->type) || types_match(binary->left->type, BuiltinType::UnsizedInteger)) {
+				if (as_pointer(binary->right)) {
+					return Value((Value *)val.U64);
+				}
+			}
+
+			break;
+		}
 	}
 
 	EXECUTE_DEFN(left, binary->left);
@@ -586,6 +597,7 @@ case ValueKind::v: {                                                            
 
 #undef OPS
 
+	immediate_reporter.error("NODE INTERPTRETER ERROR:");
 	immediate_reporter.error(binary->location, "Invalid binary operation: {} {} {}", left.kind, binary->operation, right.kind);
 	yield(YieldResult::fail);
 	return {};

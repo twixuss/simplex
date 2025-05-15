@@ -294,12 +294,26 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 	// Pointer -> Pointer
 	if (auto source_pointer = as_pointer(direct_source_type)) {
 		if (auto target_pointer = as_pointer(direct_target_type)) {
-			if (target_pointer->mutability == Mutability::readonly) {
-				if (source_pointer->mutability == Mutability::variable) {
+
+			bool valid_mutability = 
+				(target_pointer->mutability == source_pointer->mutability) ||
+				(target_pointer->mutability == Mutability::readonly && source_pointer->mutability == Mutability::variable);
+
+			if (valid_mutability) {
+				if (types_match(source_pointer->expression, target_pointer->expression)) {
+					// *var T => *let T
 					if (apply) {
 						expression = make_cast(expression, target_type);
 					}
 					return true;
+				} else {
+					if (types_match(target_pointer->expression, BuiltinType::None)) {
+						// *T => *None
+						if (apply) {
+							expression = make_cast(expression, target_type);
+						}
+						return true;
+					}
 				}
 			}
 		}
@@ -1935,12 +1949,28 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 					}
 				}
 
-				// From integer
+				// From concrete integer
 				if (is_concrete_integer(source_type)) {
 					// To integer
 					if (is_concrete_integer(target_type)) {
 						binary->type = binary->right;
 						return binary;
+					}
+						
+					// To pointer
+					if (auto right_pointer = as_pointer(target_type)) {
+						binary->type = binary->right;
+						return binary;
+					}
+				}
+
+				// From integer literal
+				if (auto literal = as<IntegerLiteral>(binary->left)) {
+					// To integer
+					if (is_concrete_integer(target_type)) {
+						literal->type = binary->right;
+						NOTE_LEAK(binary);
+						return literal;
 					}
 						
 					// To pointer
