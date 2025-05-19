@@ -3,7 +3,7 @@ import "windows"
 // Allocator Actions
 const AA_ALLOCATE   = 0
 const AA_REALLOCATE = 1
-const AA_DEALLOCATE = 2
+const AA_FREE = 2
 
 const Allocation = struct {
     data: *var None
@@ -24,7 +24,7 @@ var current_allocator: Allocator
 
 fn allocate(allocator: Allocator, new: Allocation): Allocation => allocator.func(allocator.state, AA_ALLOCATE, Allocation(), new)
 fn reallocate(allocator: Allocator, old: Allocation, new: Allocation): Allocation => allocator.func(allocator.state, AA_REALLOCATE, old, new)
-fn deallocate(allocator: Allocator, old: Allocation): None => allocator.func(allocator.state, AA_DEALLOCATE, old, Allocation())
+fn free(allocator: Allocator, old: Allocation): None => allocator.func(allocator.state, AA_FREE, old, Allocation())
 
 // 
 // Page Allocator
@@ -57,12 +57,12 @@ fn reallocate(allocator: PageAllocator, old: Allocation, new: Allocation): Alloc
     if first_page != last_page {
         result = allocate(allocator, new)
         memcpy(result.data, old.data, old.size)
-        deallocate(allocator, old)
+        free(allocator, old)
     }
     result
 }
 
-fn deallocate(allocator: PageAllocator, old: Allocation): None => {
+fn free(allocator: PageAllocator, old: Allocation): None => {
     VirtualFree(old.data, 0, MEM_RELEASE)
 }
 
@@ -71,7 +71,7 @@ let dyn_page_allocator = Allocator(
         match (action) {
             AA_ALLOCATE => page_allocator.allocate(new)
             AA_REALLOCATE => page_allocator.reallocate(old, new)
-            AA_DEALLOCATE => {page_allocator.deallocate(old); Allocation() }
+            AA_FREE => {page_allocator.free(old); Allocation() }
             else => Allocation()
         }
     }

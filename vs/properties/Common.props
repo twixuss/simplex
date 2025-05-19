@@ -32,6 +32,7 @@
       <PreprocessToFile>false</PreprocessToFile>
       <UseStandardPreprocessor>true</UseStandardPreprocessor>
       <AdditionalIncludeDirectories>$(SolutionDir)dep\tl\include</AdditionalIncludeDirectories>
+      <ObjectFileName>$(IntDir)%(RelativeDir)</ObjectFileName>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup />

@@ -190,6 +190,31 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 	if (types_match(direct_source_type, direct_target_type)) {
 		return true;
 	}
+	
+	// Autocast
+	if (auto unary = as<Unary>(expression)) {
+		if (unary->operation == UnaryOperation::atcast) {
+			if (implicitly_cast(&unary->expression, target_type, 0, apply)) {
+				// Implicit cast available, just throw atcast out.
+				if (apply) {
+					expression = unary->expression;
+				}
+				return true;
+			} else {
+				// Try explicit cast
+				auto cast = make_cast(unary->expression, target_type);
+				bool result = with_unwind_strategy([&] {
+					return typecheck(&cast);
+				});
+				if (result && apply) {
+					expression = cast;
+				} else {
+					NOTE_LEAK(cast);
+				}
+				return result;
+			}
+		}
+	}
 
 	// Unsized integer to concrete
 	if (types_match(direct_source_type, BuiltinType::UnsizedInteger)) {
@@ -315,6 +340,19 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 						return true;
 					}
 				}
+			}
+		}
+	}
+
+	// Zero to pointer
+	if (auto literal = as<IntegerLiteral>(expression)) {
+		if (literal->value == 0) {
+			if (auto pointer = as_pointer(target_type)) {
+				if (apply) {
+					literal->type = get_builtin_type(BuiltinType::U64);
+					expression = make_cast(expression, target_type);
+				}
+				return true;
 			}
 		}
 	}
@@ -929,7 +967,7 @@ Expression *Typechecker::typecheck_constructor(Call *call, Struct *Struct) {
 	return call;
 };
 
-Expression *Typechecker::typecheck_binary_dot(Binary *binary, Reporter &reporter) {
+Expression *Typechecker::typecheck_binary_dot(Binary *binary) {
 	typecheck(&binary->left);
 	auto struct_ = direct_as<Struct>(binary->left->type);
 	if (!struct_) {
@@ -1011,6 +1049,16 @@ void Typechecker::add_defers(GList<Defer *> &defers) {
 		for (auto Defer : block->defers) {
 			defers.add(Defer);
 		}
+	}
+}
+
+void Typechecker::ensure_mutable(Expression *expression) {
+	auto result = is_mutable(expression);
+	if (!result) {
+		reporter.error(expression->location, "This expression can not be modified.");
+		// reporter.help(result.error()->location, "Because this is not mutable.");
+		why_is_this_immutable(expression);
+		fail();
 	}
 }
 
@@ -1156,6 +1204,10 @@ Expression       *Typechecker::typecheck_impl(Block *block, bool can_substitute)
 	return block;
 }
 Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_substitute) {
+	if (definition->uid == 3651) {
+		int x = 41;
+	}
+
 	if (definition->parsed_type) {
 		typecheck(&definition->parsed_type);
 	} else {
@@ -1597,92 +1649,107 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 }
 Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 	defer { assert(call->callable->type != 0); };
+	if (find(call->location, u8"buffer.free()"s)) {
+		int x = 4;
+	}
 	if (auto binary = as<Binary>(call->callable)) {
 		if (binary->operation == BinaryOperation::dot) {
 			if (auto lambda_name = as<Name>(binary->right)) {
-				Reporter reporter2;
-				if (with_unwind_strategy([&] {
-					if (auto subst = typecheck_binary_dot(binary, reporter2)) {
-						call->callable = subst;
-						return true;
-					}
-					return false;
-				})) {
+				Reporter dot_binop_reporter;
+				bool dot_binop_succeeded = false;
+
+				{
+					scoped_replace(reporter, dot_binop_reporter);
+					dot_binop_succeeded = with_unwind_strategy([&] {
+						if (auto subst = typecheck_binary_dot(binary)) {
+							call->callable = subst;
+							return true;
+						}
+						return false;
+					});
+				}
+
+				if (dot_binop_succeeded) {
 					goto typecheck_dot_succeeded;
 				} else {
-					constexpr bool old_dotcall = true;
-
-					if constexpr (old_dotcall) {
-						//Definition *lambda_definition = 0;
-						//for (auto block = current_block; block; block = block->parent) {
-						//	if (auto found_definitions = block->definition_map.find(lambda_name->name)) {
-						//		auto [name, definitions] = *found_definitions;
-						//		assert(definitions.count != 0);
-						//		if (definitions.count > 1) {
-						//			reporter.error(binary->right->location, "Function overloading for dot calls is not implemented yet.");
-						//			fail();
-						//		}
-						//		lambda_definition = definitions[0];
-						//		break;
-						//	}
-						//}
-						//
-						//auto lambda = lambda_definition->initial_value ? as<Lambda>(lambda_definition->initial_value) : 0;
-						//if (!lambda) {
-						//	reporter.error(binary->right->location, "This is not a lambda.");
-						//	fail();
-						//}
-
-
-						call->callable = binary->right;
+					call->callable = binary->right;
 						
-						// Attempt passing `this` as follows (return on first successful attempt):
-						//     1. As-is.
-						//     2. By pointer.
+					// Attempt passing `this` as follows (return on first successful attempt):
+					//     1. As-is.
+					//     2. By pointer.
 
-						call->arguments.insert_at({.expression = binary->left}, 0);
+					call->arguments.insert_at({.expression = binary->left}, 0);
 
-						Reporter as_is_reporter;
-						{
-							scoped_exchange(reporter, as_is_reporter);
-							auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
-							if (result) {
-								as_is_reporter.reports.add(reporter.reports);
-								return result;
-							}
+					Reporter as_is_reporter;
+					{
+						scoped_exchange(reporter, as_is_reporter);
+						auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
+						if (result) {
+							as_is_reporter.reports.add(reporter.reports);
+							return result;
 						}
-						
-						Reporter by_pointer_reporter;
-						{
-							scoped_exchange(reporter, by_pointer_reporter);
-
-							auto first_argument_address = Unary::create();
-							first_argument_address->location = binary->left->location;
-							first_argument_address->expression = binary->left;
-							first_argument_address->operation = UnaryOperation::addr;
-							call->arguments[0].expression = first_argument_address;
-
-							auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
-							if (result) {
-								by_pointer_reporter.reports.add(reporter.reports);
-								return result;
-							}
-						}
-
-						reporter.error(call->location, "Unable to pass `this` argument. Here are attempt results:");
-						reporter.info("Attempt to pass `this` as-is:");
-						for (auto &r : as_is_reporter.reports) {
-							++r.indentation;
-						}
-						reporter.reports.add(as_is_reporter.reports);
-						reporter.info("Attempt to pass `this` by pointer:");
-						for (auto &r : by_pointer_reporter.reports) {
-							++r.indentation;
-						}
-						reporter.reports.add(by_pointer_reporter.reports);
-						fail();
-					} else {
 					}
+						
+					Reporter by_pointer_reporter;
+					{
+						scoped_exchange(reporter, by_pointer_reporter);
+
+						auto first_argument_address = Unary::create();
+						first_argument_address->location = binary->left->location;
+						first_argument_address->expression = binary->left;
+						first_argument_address->operation = UnaryOperation::addr;
+						call->arguments[0].expression = first_argument_address;
+
+						auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
+						if (result) {
+							by_pointer_reporter.reports.add(reporter.reports);
+							return result;
+						}
+					}
+
+					// All three attempts failed. Report stuff.
+					
+					// Hacky ways of hiding useless reports
+					bool member_useful     = dot_binop_reporter.reports.count  && !find(dot_binop_reporter.reports[0].message, u8"does not contain member named"s);
+					bool by_pointer_useful = by_pointer_reporter.reports.count && !find(by_pointer_reporter.reports[0].message, u8"You can only take address of"s);
+					bool by_value_useful = true;
+
+					struct AttemptReport {
+						char const *message;
+						Span<Report> reports;
+					};
+
+					List<AttemptReport> useful_attempt_reports;
+					if (member_useful)     useful_attempt_reports.add({"Attempt to treat as member access:", dot_binop_reporter.reports});
+					if (by_value_useful)   useful_attempt_reports.add({"Attempt to pass `this` as-is:", as_is_reporter.reports});
+					if (by_pointer_useful) useful_attempt_reports.add({"Attempt to pass `this` by pointer:", by_pointer_reporter.reports});
+					
+					// Don't include attempts that have identical reports.
+					for (umm i = 1; i < useful_attempt_reports.count; ++i) {
+						if (useful_attempt_reports[i].reports == useful_attempt_reports[0].reports) {
+							useful_attempt_reports.erase_unordered_at(i);
+							--i;
+						}
+					}
+
+					if (useful_attempt_reports.count > 1) {
+						reporter.error(call->location, "Unable to typecheck this dot call. Here are attempt results:");
+						for (auto &attempt_reports : useful_attempt_reports) {
+							for (auto &r : attempt_reports.reports) {
+								++r.indentation;
+							}
+							reporter.info(attempt_reports.message);
+							reporter.reports.add(dot_binop_reporter.reports);
+						}
+					} else {
+						if (useful_attempt_reports.count == 0) {
+							immediate_reporter.error(call->location, "INTERNAL ERROR. Didn't produce reports for failed dot call!!!");
+						}
+						for (auto &attempt_reports : useful_attempt_reports) {
+							reporter.reports.add(attempt_reports.reports);
+						}
+					}
+					fail();
 				}
 			}
 		}
@@ -1886,13 +1953,13 @@ BuiltinTypeName  *Typechecker::typecheck_impl(BuiltinTypeName *type, bool can_su
 	return type;
 }
 Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitute) {
-	if (binary->uid == 332) {
+	if (binary->uid == 3647) {
 		int x = 4;
 	}
 	if (binary->operation == BinaryOperation::dot) {
 		Expression *result = binary;
 		if (!with_unwind_strategy([&] {
-			if (auto subst = typecheck_binary_dot(binary, reporter)) {
+			if (auto subst = typecheck_binary_dot(binary)) {
 				result = subst;
 				return true;
 			}
@@ -1907,14 +1974,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 
 		switch (binary->operation) {
 			case BinaryOperation::ass: {
-				auto result = is_mutable(binary->left);
-				if (!result) {
-					reporter.error(binary->left->location, "This expression can not be modified.");
-					reporter.help(result.error()->location, "Because this is not mutable.");
-					why_is_this_immutable(binary->left);
-
-					fail();
-				}
+				ensure_mutable(binary->left);
 				if (!implicitly_cast(&binary->right, binary->left->type, true)) {
 					fail();
 				}
@@ -1924,6 +1984,11 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 			case BinaryOperation::as: {
 				auto source_type = direct(binary->left->type);
 				auto target_type = direct(binary->right);
+
+				if (!is_type(target_type)) {
+					reporter.error(binary->right->location, "Right hand side of `as` expression must be a type.");
+					fail();
+				}
 
 				// From lambda
 				if (auto left_lambda_head = as<LambdaHead>(source_type)) {
@@ -1980,6 +2045,13 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 					}
 				}
 				
+				// From none to any type
+				if (auto literal = as<NoneLiteral>(binary->left)) {
+					binary->type = binary->right;
+					binary->low_operation = LowBinaryOperation::zeroinit;
+					return binary;
+				}
+
 				// Try implicit cast last
 				// because of auto dereference
 				if (implicitly_cast(&binary->left, binary->right, 0, false)) {
@@ -2199,12 +2271,62 @@ c
 		switch (binary->operation) {
 			case BinaryOperation::equ:
 			case BinaryOperation::neq: {
-				if (is_pointer_to_none_comparison(binary->left, binary->right)) {
+				if (auto pointer = is_pointer_to_none_comparison(binary->left, binary->right)) {
 					binary->type = get_builtin_type(BuiltinType::Bool);
+					binary->low_operation = pointer == binary->left ? LowBinaryOperation::left_to_bool : LowBinaryOperation::right_to_bool;
 					return binary;
 				}
 				break;
 			}
+		}
+
+		if (is_modass(binary->operation)) {
+			// Turn   x += y;
+			
+			// Into   { let c = &x; *c = *c + y; } 
+			
+			auto address_of_left = make_address(binary->left);
+
+			auto definition = Definition::create();
+			definition->location = binary->left->location;
+			definition->mutability = Mutability::readonly;
+			definition->initial_value = address_of_left;
+			definition->type = address_of_left->type;
+
+			auto make_deref = [&] {
+				auto deref = Unary::create();
+				auto name = Name::create();
+
+				name->location = binary->left->location;
+				name->possible_definitions.set(definition);
+				name->type = definition->type;
+				name->location = binary->left->location;
+
+				deref->location = binary->left->location;
+				deref->expression = name;
+				deref->operation = UnaryOperation::dereference;
+				deref->location = binary->left->location;
+				return deref;
+			};
+
+			binary->left = make_deref();
+			binary->operation = deass(binary->operation);
+			typecheck(&binary);
+
+			auto ass = Binary::create();
+			ass->operation = BinaryOperation::ass;
+			ass->location = binary->location;
+			ass->left = make_deref();
+			ass->right = binary;
+			
+			auto block = Block::create();
+			block->location = binary->location;
+			block->add(definition);
+			block->add(ass);
+			block->type = get_builtin_type(BuiltinType::None);
+			block->parent = current_block;
+			block->container = current_container;
+			return block;
 		}
 
 	no_binop:
@@ -2266,7 +2388,9 @@ Match            *Typechecker::typecheck_impl(Match *match, bool can_substitute)
 Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute) {
 	typecheck(&unary->expression);
 	switch (unary->operation) {
-		case UnaryOperation::star: {
+		case UnaryOperation::star:
+		case UnaryOperation::dereference:
+		case UnaryOperation::pointer: {
 			if (types_match(unary->expression->type, BuiltinType::Type)) {
 				unary->operation = UnaryOperation::pointer;
 				unary->type = get_builtin_type(BuiltinType::Type);
@@ -2357,6 +2481,11 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			if (!implicitly_cast(&unary->expression, get_builtin_type(BuiltinType::Bool), true)) {
 				fail();
 			}
+			unary->type = unary->expression->type;
+			break;
+		}
+		case UnaryOperation::atcast: {
+			typecheck(&unary->expression);
 			unary->type = unary->expression->type;
 			break;
 		}
@@ -2639,11 +2768,18 @@ Expression *Typechecker::bt_math_opt(Binary *binary) {
 	return binary;
 };
 
+Expression *Typechecker::bt_sized_int_modify_ass_unsized_int(Binary *binary) {
+	ensure_mutable(binary->left);
+	binary->right->type = binary->left->type;
+	binary->type = get_builtin_type(BuiltinType::None);
+	return binary;
+}
+
 void Typechecker::init_binary_typecheckers() {
 	construct(binary_typecheckers);
 
-#define y(left, right, operation) binary_typecheckers.get_or_insert({ get_builtin_type(left), get_builtin_type(right), operation })
-#define x(left, right, operation) y(BuiltinType::left, BuiltinType::right, BinaryOperation::operation)
+	#define y(left, right, operation) binary_typecheckers.get_or_insert({ get_builtin_type(left), get_builtin_type(right), operation })
+	#define x(left, right, operation) y(BuiltinType::left, BuiltinType::right, BinaryOperation::operation)
 
 	//
 	// Every type is equatable
@@ -2656,45 +2792,55 @@ void Typechecker::init_binary_typecheckers() {
 	x(Type, Type, equ) = &bt_comp_Type<false>;
 	x(Type, Type, neq) = &bt_comp_Type<true>;
 
-#define ORDERABLE(type) \
-x(type, type, les) = &bt_set_bool; \
-x(type, type, leq) = &bt_set_bool; \
-x(type, type, grt) = &bt_set_bool; \
-x(type, type, grq) = &bt_set_bool
+	#define ORDERABLE(type) \
+		x(type, type, les) = &bt_set_bool; \
+		x(type, type, leq) = &bt_set_bool; \
+		x(type, type, grt) = &bt_set_bool; \
+		x(type, type, grq) = &bt_set_bool
 
-#define MATHABLE_INTEGER(type) \
-x(type, type, add) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type + r.type, get_builtin_type(BuiltinType::type)); }>; \
-x(type, type, sub) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type - r.type, get_builtin_type(BuiltinType::type)); }>; \
-x(type, type, mul) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type * r.type, get_builtin_type(BuiltinType::type)); }>; \
-x(type, type, div) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type / r.type, get_builtin_type(BuiltinType::type)); }>; \
-x(type, type, mod) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type % r.type, get_builtin_type(BuiltinType::type)); }>;
+	#define MATHABLE_INTEGER(type) \
+		x(type, type, add) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type + r.type, get_builtin_type(BuiltinType::type)); }>; \
+		x(type, type, sub) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type - r.type, get_builtin_type(BuiltinType::type)); }>; \
+		x(type, type, mul) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type * r.type, get_builtin_type(BuiltinType::type)); }>; \
+		x(type, type, div) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type / r.type, get_builtin_type(BuiltinType::type)); }>; \
+		x(type, type, mod) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type % r.type, get_builtin_type(BuiltinType::type)); }>;
 
-#define BITWISE(type) \
-x(type, type, bxo) = &bt_take_left; \
-x(type, type, ban) = &bt_take_left; \
-x(type, type, bor) = &bt_take_left; \
-x(type, type, bsl) = &bt_take_left; \
-x(type, type, bsr) = &bt_take_left; \
+	#define BITWISE(type) \
+		x(type, type, bxo) = &bt_take_left; \
+		x(type, type, ban) = &bt_take_left; \
+		x(type, type, bor) = &bt_take_left; \
+		x(type, type, bsl) = &bt_take_left; \
+		x(type, type, bsr) = &bt_take_left; \
 
-#define SYMMETRIC(a, b, op) x(a, b, op) = x(b, a, op)
+	#define SYMMETRIC(a, b, op) x(a, b, op) = x(b, a, op)
 
-#define UNSIZED_INT_AND_SIZED_INT(t) \
-SYMMETRIC(t, UnsizedInteger, add) = &bt_unsized_int_and_sized_int_math; \
-SYMMETRIC(t, UnsizedInteger, sub) = &bt_unsized_int_and_sized_int_math; \
-SYMMETRIC(t, UnsizedInteger, mul) = &bt_unsized_int_and_sized_int_math; \
-SYMMETRIC(t, UnsizedInteger, div) = &bt_unsized_int_and_sized_int_math; \
-SYMMETRIC(t, UnsizedInteger, mod) = &bt_unsized_int_and_sized_int_math; \
-SYMMETRIC(t, UnsizedInteger, bor) = &bt_unsized_int_and_sized_int_math; \
-SYMMETRIC(t, UnsizedInteger, ban) = &bt_unsized_int_and_sized_int_math; \
-SYMMETRIC(t, UnsizedInteger, bxo) = &bt_unsized_int_and_sized_int_math; \
-SYMMETRIC(t, UnsizedInteger, bsl) = &bt_unsized_int_and_sized_int_math; \
-SYMMETRIC(t, UnsizedInteger, bsr) = &bt_unsized_int_and_sized_int_math; \
-SYMMETRIC(t, UnsizedInteger, equ) = &bt_unsized_int_and_sized_int_comp; \
-SYMMETRIC(t, UnsizedInteger, neq) = &bt_unsized_int_and_sized_int_comp; \
-SYMMETRIC(t, UnsizedInteger, les) = &bt_unsized_int_and_sized_int_comp; \
-SYMMETRIC(t, UnsizedInteger, leq) = &bt_unsized_int_and_sized_int_comp; \
-SYMMETRIC(t, UnsizedInteger, grt) = &bt_unsized_int_and_sized_int_comp; \
-SYMMETRIC(t, UnsizedInteger, grq) = &bt_unsized_int_and_sized_int_comp
+	#define UNSIZED_INT_AND_SIZED_INT(t) \
+		SYMMETRIC(t, UnsizedInteger, add) = &bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, sub) = &bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, mul) = &bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, div) = &bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, mod) = &bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, bor) = &bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, ban) = &bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, bxo) = &bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, bsl) = &bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, bsr) = &bt_unsized_int_and_sized_int_math; \
+		SYMMETRIC(t, UnsizedInteger, equ) = &bt_unsized_int_and_sized_int_comp; \
+		SYMMETRIC(t, UnsizedInteger, neq) = &bt_unsized_int_and_sized_int_comp; \
+		SYMMETRIC(t, UnsizedInteger, les) = &bt_unsized_int_and_sized_int_comp; \
+		SYMMETRIC(t, UnsizedInteger, leq) = &bt_unsized_int_and_sized_int_comp; \
+		SYMMETRIC(t, UnsizedInteger, grt) = &bt_unsized_int_and_sized_int_comp; \
+		SYMMETRIC(t, UnsizedInteger, grq) = &bt_unsized_int_and_sized_int_comp; \
+		/* x(t, UnsizedInteger, addass) = &bt_sized_int_modify_ass_unsized_int; */ \
+		/* x(t, UnsizedInteger, subass) = &bt_sized_int_modify_ass_unsized_int; */ \
+		/* x(t, UnsizedInteger, mulass) = &bt_sized_int_modify_ass_unsized_int; */ \
+		/* x(t, UnsizedInteger, divass) = &bt_sized_int_modify_ass_unsized_int; */ \
+		/* x(t, UnsizedInteger, modass) = &bt_sized_int_modify_ass_unsized_int; */ \
+		/* x(t, UnsizedInteger, bxoass) = &bt_sized_int_modify_ass_unsized_int; */ \
+		/* x(t, UnsizedInteger, banass) = &bt_sized_int_modify_ass_unsized_int; */ \
+		/* x(t, UnsizedInteger, borass) = &bt_sized_int_modify_ass_unsized_int; */ \
+		/* x(t, UnsizedInteger, bslass) = &bt_sized_int_modify_ass_unsized_int; */ \
+		/* x(t, UnsizedInteger, bsrass) = &bt_sized_int_modify_ass_unsized_int; */ \
 
 	ORDERABLE(Bool);
 	ORDERABLE(U8);

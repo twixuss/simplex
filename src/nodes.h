@@ -295,6 +295,7 @@ DEFINE_EXPRESSION(Match) {
 	struct Case {
 		Expression *from = 0; // null in default case.
 		Expression *to = 0;
+		String arrow_location;
 	};
 
 	Expression *expression = 0;

@@ -126,9 +126,10 @@ using GHashMap = HashMap<Key, Value, Traits, DefaultAllocator>;
 template <class Value, class Traits = DefaultHashTraits<Value>>
 using GHashSet = HashMap<Value, Empty, Traits, DefaultAllocator>;
 
-inline bool operator==(String a, char const *b) {
-	return a == as_utf8(as_span(b));
-}
+inline bool operator==(String a, char const *b) { return a == as_utf8(as_span(b)); }
+inline bool operator==(char const *a, String b) { return as_utf8(as_span(a)) == b; }
+inline bool operator==(Span<char> a, char const *b) { return a == as_span(b); }
+inline bool operator==(char const *a, Span<char> b) { return as_span(a) == b; }
 
 #define PASTE_CASE(x) case x:
 #define PASTE_CASE_0(x) case x[0]:

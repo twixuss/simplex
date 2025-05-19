@@ -69,6 +69,8 @@ struct Report {
 
 
 	void print();
+
+	inline constexpr auto operator<=>(Report const &that) const noexcept = default;
 };
 
 struct ReporterBase {

@@ -220,6 +220,7 @@ ENUMERATE_UNARY_OPERATIONS(x, y)
 	x(star, "*") \
 	x(addr, "&") \
 	x(typeof, "typeof") \
+	x(atcast, "@") \
 	y(pointer) \
 	y(dereference) \
 

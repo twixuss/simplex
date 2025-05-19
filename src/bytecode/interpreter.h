@@ -32,6 +32,7 @@ struct Interpreter {
 	int enabled_windows = ~DebugWindowFlag::stack;
 
 	struct Commands {
+		static constexpr char next_expression = '.';
 		static constexpr char next_instruction = 'n';
 		static constexpr char redraw_window = 'r';
 		static constexpr char toggle_hex = 'x';
@@ -71,6 +72,9 @@ struct Interpreter {
 			return (int)print(v);
 		}
 	}
+
+	StringBuilder output_builder;
+	String run_while_location_is;
 
 	ContiguousHashMap<s8 *, Empty> printed_value_addresses;
 

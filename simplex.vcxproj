@@ -52,12 +52,15 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>$(SolutionDir)dep\tl\include;$(SolutionDir)dep\clang-c\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <Profile>true</Profile>
       <StackReserveSize>4194304</StackReserveSize>
+      <AdditionalLibraryDirectories>$(SolutionDir)dep/clang-c/lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);libclang.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -67,6 +70,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>$(SolutionDir)dep\tl\include;$(SolutionDir)dep\clang-c\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -75,11 +79,14 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <Profile>true</Profile>
       <StackReserveSize>4194304</StackReserveSize>
+      <AdditionalLibraryDirectories>$(SolutionDir)dep/clang-c/lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);libclang.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\binary_operation.cpp" />
     <ClCompile Include="src\bytecode\builder.cpp" />
+    <ClCompile Include="src\c2simplex.cpp" />
     <ClCompile Include="src\copier.cpp" />
     <ClCompile Include="src\debug.cpp" />
     <ClCompile Include="src\do_all_paths_return.cpp" />
@@ -111,6 +118,7 @@
     <ClInclude Include="src\bytecode\builder.h" />
     <ClInclude Include="src\bytecode\bytecode.h" />
     <ClInclude Include="src\bytecode\interpreter.h" />
+    <ClInclude Include="src\c2simplex.h" />
     <ClInclude Include="src\capitalized.h" />
     <ClInclude Include="src\common.h" />
     <ClInclude Include="src\compiler_context.h" />

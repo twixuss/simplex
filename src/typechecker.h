@@ -264,12 +264,14 @@ private:
 	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply = true);
 	Expression *typecheck_constructor(Call *call, Struct *Struct);;
 
-	Expression *typecheck_binary_dot(Binary *binary, Reporter &reporter);
+	Expression *typecheck_binary_dot(Binary *binary);
 
 	bool ensure_not_overloaded(Name *name);
 	bool ensure_not_overloaded(Expression *expression);
 	
 	void add_defers(GList<Defer *> &defers);
+	
+	void ensure_mutable(Expression *expression);
 
 	//
 	// These `typecheck` overloads automatically substitute old node with new one.
@@ -338,6 +340,7 @@ public:
 	Expression *bt_unsized_int_and_sized_int_math(Binary *binary);
 	Expression *bt_unsized_int_and_sized_int_comp(Binary *binary);
 	Expression *bt_unsized_int(Binary *binary);
+	Expression *bt_sized_int_modify_ass_unsized_int(Binary *binary);
 
 	template <bool invert>
 	Expression *bt_comp_Type(Binary *binary);

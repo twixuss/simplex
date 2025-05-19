@@ -6,11 +6,21 @@
 
 # Syntax
 ## Comments
-They are just like in C, except nestable.
+They are just like in C:
 ```simplex
 // Single line comment
+
 /* Multiline comment */
+```
+Except nestable:
+```simplex
 /* /* Nested multiline comment */ */
+```
+And aware of strings:
+```simplex
+/*
+const str = "some */ text"
+*/
 ```
 ## Whitespace, semicolons and separators
 Spaces and tabs are not significant, newlines are. Semicolons are optional (required for multiple statements on a single line). Keywords `then` and `do` separate condition and body when both are on single line.
@@ -47,10 +57,7 @@ To disambiguate you can:
 ### Primary
 #### Names (Identifiers)
 A sequence of characters that starts with `_` or `a-Z`, and continues with `_` or ` ` (space, experimental) or `a-Z` or `0-9`.
-*I'm experimenting with multi-word names. For example
-`hello world` is a single identifier, like `hello_world`. If there are multiple spaces between names, they are not merged and treated as two separate tokens.*
-...
-*I think only one space should be allowed. That way there will not be different text that results in same name, which helps with search. If there are multiple spaces, treat as two separate names, this can reduce separator usage (`then`/`do`).*
+*I'm experimenting with spaces in names. For example `hello world` is a single identifier, like `hello_world`. If there are multiple spaces between names, they are not merged and treated as two separate tokens.*
 #### None literal
 `none`
 A value that represents nothing. 

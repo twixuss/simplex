@@ -62,6 +62,8 @@ SourceLocation get_source_location(String location, GetSourceLocationOptions opt
 		result.lines.add(Span(chunk_start, (umm)0));
 	}
 	split_by_one(Span(chunk_start, chunk_end), u8'\n', [&](String line) {
+		if (line.count && line.back() == '\r')
+			--line.count;
 		result.lines.add(line);
 	});
 	for (int i = 0; i < missing_lines_after; ++i) {

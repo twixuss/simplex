@@ -42,7 +42,7 @@ restart:
 
 	Token token;
 	token.string.data = cursor;
-
+	
 	// ("&", "=")
 	// "&"
 	// "&="
@@ -171,18 +171,43 @@ case a: {                                                                    \
 				goto restart;
 			} else if (*cursor == '*') {
 				int level = 1;
+				enum class In {
+					nothing,
+					string,
+				};
+				In in = In::nothing;
 				while (true) {
-					if (String(cursor, 2) == "/*") {
-						cursor += 2;
-						level += 1;
-					} else if (String(cursor, 2) == "*/") {
-						cursor += 2;
-						level -= 1;
-						if (level == 0)
+					switch (in) {
+						case In::nothing: {
+							if (String(cursor, 2) == "/*") {
+								cursor += 2;
+								level += 1;
+							} else if (String(cursor, 2) == "*/") {
+								cursor += 2;
+								level -= 1;
+								if (level == 0)
+									goto restart;
+							} else if (*cursor == '"') {
+								in = In::string;
+								++cursor;
+							} else {
+								++cursor;
+							}
 							break;
+						}
+						case In::string: {
+							if (String(cursor, 2) == "\\\"") {
+								cursor += 2;
+							} else if (*cursor == '"') {
+								in = In::nothing;
+								++cursor;
+							} else {
+								++cursor;
+							}
+							break;
+						}
 					}
-					next();
-					if (cursor > source.end()) {
+					if (cursor >= source.end()) {
 						immediate_reporter.error(token.string.take(2), "Unclosed comment");
 						return {};
 					}

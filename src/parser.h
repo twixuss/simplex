@@ -44,6 +44,9 @@ struct Parser {
 	YieldResult last_yield_result = YieldResult::fail;
 	List<utf8> extern_library = {};
 
+	// Debug
+	List<Token> all_tokens;
+
 	List<utf8> unescape_string_or_fail(String string);
 
 	template <class T>

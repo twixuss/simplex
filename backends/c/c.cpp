@@ -9,6 +9,7 @@
 
 #include <tl/process.h>
 #include <tl/linear_set.h>
+#include <tl/variant.h>
 
 CompilerContext *context;
 
@@ -134,7 +135,11 @@ void append(StringBuilder &builder, CType type) {
 			append_format(builder, "_{}", head->uid);
 		},
 		[&](ArrayType *array) {
-			append_format(builder, "_{}", *built_array_types.find(array).value);
+			if (auto found = built_array_types.find(array)) {
+				append_format(builder, "_{}", *found.value);
+			} else {
+				append_format(builder, "_ARRAY_OF_{}_WHICH_IS_DECLARED_AFTER", direct(array->element_type)->uid);
+			}
 		},
 	});
 }
@@ -639,6 +644,47 @@ void init(CompilerContext *c) {
 	init_printer();
 }
 
+struct DirectExpression {
+	Expression *expression = 0;
+	DirectExpression(Expression *expression) : expression(direct(expression)) {}
+	inline constexpr auto operator<=>(DirectExpression const &) const noexcept = default;
+};
+
+void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_declare) {
+	if (find(types_to_declare.span(), DirectExpression{root})) {
+		return;
+	}
+	visit(root, Combine {
+		[&] (auto) {},
+		[&] (Lambda *lambda) {
+			if (lambda->head.is_template)
+				return ForEach_dont_recurse;
+			return ForEach_continue;
+		},
+		[&] (Expression *expression) {
+			if (auto array = as<ArrayType>(expression)) {
+				types_to_declare.add(array);
+			} else if (auto array = as<ArrayType>(expression->type)) {
+				types_to_declare.add(array);
+			}
+		},
+		[&] (ArrayType *array) {
+			types_to_declare.add(array);
+		},
+		[&] (Struct *s) {
+			int dummy = 443;
+			for (auto member : s->members) {
+				add_dependencies(member, types_to_declare);
+			}
+			types_to_declare.add(s);
+			return ForEach_dont_recurse;
+		},
+		[&](Name *name) {
+			add_dependencies(name->definition(), types_to_declare);
+		}
+	});
+}
+	
 extern "C" __declspec(dllexport)
 bool convert_ast(Block *global_block, Lambda *main_lambda, Definition *main_lambda_definition) {
 	StringBuilder builder;
@@ -678,6 +724,10 @@ typedef int64_t S64;
 	}
 
 
+	LinearSet<DirectExpression> types_to_declare;
+
+	add_dependencies(global_block, types_to_declare);
+
 	append(builder, R"(
 //
 // Struct declarations
@@ -689,66 +739,40 @@ typedef int64_t S64;
 			append_format(builder, "typedef struct _{} _{};\n", s->uid, s->uid);
 		},
 	});
-	
+
 	append(builder, R"(
 //
 // Struct definitions
-// TODO: order dependencies
 //
 )");
-	visit(global_block, Combine {
-		[&] (auto) {},
-		[&] (Struct *s) {
-			append_format(builder, "struct _{} {{\n", s->uid);
-			++tabs;
-			for (auto member : s->members) {
-				append_line(builder, "{} _{};", ctype(member->type), member->uid);
-			}
-			--tabs;
-			append(builder, "};\n");
-		},
-	});
 	
-	append(builder, R"(
-//
-// Array definitions
-//
-)");
-	auto append_array_struct = [&] (ArrayType *array){
-		if (built_array_types.find(array))
-			return;
+	for (auto type : types_to_declare) {
+		visit_one(type.expression, Combine {
+			[&] (auto) {},
+			[&] (Struct *s) {
+				append_format(builder, "struct _{} {{ // {}\n", s->uid, s->definition ? s->definition->name : to_string(get_source_location(s->location)));
+				++tabs;
+				for (auto member : s->members) {
+					append_line(builder, "{} _{};", ctype(member->type), member->uid);
+				}
+				--tabs;
+				append(builder, "};\n");
+			},
+			[&] (ArrayType *array){
+				if (built_array_types.find(array))
+					return;
 
-		append_format(builder, 
+				append_format(builder, 
 R"(typedef struct {{
 	{} data[{}];
 }} _{};
 )", ctype(array->element_type), array->count.value(), array->uid);
 
-		built_array_types.get_or_insert(array) = array->uid;
-	};
-
-	visit(global_block, Combine{
-		// NOTE: `this auto &&self` is required in all overloads apparently.
-		// NOTE2: Originally this was using `this auto &&self`, but msvc is buggy and for some reason passes `builder` by copy or something. addresses are different.
-		//        Using outer lambda as a workaround. I tried reproducing this on godbolt, it works as expected there.
-		[&](Node *node) {},
-		[&](Lambda *lambda) {
-			if (lambda->head.is_template)
-				return ForEach_dont_recurse;
-			return ForEach_continue;
-		},
-		[&](Expression *expression) {
-			if (auto array = as<ArrayType>(expression)) {
-				append_array_struct(array);
-			} else if (auto array = as<ArrayType>(expression->type)) {
-				append_array_struct(array);
-			}
-		},
-		[&](ArrayType *array) {
-			append_array_struct(array);
-		},
-	});
-
+				built_array_types.get_or_insert(array) = array->uid;
+			},
+		});
+	}
+	
 	append_format(builder, R"(
 //
 // Intrinsics declarations

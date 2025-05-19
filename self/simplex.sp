@@ -5,7 +5,16 @@ const Lexer = struct {
 }
 
 const main = fn () {
+    current_allocator = dyn_page_allocator
+
     var source_path = "F:\\projects\\simplex\\self\\simplex.sp"
-    var source = read_entire_file(source_path)
-    println(source)
+    if !read_entire_file(source_path, &var source: Buffer) {
+        print("Could not read ")
+        println(source_path)
+        return 1
+    }
+
+
+    println(source.span)
+    return 0
 }

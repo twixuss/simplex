@@ -18,6 +18,8 @@ void append(StringBuilder &builder, Nameable<BinaryOperation> op);
 Optional<BinaryOperation> as_binary_operation(TokenKind kind);
 
 bool is_ass(BinaryOperation op);
+bool is_modass(BinaryOperation op);
+BinaryOperation deass(BinaryOperation op);
 bool could_be_unary(BinaryOperation op);
 bool is_right_associative(BinaryOperation operation);
 u32 get_precedence(BinaryOperation operation);
@@ -151,4 +153,10 @@ enum class LowBinaryOperation : u8 {
 	// memory comparisons
 	memcmp_equ,
 	memcmp_neq,
+	// output `get_size(binary->right)` zero bytes
+	zeroinit,
+	// output binary->left != 0
+	left_to_bool,
+	// output binary->right != 0
+	right_to_bool,
 };

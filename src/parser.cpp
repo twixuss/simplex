@@ -835,27 +835,27 @@ Expression *Parser::parse_expression_0() {
 			skip_lines();
 
 			while (true) {
-				Expression *from = 0;
+				auto &Case = match->cases.add();
 				if (token.kind == Token_else) {
 					next();
 				} else {
-					from = parse_expression();
+					Case.from = parse_expression();
 				}
 
 				skip_lines();
 				expect(const_string_to_token_kind("=>"s));
+				Case.arrow_location = token.string;
 				next();
 				skip_lines();
 
-				auto to = parse_expression();
+				Case.to = parse_expression();
 
-				auto &Case = match->cases.add({from, to});
-				if (!from) {
+				if (!Case.from) {
 					if (match->default_case) {
-						reporter.error(to->location, "Match expression can not have multiple default cases.");
+						reporter.error(Case.to->location, "Match expression can not have multiple default cases.");
 						yield(YieldResult::fail);
 					}
-					match->default_case = to;
+					match->default_case = Case.to;
 				}
 
 				skip_lines();
@@ -1245,6 +1245,7 @@ void Parser::main() {
 	scoped_replace(debug_current_location, {});
 	
 	token = lexer.next_token();
+	all_tokens.add(token);
 
 	while (true) {
 		skip_lines();
@@ -1334,6 +1335,7 @@ void Parser::ensure_allowed_in_statement_context(Node *node) {
 bool Parser::next() {
 	previous_token = token;
 	token = lexer.next_token();
+	all_tokens.add(token);
 	debug_current_location = token.string;
 	return token.kind != Token_eof;
 }
@@ -1374,6 +1376,7 @@ void Parser::skip_lines() {
 	while (token.kind == '\n') {
 		previous_token = token;
 		token = lexer.next_token();
+		all_tokens.add(token);
 	}
 	debug_current_location = token.string;
 }
@@ -1388,6 +1391,13 @@ void Parser::init(String source) {
 }
 
 void Parser::free() {
+	if (context_base->print_tokens) {
+		withs(context_base->stdout_mutex) {
+			for (auto token : all_tokens) {
+				println(token);
+			}
+		};
+	}
 	add_fiber_to_reuse(fiber);
 	fiber = {};
 }

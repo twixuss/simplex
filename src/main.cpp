@@ -26,6 +26,7 @@
 #include "visit.h"
 #include "backend.h"
 #include "compiler_context.h"
+#include "c2simplex.h"
 
 CompilerContext _context, *context = &_context;
 
@@ -442,7 +443,7 @@ void init_builtin_types() {
 	count->name = u8"count"s;
 	count->mutability = Mutability::variable;
 	count->offset = 8;
-	count->type = get_builtin_type(BuiltinType::S64);
+	count->type = get_builtin_type(BuiltinType::U64);
 	count->container = s;
 	s->members.add(count);
 
@@ -540,6 +541,24 @@ s32 tl_main(Span<Span<utf8>> args) {
 	debug_init();
 
 	set_console_encoding(Encoding::utf8);
+	
+	/*
+	c2simplex(u8R"(
+#define X1 1
+#ifdef X0
+	#define A 2
+#elifdef X0
+	#define B 3
+#elifdef X1
+	#define C 4
+#elifdef X1
+	#define D 5
+#else
+	#define E 6
+#endif
+)"s);
+	return 1;
+	*/
 
 	defer {
 		if (context_base->enable_time_log) {

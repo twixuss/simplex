@@ -1,21 +1,22 @@
 import "windows"
 import "allocator"
 
+// TODO: implicit cast to string
 const Buffer = struct {
     span: String
     allocator: Allocator
 }
 
-fn create_buffer(size: Int, alignment: Int = 8, is_zeroed: Bool = false): Buffer => {
+fn create_buffer(size: U64, alignment: U64 = 8, is_zeroed: Bool = false): Buffer => {
     var result: Buffer
     result.allocator = current_allocator
     let allocation = result.allocator.allocate(Allocation(size = size, alignment = alignment, is_zeroed = is_zeroed))
-    result.span.data = allocation.data
-    result.span.count = allocation.size
+    result.span.data = @allocation.data
+    result.span.count = size
     return result
 }
 
-fn free(buffer: *Buffer): None => {
+fn free(buffer: *var Buffer): None => {
     buffer.allocator.free(Allocation(data = buffer.span.data, size = buffer.span.count))
     *buffer = none as Buffer
 }
@@ -39,15 +40,15 @@ fn read_entire_file(path: String, out_result: *var Buffer): Bool => {
     var file = CreateFileA(path.data, GENERIC_READ, FILE_SHARE_READ, none, OPEN_EXISTING, 0, none)
     defer CloseHandle(file)
 
-    SetFilePointerEx(file, 0, 0, FILE_END);
+    SetFilePointerEx(file, 0, none, FILE_END);
 
 	var file_size: S64
 	SetFilePointerEx(file, 0, &file_size, FILE_CURRENT)
 
-    SetFilePointerEx(file, 0, 0, FILE_BEGIN);
+    SetFilePointerEx(file, 0, none, FILE_BEGIN);
 
-    var result = create_buffer(file_size)
-    defer if !ok then buffer.free()
+    var result = create_buffer(@file_size)
+    defer if !ok then result.free()
 
     const max_read_size = 0xffff_ffff
     var bytes_remaining = file_size
@@ -61,7 +62,7 @@ fn read_entire_file(path: String, out_result: *var Buffer): Bool => {
         bytes_remaining -= max_read_size
         dest += max_read_size
     }
-    if !ReadFile(file, dest, bytes_remaining, &bytes_read, 0) {
+    if !ReadFile(file, dest, @bytes_remaining, &bytes_read, 0) {
         ok = false
         return ok
     }

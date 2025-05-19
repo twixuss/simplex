@@ -26,6 +26,7 @@
     <ClCompile Include="src\is_constant.cpp" />
     <ClCompile Include="src\is_mutable.cpp" />
     <ClCompile Include="src\do_all_paths_return.cpp" />
+    <ClCompile Include="src\c2simplex.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="x.h" />
@@ -68,5 +69,6 @@
     <ClInclude Include="src\do_all_paths_return.h" />
     <ClInclude Include="src\backend.h" />
     <ClInclude Include="src\compiler_context.h" />
+    <ClInclude Include="src\c2simplex.h" />
   </ItemGroup>
 </Project>

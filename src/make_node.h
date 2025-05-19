@@ -21,6 +21,7 @@ BuiltinTypeName *make_name(BuiltinType type, String location = {});
 Name *make_name(Definition *definition, String location = {});
 
 Type make_pointer(Type type, Mutability mutability);
+Expression *make_address(Expression *expression);
 
 ArrayType *make_array_type(Type element_type, u64 count);
 

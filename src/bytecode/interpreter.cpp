@@ -86,7 +86,15 @@ void Interpreter::run_one_instruction() {
 	auto i = bytecode->instructions[current_instruction_index];
 	auto std_out = GetStdHandle(STD_OUTPUT_HANDLE);
 
-	if (interactive) {
+	bool skip = false;
+	if (run_while_location_is.data == i.source_location.data && run_while_location_is.count == i.source_location.count) {
+		skip = true;
+	} else {
+		// Don't want to always stop on instructions that don't have a location.
+		run_while_location_is = {0, 1};
+	}
+
+	if (interactive && !skip) {
 		scoped_replace(current_printer, Printer{
 			[](Span<utf8> span, void *) {
 				auto std_out = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -111,7 +119,7 @@ void Interpreter::run_one_instruction() {
 				
 		SetConsoleCursorPosition(std_out, {0, 0});
 
-		auto header = [&](char const *name, int flag) {
+		auto header = [&](Span<char> name, int flag) {
 			with(((enabled_windows & flag) ? ConsoleColor::cyan : ConsoleColor::gray), println("==== {} {} ====", log2(flag), name));
 			return enabled_windows & flag;
 		};
@@ -135,7 +143,7 @@ void Interpreter::run_one_instruction() {
 		}
 
 		for (int debug_window_index = 0; debug_window_index != (int)DebugWindowKind::count; ++debug_window_index) {
-			if (debug_window_index == (int)DebugWindowKind::bytecode && header("Bytecode", DebugWindowFlag::bytecode)) {
+			if (debug_window_index == (int)DebugWindowKind::bytecode && header("Bytecode"s, DebugWindowFlag::bytecode)) {
 				for (s64 o = -5; o <= 5; ++o) {
 					scoped_if(next_instruction_color, o == 0);
 
@@ -147,7 +155,7 @@ void Interpreter::run_one_instruction() {
 					}
 				}
 			}
-			else if (debug_window_index == (int)DebugWindowKind::registers && header("Registers", DebugWindowFlag::registers)) {
+			else if (debug_window_index == (int)DebugWindowKind::registers && header("Registers"s, DebugWindowFlag::registers)) {
 				auto print_register = [&] (String name, Register r) {
 					print("{}: ", name);
 					u64 current = registers[(int)r];
@@ -167,7 +175,7 @@ void Interpreter::run_one_instruction() {
 					print_register(tformat(u8"r{}", i), (Register)i);
 				}
 			}
-			else if (debug_window_index == (int)DebugWindowKind::stack && header("Stack", DebugWindowFlag::stack)) {
+			else if (debug_window_index == (int)DebugWindowKind::stack && header("Stack"s, DebugWindowFlag::stack)) {
 				if (lambda) {
 					for (s64 i = lambda->stack_frame_size - 8; i >= 0; i -= 8) {
 						s64 addr = reg(Register::stack) + i;
@@ -191,7 +199,7 @@ void Interpreter::run_one_instruction() {
 					}
 				}
 			}
-			else if (debug_window_index == (int)DebugWindowKind::source && header("Source", DebugWindowFlag::source)) {
+			else if (debug_window_index == (int)DebugWindowKind::source && header(tformat("Source {}", i.source_location ? get_source_location(i.source_location).file : u8""s), DebugWindowFlag::source)) {
 				if (i.source_location.count) {
 					auto location = get_source_location(i.source_location, {.lines_before = 8, .lines_after = 8});
 
@@ -200,7 +208,7 @@ void Interpreter::run_one_instruction() {
 					println("unknown source");
 				}
 			}
-			else if (debug_window_index == (int)DebugWindowKind::arguments && header("Arguments", DebugWindowFlag::arguments)) {
+			else if (debug_window_index == (int)DebugWindowKind::arguments && header("Arguments"s, DebugWindowFlag::arguments)) {
 				if (lambda) {
 					for (auto parameter : lambda->head.parameters_block.definition_list) {
 						print("{}: ", parameter->name);
@@ -213,7 +221,7 @@ void Interpreter::run_one_instruction() {
 					}
 				}
 			}
-			else if (debug_window_index == (int)DebugWindowKind::locals && header("Locals", DebugWindowFlag::locals)) {
+			else if (debug_window_index == (int)DebugWindowKind::locals && header("Locals"s, DebugWindowFlag::locals)) {
 				if (lambda) {
 					for (auto local : lambda->locals) {
 						print("{}: ", local->name);
@@ -230,9 +238,13 @@ void Interpreter::run_one_instruction() {
 
 		println();
 		println();
+		println("{} - next expression", Commands::next_expression);
 		println("{} - next instruction", Commands::next_instruction);
 		println("{} - redraw window", Commands::redraw_window);
 		println("{} - toggle hex", Commands::toggle_hex);
+		println();
+		println("Output:");
+		println(output_builder);
 		println();
 		println();
 		println();
@@ -243,6 +255,10 @@ void Interpreter::run_one_instruction() {
 			ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
 				(int &)enabled_windows ^= 1 << (pressed_key - '0');
 				goto redraw;
+			}
+			case Commands::next_expression: {
+				run_while_location_is = i.source_location;
+				break;
 			}
 			case Commands::next_instruction: {
 				break;
@@ -262,10 +278,12 @@ void Interpreter::run_one_instruction() {
 
 	previous_registers = registers;
 
-	switch (i.kind) {
-#define x(name, fields) case InstructionKind::name: execute(i.v_##name); break;
-		ENUMERATE_BYTECODE_INSTRUCTION_KIND
-#undef x
+	{
+		switch (i.kind) {
+			#define x(name, fields) case InstructionKind::name: execute(i.v_##name); break;
+			ENUMERATE_BYTECODE_INSTRUCTION_KIND
+			#undef x
+		}
 	}
 	++current_instruction_index;
 }
@@ -283,7 +301,12 @@ int Interpreter::print_value_inner(Address address, Type type, PrintValueOptions
 		if (types_match(type, BuiltinType::S32)) { return print_int<s32>(address, options); }
 		if (types_match(type, BuiltinType::S64)) { return print_int<s64>(address, options); }
 		if (types_match(type, context->builtin_structs.String)) {
-			return print("\"{}\"", EscapedString(Span((utf8 *)val8(address), (umm)val8(address withx { it.offset += 8; }))));
+			auto string = Span((utf8 *)val8(address), (umm)val8(address withx { it.offset += 8; }));
+			if (string.count > 32) {
+				return print("\"{}...{}\"", EscapedString(string.take(16)), EscapedString(string.take(-16)));
+			} else {
+				return print("\"{}\"", EscapedString(string));
+			}
 		}
 		auto directed = direct(type);
 		if (auto struct_ = as<Struct>(directed)) {
@@ -793,15 +816,24 @@ void Interpreter::execute(Instruction::intrinsic_t i) {
 }
 	
 void Interpreter::execute_intrinsic_print_S64(Instruction::intrinsic_t i) {
+	scoped_replace_if(current_printer, {
+		[](String string, void *) { append(Interpreter::current_interpreter->output_builder, string); }
+	}, context_base->run_interactive);
+
 	print(val8(Address { .base = Register::stack }));
 }
 void Interpreter::execute_intrinsic_print_String(Instruction::intrinsic_t i) {
 	auto data  = val8(Address { .base = Register::stack });
 	auto count = val8(Address { .base = Register::stack, .offset = 8 });
+
+	scoped_replace_if(current_printer, {
+		[](String string, void *) { append(Interpreter::current_interpreter->output_builder, string); }
+	}, context_base->run_interactive);
+
 	print(String((utf8 *)data, count));
 }
 void Interpreter::execute_intrinsic_panic(Instruction::intrinsic_t i) {
-	immediate_reporter.error("PANIC");
+	immediate_reporter.error("PANIC: {}", i.message);
 	invalid_code_path();
 }
 void Interpreter::execute_intrinsic_debug_break(Instruction::intrinsic_t i) {

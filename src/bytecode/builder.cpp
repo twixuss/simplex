@@ -35,6 +35,7 @@ Builder::Builder() {
 	for (umm i = 0; i < (umm)Register::base; ++i) {
 		available_registers.set(i, true);
 	}
+	I(intrinsic, Intrinsic::panic, u8"Called NULL!!!"s);
 }
 
 Bytecode Builder::build(Expression *expression) {
@@ -800,14 +801,36 @@ void Builder::output_impl(Site destination, Binary *binary) {
 					}();
 
 					switch (size) {
-						case 1: I(cmp1, .d = destination, .a = left, .b = right, .cmp = cmp); return;
-						case 2: I(cmp2, .d = destination, .a = left, .b = right, .cmp = cmp); return;
-						case 4: I(cmp4, .d = destination, .a = left, .b = right, .cmp = cmp); return;
-						case 8: I(cmp8, .d = destination, .a = left, .b = right, .cmp = cmp); return;
+						case 1: I(cmp1, .d = destination, .a = left, .b = right, .cmp = cmp); break;
+						case 2: I(cmp2, .d = destination, .a = left, .b = right, .cmp = cmp); break;
+						case 4: I(cmp4, .d = destination, .a = left, .b = right, .cmp = cmp); break;
+						case 8: I(cmp8, .d = destination, .a = left, .b = right, .cmp = cmp); break;
 					}
 					return;
 				}
 			}
+		}
+		case LowBinaryOperation::zeroinit: {
+			if (destination.is_address()) {
+				I(set, destination.get_address(), 0, get_size(binary->right));
+			} else {
+				I(copy, destination.get_register(), 0, get_size(binary->right));
+			}
+			return;
+		}
+		case LowBinaryOperation::left_to_bool:
+		case LowBinaryOperation::right_to_bool: {
+			auto selected = binary->low_operation == LowBinaryOperation::left_to_bool ? binary->left : binary->right;
+			tmpreg(value);
+			output(value, selected);
+			auto size = get_size(selected->type);
+			switch (size) {
+				case 1: I(cmp1, .d = destination, .a = value, .b = 0, .cmp = Comparison::not_equals); break;
+				case 2: I(cmp2, .d = destination, .a = value, .b = 0, .cmp = Comparison::not_equals); break;
+				case 4: I(cmp4, .d = destination, .a = value, .b = 0, .cmp = Comparison::not_equals); break;
+				case 8: I(cmp8, .d = destination, .a = value, .b = 0, .cmp = Comparison::not_equals); break;
+			}
+			return;
 		}
 	}
 		
@@ -1036,7 +1059,7 @@ case n: {                                                                       
 			break;
 		}
 	} 
-	invalid_code_path();
+	invalid_code_path("Unhandled binary operation {} {} {}", binary->left->type, binary->operation, binary->right->type);
 }
 void Builder::output_impl(Site destination, Match *match) {
 	// FIXME: match without a default case can't always yield a value, so I think 
@@ -1060,6 +1083,7 @@ void Builder::output_impl(Site destination, Match *match) {
 		{
 			tmpreg(from);
 			output(from, Case.from);
+			scoped_replace(current_location, Case.from->location);
 			auto size = get_size(match->expression->type);
 			switch (size) {
 				case 1: I(cmp1, from, matchee, from, Comparison::equals); break;

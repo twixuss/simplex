@@ -1,22 +1,53 @@
 
 import "c_types"
-const CHAR = U8
-const WCHAR = U16
-const BOOL = Bool
-const LONG = S32
-const ULONG = U32
-const LONGLONG = S64
-const ULONGLONG = U64
-const UINT = U32
-const DWORD = U32
-const LPDWORD = *U32
 
-const LARGE_INTEGER = S64
-const PLARGE_INTEGER = *LARGE_INTEGER
-const ULARGE_INTEGER = U64
-const PULARGE_INTEGER = *ULARGE_INTEGER
+const VOID = None
+const PVOID = *var None
+const LPVOID = *var None
+const LPCVOID = *None
+
+const BOOL = Bool
+
+const CHAR = U8
+const UCHAR = U8
+const PUCHAR = *var U8
+const LPSTR = *var U8
+const LPCSTR = *U8
+
+const WCHAR = U16
+const LPWCH = *var U16
+const PWSTR = *var U16
+const LPWSTR = *var U16
+const LPCWSTR = *U16
+
+const DWORD = U32
+const PDWORD = *var U32
+const LPDWORD = *var U32
+
+const UINT = U32
+
+const ULONG = U32
+const PULONG = *var U32
+
+const LONG = S32
+const PLONG = *var S32
 
 const SIZE_T = U64
+
+const ULONGLONG = U64
+
+const ULONG_PTR = U64
+
+const ULARGE_INTEGER = U64
+const PULARGE_INTEGER = *var U64
+
+const SSIZE_T = S64
+
+const LONGLONG = S64
+
+const LARGE_INTEGER = S64
+const PLARGE_INTEGER = *var S64
+
 
 const WPARAM = U64
 const LPARAM = S64
@@ -24,10 +55,6 @@ const LRESULT = S64
 const HRESULT = S32
 
 const HWND = *None
-const LPSTR = *var CHAR
-const LPCSTR = *CHAR
-const LPWSTR = *var WCHAR
-const LPCWSTR = *WCHAR
 const HANDLE = *None
 const LPHANDLE = *var *None
 const HMENU = *None
@@ -36,7 +63,6 @@ const HINSTANCE = *None
 const HCURSOR = *None
 const HICON = *None
 const HBRUSH = *None
-const LPVOID = *var None
 const WNDPROC = *None
 
 const WNDCLASSEXA = struct {
@@ -67,19 +93,6 @@ const MSG = struct {
     time:    DWORD
     pt:      POINT
 }
-const SECURITY_ATTRIBUTES = struct {
-    nLength: DWORD
-    lpSecurityDescriptor: LPVOID
-    bInheritHandle: BOOL
-}
-const LPSECURITY_ATTRIBUTES = *SECURITY_ATTRIBUTES
-
-const FILETIME = struct {
-    dwLowDateTime:  DWORD
-    dwHighDateTime: DWORD
-}
-const PFILETIME = *FILETIME
-const LPFILETIME = *FILETIME
 
 const MAX_PATH = 260
 
@@ -588,6 +601,9 @@ const FILE_SUPPORTS_GHOSTING              = 0x40000000
 
 const FILE_INVALID_FILE_ID               = -1
 
+const FILE_BEGIN           = 0
+const FILE_CURRENT         = 1
+const FILE_END             = 2
 //
 // Constants
 //
@@ -669,7 +685,6 @@ fn GetLastError(): DWORD => #extern;
 //
 // fileapi.h
 //
-
 const DISK_SPACE_INFORMATION = struct {
     ActualAvailableAllocationUnits:       ULONGLONG
     ActualPoolUnavailableAllocationUnits: ULONGLONG
@@ -747,8 +762,8 @@ fn FindFirstChangeNotificationA(lpPathName: LPCSTR, bWatchSubtree: BOOL, dwNotif
 fn FindFirstChangeNotificationW(lpPathName: LPCWSTR, bWatchSubtree: BOOL, dwNotifyFilter: DWORD): HANDLE => #extern
 fn FindFirstFileA(lpFileName: LPCSTR, lpFindFileData: LPWIN32_FIND_DATAA): HANDLE => #extern
 fn FindFirstFileW(lpFileName: LPCWSTR, lpFindFileData: LPWIN32_FIND_DATAW): HANDLE => #extern
-fn FindFirstFileExA(lpFileName: LPCSTR, fInfoLevelId: FINDEX_INFO_LEVELS, lpFindFileData: LPVOID, fSearchOp: FINDEX_SEARCH_OPS, lpSearchFilter: LPVOID, dwAdditionalFlags: DWORD): HANDLE => #extern
-fn FindFirstFileExW(lpFileName: LPCWSTR, fInfoLevelId: FINDEX_INFO_LEVELS, lpFindFileData: LPVOID, fSearchOp: FINDEX_SEARCH_OPS, lpSearchFilter: LPVOID, dwAdditionalFlags: DWORD): HANDLE => #extern
+//fn FindFirstFileExA(lpFileName: LPCSTR, fInfoLevelId: FINDEX_INFO_LEVELS, lpFindFileData: LPVOID, fSearchOp: FINDEX_SEARCH_OPS, lpSearchFilter: LPVOID, dwAdditionalFlags: DWORD): HANDLE => #extern
+//fn FindFirstFileExW(lpFileName: LPCWSTR, fInfoLevelId: FINDEX_INFO_LEVELS, lpFindFileData: LPVOID, fSearchOp: FINDEX_SEARCH_OPS, lpSearchFilter: LPVOID, dwAdditionalFlags: DWORD): HANDLE => #extern
 fn FindFirstVolumeW(lpszVolumeName: LPWSTR, cchBufferLength: DWORD): HANDLE => #extern
 fn FindNextChangeNotification(hChangeHandle: HANDLE): BOOL => #extern
 fn FindNextFileA(hFindFile: HANDLE, lpFindFileData: LPWIN32_FIND_DATAA): BOOL => #extern
@@ -766,8 +781,8 @@ fn GetDriveTypeA(lpRootPathName: LPCSTR): UINT => #extern
 fn GetDriveTypeW(lpRootPathName: LPCWSTR): UINT => #extern
 fn GetFileAttributesA(lpFileName: LPCSTR): DWORD => #extern
 fn GetFileAttributesW(lpFileName: LPCWSTR): DWORD => #extern
-fn GetFileAttributesExA(lpFileName: LPCSTR, fInfoLevelId: GET_FILEEX_INFO_LEVELS, lpFileInformation: LPVOID): BOOL => #extern
-fn GetFileAttributesExW(lpFileName: LPCWSTR, fInfoLevelId: GET_FILEEX_INFO_LEVELS, lpFileInformation: LPVOID): BOOL => #extern
+//fn GetFileAttributesExA(lpFileName: LPCSTR, fInfoLevelId: GET_FILEEX_INFO_LEVELS, lpFileInformation: LPVOID): BOOL => #extern
+//fn GetFileAttributesExW(lpFileName: LPCWSTR, fInfoLevelId: GET_FILEEX_INFO_LEVELS, lpFileInformation: LPVOID): BOOL => #extern
 fn GetFileInformationByHandle(hFile: HANDLE, lpFileInformation: LPBY_HANDLE_FILE_INFORMATION): BOOL => #extern
 fn GetFileSize(hFile: HANDLE, lpFileSizeHigh: LPDWORD): DWORD => #extern
 fn GetFileSizeEx(hFile: HANDLE, lpFileSize: PLARGE_INTEGER): BOOL => #extern
@@ -791,14 +806,14 @@ fn LockFile(hFile: HANDLE, dwFileOffsetLow: DWORD, dwFileOffsetHigh: DWORD, nNum
 fn LockFileEx(hFile: HANDLE, dwFlags: DWORD, dwReserved: DWORD, nNumberOfBytesToLockLow: DWORD, nNumberOfBytesToLockHigh: DWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
 fn QueryDosDeviceW(lpDeviceName: LPCWSTR, lpTargetPath: LPWSTR, ucchMax: DWORD): DWORD => #extern
 fn ReadFile(hFile: HANDLE, lpBuffer: LPVOID, nNumberOfBytesToRead: DWORD, lpNumberOfBytesRead: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
-fn ReadFileEx(hFile: HANDLE, lpBuffer: LPVOID, nNumberOfBytesToRead: DWORD, lpOverlapped: LPOVERLAPPED, lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE): BOOL => #extern
-fn ReadFileScatter(hFile: HANDLE, aSegmentArray: *var FILE_SEGMENT_ELEMENT, nNumberOfBytesToRead: DWORD, lpReserved: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
+//fn ReadFileEx(hFile: HANDLE, lpBuffer: LPVOID, nNumberOfBytesToRead: DWORD, lpOverlapped: LPOVERLAPPED, lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE): BOOL => #extern
+//fn ReadFileScatter(hFile: HANDLE, aSegmentArray: *var FILE_SEGMENT_ELEMENT, nNumberOfBytesToRead: DWORD, lpReserved: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
 fn RemoveDirectoryA(lpPathName: LPCSTR): BOOL => #extern
 fn RemoveDirectoryW(lpPathName: LPCWSTR): BOOL => #extern
 fn SetEndOfFile(hFile: HANDLE): BOOL => #extern
 fn SetFileAttributesA(lpFileName: LPCSTR, dwFileAttributes: DWORD): BOOL => #extern
 fn SetFileAttributesW(lpFileName: LPCWSTR, dwFileAttributes: DWORD): BOOL => #extern
-fn SetFileInformationByHandle(hFile: HANDLE, FileInformationClass: FILE_INFO_BY_HANDLE_CLASS, lpFileInformation: LPVOID, dwBufferSize: DWORD): BOOL => #extern
+//fn SetFileInformationByHandle(hFile: HANDLE, FileInformationClass: FILE_INFO_BY_HANDLE_CLASS, lpFileInformation: LPVOID, dwBufferSize: DWORD): BOOL => #extern
 fn SetFilePointer(hFile: HANDLE, lDistanceToMove: LONG, lpDistanceToMoveHigh: PLONG, dwMoveMethod: DWORD): DWORD => #extern
 fn SetFilePointerEx(hFile: HANDLE, liDistanceToMove: LARGE_INTEGER, lpNewFilePointer: PLARGE_INTEGER, dwMoveMethod: DWORD): BOOL => #extern
 fn SetFileTime(hFile: HANDLE, lpCreationTime: *let FILETIME, lpLastAccessTime: *let FILETIME, lpLastWriteTime: *let FILETIME): BOOL => #extern
@@ -806,8 +821,8 @@ fn SetFileValidData(hFile: HANDLE, ValidDataLength: LONGLONG): BOOL => #extern
 fn UnlockFile(hFile: HANDLE, dwFileOffsetLow: DWORD, dwFileOffsetHigh: DWORD, nNumberOfBytesToUnlockLow: DWORD, nNumberOfBytesToUnlockHigh: DWORD): BOOL => #extern
 fn UnlockFileEx(hFile: HANDLE, dwReserved: DWORD, nNumberOfBytesToUnlockLow: DWORD, nNumberOfBytesToUnlockHigh: DWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
 fn WriteFile(hFile: HANDLE, lpBuffer: LPCVOID, nNumberOfBytesToWrite: DWORD, lpNumberOfBytesWritten: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
-fn WriteFileEx(hFile: HANDLE, lpBuffer: LPCVOID, nNumberOfBytesToWrite: DWORD, lpOverlapped: LPOVERLAPPED, lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE): BOOL => #extern
-fn WriteFileGather(hFile: HANDLE, aSegmentArray: *var FILE_SEGMENT_ELEMENT, nNumberOfBytesToWrite: DWORD, lpReserved: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
+//fn WriteFileEx(hFile: HANDLE, lpBuffer: LPCVOID, nNumberOfBytesToWrite: DWORD, lpOverlapped: LPOVERLAPPED, lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE): BOOL => #extern
+//fn WriteFileGather(hFile: HANDLE, aSegmentArray: *var FILE_SEGMENT_ELEMENT, nNumberOfBytesToWrite: DWORD, lpReserved: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL => #extern
 fn GetTempPathW(nBufferLength: DWORD, lpBuffer: LPWSTR): DWORD => #extern
 fn GetVolumeNameForVolumeMountPointW(lpszVolumeMountPoint: LPCWSTR, lpszVolumeName: LPWSTR, cchBufferLength: DWORD): BOOL => #extern
 fn GetVolumePathNamesForVolumeNameW(lpszVolumeName: LPCWSTR, lpszVolumePathNames: LPWCH, cchBufferLength: DWORD, lpcchReturnLength: PDWORD): BOOL => #extern
@@ -835,8 +850,8 @@ const SECURITY_ATTRIBUTES = struct {
     lpSecurityDescriptor: LPVOID
     bInheritHandle: BOOL
 }
-const PSECURITY_ATTRIBUTES = *SECURITY_ATTRIBUTES
-const LPSECURITY_ATTRIBUTES = *SECURITY_ATTRIBUTES
+const PSECURITY_ATTRIBUTES = *var SECURITY_ATTRIBUTES
+const LPSECURITY_ATTRIBUTES = *var SECURITY_ATTRIBUTES
 
 const OVERLAPPED = struct {
     Internal:     ULONG_PTR
@@ -844,14 +859,14 @@ const OVERLAPPED = struct {
     Pointer:      PVOID
     hEvent:       HANDLE
 }
-const LPOVERLAPPED = OVERLAPPED
+const LPOVERLAPPED = *var OVERLAPPED
 
 const FILETIME = struct {
     dwLowDateTime:  DWORD
     dwHighDateTime: DWORD
 }
-const PFILETIME = *FILETIME
-const LPFILETIME = *FILETIME
+const PFILETIME = *var FILETIME
+const LPFILETIME = *var FILETIME
 
 const WIN32_FIND_DATAA = struct {
     dwFileAttributes:   DWORD
@@ -865,8 +880,8 @@ const WIN32_FIND_DATAA = struct {
     cFileName:          [MAX_PATH]CHAR
     cAlternateFileName: [14]CHAR
 }
-const PWIN32_FIND_DATAA = *WIN32_FIND_DATAA
-const LPWIN32_FIND_DATAA = *WIN32_FIND_DATAA
+const PWIN32_FIND_DATAA = *var WIN32_FIND_DATAA
+const LPWIN32_FIND_DATAA = *var WIN32_FIND_DATAA
 
 const WIN32_FIND_DATAW = struct {
     dwFileAttributes:   DWORD
@@ -880,8 +895,8 @@ const WIN32_FIND_DATAW = struct {
     cFileName:          [MAX_PATH]WCHAR
     cAlternateFileName: [14]WCHAR
 }
-const PWIN32_FIND_DATAW = *WIN32_FIND_DATAW
-const LPWIN32_FIND_DATAW = *WIN32_FIND_DATAW
+const PWIN32_FIND_DATAW = *var WIN32_FIND_DATAW
+const LPWIN32_FIND_DATAW = *var WIN32_FIND_DATAW
 
 const FINDEX_INFO_LEVELS = S32
 const FindExInfoStandard     = 0

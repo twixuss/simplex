@@ -1,6 +1,7 @@
 #include "make_node.h"
 #include "builtin_structs.h"
 #include "compiler_context.h"
+#include "is_mutable.h"
 
 Type make_pointer(Type type, Mutability mutability) {
 	auto pointer = Unary::create();
@@ -9,6 +10,17 @@ Type make_pointer(Type type, Mutability mutability) {
 	pointer->mutability = mutability;
 	pointer->type = get_builtin_type(BuiltinType::Type);
 	return pointer;
+}
+
+Expression *make_address(Expression *expression) {
+	auto address = Unary::create();
+	address->location = expression->location;
+	address->expression = expression;
+	address->operation = UnaryOperation::addr;
+	if (expression->type) {
+		address->type = make_pointer(expression->type, is_mutable(expression) ? Mutability::variable : Mutability::immutable);
+	}
+	return address;
 }
 
 BuiltinTypeName *make_name(BuiltinType type, String location) {

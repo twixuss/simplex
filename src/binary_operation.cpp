@@ -37,6 +37,39 @@ bool is_ass(BinaryOperation op) {
 	return false;
 }
 
+bool is_modass(BinaryOperation op) {
+	switch (op) {
+		case BinaryOperation::addass:
+		case BinaryOperation::subass:
+		case BinaryOperation::mulass:
+		case BinaryOperation::divass:
+		case BinaryOperation::modass:
+		case BinaryOperation::borass:
+		case BinaryOperation::banass:
+		case BinaryOperation::bxoass:
+		case BinaryOperation::bslass:
+		case BinaryOperation::bsrass: {
+			return true;
+		}
+	}
+	return false;
+}
+BinaryOperation deass(BinaryOperation op) {
+	switch (op) {
+		case BinaryOperation::addass: return BinaryOperation::add;
+		case BinaryOperation::subass: return BinaryOperation::sub;
+		case BinaryOperation::mulass: return BinaryOperation::mul;
+		case BinaryOperation::divass: return BinaryOperation::div;
+		case BinaryOperation::modass: return BinaryOperation::mod;
+		case BinaryOperation::borass: return BinaryOperation::bor;
+		case BinaryOperation::banass: return BinaryOperation::ban;
+		case BinaryOperation::bxoass: return BinaryOperation::bxo;
+		case BinaryOperation::bslass: return BinaryOperation::bsl;
+		case BinaryOperation::bsrass: return BinaryOperation::bsr;
+	}
+	return op;
+}
+
 bool could_be_unary(BinaryOperation op) {
 	switch (op) {
 		case BinaryOperation::add: // plus
