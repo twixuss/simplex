@@ -207,6 +207,18 @@ struct Tabs {
 	void operator--() {--value;}
 } tabs;
 
+#define tabbed \
+	++tabs;    \
+	defer { --tabs; }
+
+#define tabbed_block            \
+	append_line(code, "{");     \
+	++tabs;                     \
+	defer {                     \
+		--tabs;                 \
+		append_line(code, "}"); \
+	}
+
 void append_line(StringBuilder &builder, auto const &...args) {
 	tabs(builder);
 	if constexpr (sizeof...(args) == 1) {
@@ -320,29 +332,25 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 		[&](Defer *Defer) {
 		},
 		[&](Block *block) {
-			append_line(code, "{");
-			++tabs;
-			for (auto child : block->children) {
-				append_node(code, child);
-			}
+			{tabbed_block;
+				for (auto child : block->children) {
+					append_node(code, child);
+				}
 
-			if (!types_match(block->type, BuiltinType::None)) {
-				if (auto last_expr = as<Expression>(block->children.back()); last_expr && !types_match(last_expr->type, BuiltinType::None)) {
-					append_line(code, "_{} = _{};", node->uid, last_expr->uid);
+				if (!types_match(block->type, BuiltinType::None)) {
+					if (auto last_expr = as<Expression>(block->children.back()); last_expr && !types_match(last_expr->type, BuiltinType::None)) {
+						append_line(code, "_{} = _{};", node->uid, last_expr->uid);
+					}
+				}
+			
+				append_line(code, "end_{}:;", block->uid);
+
+				for (auto Defer : block->defers) {
+					{tabbed_block;
+						append_node(code, Defer->body, false);
+					}
 				}
 			}
-			
-			append_line(code, "end_{}:;", block->uid);
-
-			for (auto Defer : block->defers) {
-				append_line(code, "{");
-				++tabs;
-				append_node(code, Defer->body, false);
-				--tabs;
-				append_line(code, "}");
-			}
-			--tabs;
-			append_line(code, "}");
 		},
 		[&](Definition *definition) {
 			if (definition->initial_value) {
@@ -429,11 +437,9 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			}
 
 			for (auto Defer : ret->defers) {
-				append_line(code, "{");
-				++tabs;
-				append_node(code, Defer->body, false);
-				--tabs;
-				append_line(code, "}");
+				{tabbed_block;
+					append_node(code, Defer->body, false);
+				}
 			}
 
 			if (ret->value) {
@@ -489,89 +495,69 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			}
 		},
 		[&](Match *match) {
-			not_implemented();
-			#if 0
-			if (types_match(match->type, BuiltinType::None)) {
-				// Statement match
-				append_node(code, match->expression);
-				append_line(code, "{");
-				++tabs;
+			bool is_expression = !types_match(match->type, BuiltinType::None);
+			append_node(code, match->expression);
+			{tabbed_block;
 				for (auto c : match->cases) {
-					if (!c.from)
+					if (!c.froms)
 						continue;
-					append_node(code, c.from);
-					append_line(code, "if (_{} == _{}) {{", match->expression->uid, c.from->uid);
-					++tabs;
-					append_node(code, c.to);
-					append_line(code, "goto endmatch{};", match->uid);
-					--tabs;
-					append_line(code, "}");
+
+					for (auto from : c.froms) {
+						append_node(code, from);
+						append_line(code, "if (_{} == _{}) goto take_case_{};", match->expression->uid, from->uid, c.to->uid);
+					}
+
+					append_line(code, "goto skip_case_{};", c.to->uid);
+					append_line(code, "take_case_{}:;", c.to->uid);
+					{tabbed_block;
+						append_node(code, c.to);
+						if (is_expression) {
+							append_line(code, "_{} = _{};", node->uid, c.to->uid);
+						}
+						append_line(code, "goto endmatch{};", match->uid);
+					}
+					append_line(code, "skip_case_{}:;", c.to->uid);
 				}
-				if (match->default_case) {
-					append_node(code, match->default_case);
-				}
-				append_line(code, "endmatch{}:;", match->uid);
-				--tabs;
-				append_line(code, "}");
-			} else {
-				// Expression match
-				append_node(code, match->expression);
-				append_line(code, "{");
-				++tabs;
-				for (auto c : match->cases) {
-					if (!c.from)
-						continue;
-					append_node(code, c.from);
-					append_line(code, "if (_{} == _{}) {{", match->expression->uid, c.from->uid);
-					++tabs;
-					append_node(code, c.to);
-					append_line(code, "_{} = _{};", node->uid, c.to->uid);
-					append_line(code, "goto endmatch{};", match->uid);
-					--tabs;
-					append_line(code, "}");
-				}
-				if (match->default_case) {
-					append_node(code, match->default_case);
-					append_line(code, "_{} = _{};", node->uid, match->default_case->uid);
+				if (is_expression) {
+					if (match->default_case) {
+						append_node(code, match->default_case);
+						append_line(code, "_{} = _{};", node->uid, match->default_case->uid);
+					} else {
+						append_line(code, "*(int *)0 = 0; // incomplete match");
+					}
 				} else {
-					append_line(code, "*(int *)0 = 0; // incomplete match");
+					if (match->default_case) {
+						append_node(code, match->default_case);
+					}
 				}
 				append_line(code, "endmatch{}:;", match->uid);
-				--tabs;
-				append_line(code, "}");
 			}
-			#endif
 		},
 		[&](While *While) {
-			append_line(code, "while (true) {");
-			++tabs;
-			append_node(code, While->condition);
-			append_line(code, "if (!_{}) break;", While->condition->uid);
+			append_line(code, "while (true)");
+			{tabbed_block;
+				append_node(code, While->condition);
+				append_line(code, "if (!_{}) break;", While->condition->uid);
 
-			append_node(code, While->body);
-			append_line(code, "continue_{}:;", While->uid);
-			--tabs;
-			append_line(code, "}");
+				append_node(code, While->body);
+				append_line(code, "continue_{}:;", While->uid);
+			}
 			append_line(code, "break_{}:;", While->uid);
 		},
 		[&](Continue *Continue) {
 			for (auto Defer : Continue->defers) {
-				append_line(code, "{");
-				++tabs;
-				append_node(code, Defer->body, false);
-				--tabs;
-				append_line(code, "}");
+				{tabbed_block;
+					append_node(code, Defer->body, false);
+				}
 			}
 			append_line(code, "goto continue_{};", Continue->loop->uid);
 		},
 		[&](Break *Break) {
 			if (Break->loop) {
 				for (auto Defer : Break->defers) {
-					append_line(code, "{");
-					++tabs;
-					append_node(code, Defer->body, false);
-					--tabs;
-					append_line(code, "}");
+					{tabbed_block;
+						append_node(code, Defer->body, false);
+					}
 				}
 				append_line(code, "goto break_{};", Break->loop->uid);
 			} else {
@@ -580,44 +566,40 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				append_line(code, "{} _{} = _{};", ctype(Break->value->type), node->uid, Break->value->uid);
 				append_line(code, "_{} = _{};", Break->tag_block->uid, node->uid);
 				for (auto Defer : Break->defers) {
-					append_line(code, "{");
-					++tabs;
-					append_node(code, Defer->body, false);
-					--tabs;
-					append_line(code, "}");
+					{tabbed_block;
+						append_node(code, Defer->body, false);
+					}
 				}
 				append_line(code, "goto end_{};", Break->tag_block->uid);
 			}
 		},
 		[&](IfStatement *If) {
 			append_node(code, If->condition);
-			append_line(code, "if (_{}) {{", If->condition->uid);
-			++tabs;
-			append_node(code, If->true_branch);
-			--tabs;
-			if (If->false_branch) {
-				append_line(code, "} else {");
-				++tabs;
-				append_node(code, If->false_branch);
-				--tabs;
+			append_line(code, "if (_{})", If->condition->uid);
+			{tabbed_block;
+				append_node(code, If->true_branch);
 			}
-			append_line(code, "}");
+			if (If->false_branch) {
+				append_line(code, "else");
+				{tabbed_block;
+					append_node(code, If->false_branch);
+				}
+			}
 		},
 		[&](IfExpression *If) {
 			append_node(code, If->condition);
-			append_line(code, "if (_{}) {{", If->condition->uid);
-			++tabs;
-			append_node(code, If->true_branch);
-			append_line(code, "_{} = _{};", node->uid, If->true_branch->uid);
-			--tabs;
-			if (If->false_branch) {
-				append_line(code, "} else {");
-				++tabs;
-				append_node(code, If->false_branch);
-				append_line(code, "_{} = _{};", node->uid, If->false_branch->uid);
-				--tabs;
+			append_line(code, "if (_{})", If->condition->uid);
+			{tabbed_block;
+				append_node(code, If->true_branch);
+				append_line(code, "_{} = _{};", node->uid, If->true_branch->uid);
 			}
-			append_line(code, "}");
+			if (If->false_branch) {
+				append_line(code, "else");
+				{tabbed_block;
+					append_node(code, If->false_branch);
+					append_line(code, "_{} = _{};", node->uid, If->false_branch->uid);
+				}
+			}
 		},
 		[&](Subscript *subscript) {
 			append_address(code, subscript->subscriptable);
