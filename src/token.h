@@ -5,7 +5,8 @@
 consteval u64 const_string_to_token_kind(Span<char> string) {
 	assert(string.count <= 8);
 	u64 result = 0;
-	for (umm i = string.count - 1; i != -1; --i) {
+	//for (umm i = string.count - 1; i != -1; --i) {
+	for (umm i = 0; i != string.count; ++i) {
 		result <<= 8;
 		result |= string.data[i];
 	}
@@ -19,6 +20,8 @@ consteval u64 const_string_to_token_kind(char a, char b, char c) {
 	char buffer[] { a, b, c };
 	return const_string_to_token_kind(array_as_span(buffer));
 }
+
+static_assert(const_string_to_token_kind("+="s) == '+=');
 
 enum TokenKind : u64 {
 	#define x(name) Token_##name = const_string_to_token_kind(#name##s),

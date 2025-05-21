@@ -64,12 +64,29 @@ bool do_all_paths_return_impl(Match *match) {
 	if (do_all_paths_return(match->expression)) {
 		return true;
 	}
-	for (auto Case : match->cases) {
-		if ((!Case.from || !do_all_paths_return(Case.from)) && !do_all_paths_return(Case.to)) {
-			return false;
+
+	if (match->default_case) {
+		int n = 0;
+
+		for (auto Case : match->cases) {
+			for (auto from : Case.froms) {
+				if (do_all_paths_return(from)) {
+					++n;
+					goto continue_outer;
+				}
+			}
+			if (do_all_paths_return(Case.to)) {
+				++n;
+				goto continue_outer;
+			}
+		continue_outer:;
 		}
+		return false;
+	} else {
+		// TODO: figure out what to do in that case.
+		//       don't want to be annoying and force a default case.
+		return false;
 	}
-	return true;
 }
 bool do_all_paths_return_impl(Unary *un) {
 	if (do_all_paths_return(un->expression)) {
@@ -78,6 +95,7 @@ bool do_all_paths_return_impl(Unary *un) {
 	return false;
 }
 bool do_all_paths_return_impl(Struct *Struct) { return false; }
+bool do_all_paths_return_impl(Enum *Enum) { return false; }
 bool do_all_paths_return_impl(ArrayType *arr) {
 	if (do_all_paths_return(arr->count_expression)) {
 		return true;

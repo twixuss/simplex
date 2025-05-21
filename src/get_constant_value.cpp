@@ -59,7 +59,8 @@ Result<Value, Expression *> get_constant_value_impl(BuiltinTypeName *node) { ret
 Result<Value, Expression *> get_constant_value_impl(Binary *node) { return node; }
 Result<Value, Expression *> get_constant_value_impl(Match *node) { return node; }
 Result<Value, Expression *> get_constant_value_impl(Unary *node) { return node; }
-Result<Value, Expression *> get_constant_value_impl(Struct *node) { return node; }
+Result<Value, Expression *> get_constant_value_impl(Struct *node) { return Value(Type(node)); }
+Result<Value, Expression *> get_constant_value_impl(Enum *node) { return Value(Type(node)); }
 Result<Value, Expression *> get_constant_value_impl(ArrayType *node) { return node; }
 Result<Value, Expression *> get_constant_value_impl(Subscript *node) { return node; }
 Result<Value, Expression *> get_constant_value_impl(ArrayConstructor *node) {

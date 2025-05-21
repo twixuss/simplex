@@ -157,6 +157,8 @@ ENUMERATE_KEYWORDS(x)
 	x(import) \
 	x(fn) \
 	x(defer) \
+	x(enum) \
+	x(or) \
 
 /*
 #define x(name, token, precedence)
@@ -251,6 +253,7 @@ ENUMERATE_TYPE_EXPRESSION_KIND(x)
 	x(Unary) \
 	x(Struct) \
 	x(ArrayType) \
+	x(Enum) \
 
 /*
 #define x(name)
@@ -275,6 +278,7 @@ ENUMERATE_EXPRESSION_KIND(x)
 	x(Unary) \
 	x(Struct) \
 	x(ArrayType) \
+	x(Enum) \
 	x(Subscript) \
 	x(ArrayConstructor) \
 	x(ZeroInitialized) \

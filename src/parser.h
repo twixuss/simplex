@@ -91,13 +91,27 @@ struct Parser {
 	}
 
 	bool parse_template_parameter_list(Expression *parent, Block *template_parameters_block);
-
-	struct ParsedLambda {
+	
+	struct NamedLambda {
 		Expression *lambda_or_head = 0;
 		String name = {};
 	};
 
-	ParsedLambda parse_lambda();
+	NamedLambda parse_lambda();
+	
+	struct NamedStruct {
+		Struct *Struct = 0;
+		String name = {};
+	};
+
+	NamedStruct parse_struct();
+
+	struct NamedEnum {
+		Enum *Enum = 0;
+		String name = {};
+	};
+
+	NamedEnum parse_enum();
 
 	bool fail_due_to_unseparated_ambiguous_expression(Expression *expression, String separator);
 

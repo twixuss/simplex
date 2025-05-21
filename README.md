@@ -147,7 +147,8 @@ fn my_function() {}
 This is transformed into the version above, so they are identical.
 This works for:
 * `fn`
-* 🚧 `struct`
+* `struct`
+* `enum`
 
 ---
 #### Block
@@ -367,8 +368,31 @@ fn (a: Arg1, b: Arg2): ReturnType
 ---
 ### Aliases
 `Int` = `S64`
-`UInt` = `US64`
+`UInt` = `U64`
 
 ### Internal
 #### `UnsizedInteger`
 A signed 64-bit number
+
+## Bag of sugar
+### 🚧 Properties
+You can have member-like access for stuff that has to be computed:
+```simplex
+vector.length *= 2
+
+// Transforms into
+
+set_length(&vector, get_length(vector) * 2)
+```
+
+Multi property access example:
+Suppose `vector` is 3d an we accessing 2d portion of it:
+```simplex
+vector.xz.length *= 2
+
+// Transforms into
+
+var xz = get_xz(vector)
+set_length(&xz, get_length(xz) * 2)
+set_xz(&vector, xz)
+```

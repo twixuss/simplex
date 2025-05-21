@@ -1,5 +1,5 @@
 // COMPILER ERROR
-// COMPILER OUTPUT If an integer literal starts with zero, the second character determines the base. To make an octal literal use `0o`.
+// COMPILER OUTPUT C-like octal literals are not supported. Use 0o69
 fn main() {
     println(069)
 }

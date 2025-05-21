@@ -73,6 +73,7 @@ Result<Empty, Expression *> is_constant_impl(Unary *unary) {
 	return is_constant(unary->expression);
 }
 Result<Empty, Expression *> is_constant_impl(Struct *) { return Empty{}; }
+Result<Empty, Expression *> is_constant_impl(Enum *) { return Empty{}; }
 Result<Empty, Expression *> is_constant_impl(ArrayType *) { return Empty{}; }
 Result<Empty, Expression *> is_constant_impl(Subscript *node) {
 	MUST_BE_CONSTANT(node->subscriptable);

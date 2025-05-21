@@ -152,8 +152,7 @@ void Copier::deep_copy_impl(Match *from, Match *to) {
 	DEEP_COPY(expression);
 	to->cases.resize(from->cases.count);
 	for (umm i = 0; i < to->cases.count; ++i) {
-		if (from->cases[i].from)
-			DEEP_COPY(cases[i].from);
+		COPY_LIST(cases[i].froms, DEEP_COPY);
 		DEEP_COPY(cases[i].to);
 	}
 	LOOKUP_COPY(type);
@@ -187,6 +186,7 @@ void Copier::deep_copy_impl(Break *from, Break *to) {
 	COPY_LIST(defers, LOOKUP_COPY);
 }
 void Copier::deep_copy_impl(Struct *from, Struct *to) { not_implemented(); }
+void Copier::deep_copy_impl(Enum *from, Enum *to) { not_implemented(); }
 void Copier::deep_copy_impl(ArrayType *from, ArrayType *to) { not_implemented(); }
 void Copier::deep_copy_impl(Subscript *from, Subscript *to) { not_implemented(); }
 void Copier::deep_copy_impl(ArrayConstructor *from, ArrayConstructor *to) {

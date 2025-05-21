@@ -159,4 +159,6 @@ enum class LowBinaryOperation : u8 {
 	left_to_bool,
 	// output binary->right != 0
 	right_to_bool,
+	// output binary->left
+	left,
 };

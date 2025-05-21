@@ -38,6 +38,14 @@ void append(StringBuilder &builder, TokenKind kind) {
 #undef x
 	}
 
+	char buf[8];
+	char *c = buf + sizeof(buf);
+	while (kind) {
+		*--c = kind;
+		(u64 &)kind >>= 8;
+	}
+
+	return append(builder, Span(c, buf + sizeof(buf)));
 	return append_format(builder, "(unknown TokenKind 0x{} \"{}\")", FormatInt{.value=(u64)kind, .radix=16}, as_chars(value_as_bytes(kind)));
 }
 

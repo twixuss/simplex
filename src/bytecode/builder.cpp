@@ -208,9 +208,8 @@ void Builder::append_lambda(Lambda *lambda) {
 		});
 
 		if (i.kind == InstructionKind::copy) {
-			REDECLARE_REF(i, i.copy());
-			if (i.s.is_constant()) {
-				assert(i.size <= 8);
+			if (i.copy().s.is_constant()) {
+				assert(i.copy().size <= 8);
 			}
 		}
 	}
@@ -832,6 +831,22 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			}
 			return;
 		}
+		case LowBinaryOperation::zex8to16:  { output(destination, binary->left); I(and2, destination, destination, 0xff      ); return; }
+		case LowBinaryOperation::zex8to32:  { output(destination, binary->left); I(and4, destination, destination, 0xff      ); return; }
+		case LowBinaryOperation::zex16to32: { output(destination, binary->left); I(and4, destination, destination, 0xffff    ); return; }
+		case LowBinaryOperation::zex8to64:  { output(destination, binary->left); I(and8, destination, destination, 0xff      ); return; }
+		case LowBinaryOperation::zex16to64: { output(destination, binary->left); I(and8, destination, destination, 0xffff    ); return; }
+		case LowBinaryOperation::zex32to64: { output(destination, binary->left); I(and8, destination, destination, 0xffffffff); return; }
+		case LowBinaryOperation::sex8to16:  { output(destination, binary->left); I(sex21, destination, destination); return; }
+		case LowBinaryOperation::sex8to32:  { output(destination, binary->left); I(sex41, destination, destination); return; }
+		case LowBinaryOperation::sex16to32: { output(destination, binary->left); I(sex42, destination, destination); return; }
+		case LowBinaryOperation::sex8to64:  { output(destination, binary->left); I(sex81, destination, destination); return; }
+		case LowBinaryOperation::sex16to64: { output(destination, binary->left); I(sex82, destination, destination); return; }
+		case LowBinaryOperation::sex32to64: { output(destination, binary->left); I(sex84, destination, destination); return; }
+		case LowBinaryOperation::left: {
+			output(destination, binary->left);
+			return;
+		}
 	}
 		
 	auto dleft  = binary->left->type ? direct(binary->left->type) : 0;
@@ -933,26 +948,23 @@ case n: {                                                                       
 				tmpreg(right);
 				output(right, binary->right);
 
-				if (::is_signed_integer(dleft)) {
-					switch (binary->operation) {
-						case BinaryOperation::equ: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals    );  break;
-						case BinaryOperation::neq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals);  break;
-						case BinaryOperation::les: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less          );  break;
-						case BinaryOperation::grt: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater       );  break;
-						case BinaryOperation::leq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less_equals   );  break;
-						case BinaryOperation::grq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater_equals);  break;
-						default: not_implemented();
-					}
-				} else {
-					switch (binary->operation) {
-						case BinaryOperation::equ: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals    );  break;
-						case BinaryOperation::neq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals);  break;
-						case BinaryOperation::les: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less          );  break;
-						case BinaryOperation::grt: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater       );  break;
-						case BinaryOperation::leq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less_equals   );  break;
-						case BinaryOperation::grq: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater_equals);  break;
-						default: not_implemented();
-					}
+				Comparison c;
+				switch (binary->operation) {
+					case BinaryOperation::equ: c = Comparison::equals;     break;
+					case BinaryOperation::neq: c = Comparison::not_equals; break;
+					case BinaryOperation::les: c = ::is_signed_integer(dleft) ? Comparison::signed_less           : Comparison::unsigned_less;           break;
+					case BinaryOperation::grt: c = ::is_signed_integer(dleft) ? Comparison::signed_greater        : Comparison::unsigned_greater;        break;
+					case BinaryOperation::leq: c = ::is_signed_integer(dleft) ? Comparison::signed_less_equals    : Comparison::unsigned_less_equals;    break;
+					case BinaryOperation::grq: c = ::is_signed_integer(dleft) ? Comparison::signed_greater_equals : Comparison::unsigned_greater_equals; break;
+					default: not_implemented();
+				}
+
+				switch (left_size) {
+					case 1: I(cmp1, .d = destination, .a = left, .b = right, .cmp = c); break;
+					case 2: I(cmp2, .d = destination, .a = left, .b = right, .cmp = c); break;
+					case 4: I(cmp4, .d = destination, .a = left, .b = right, .cmp = c); break;
+					case 8: I(cmp8, .d = destination, .a = left, .b = right, .cmp = c); break;
+					default: not_implemented();
 				}
 				return;
 			}
@@ -1066,39 +1078,47 @@ void Builder::output_impl(Site destination, Match *match) {
 	// there should be separation between match expression and match statement.
 	// Or just insert a default case that will panic?
 
-	assert(is_concrete_integer(match->expression->type), "Match currently only works with integers");
+	assert(is_concrete_integer(match->expression->type) || direct_as<Enum>(match->expression->type), "Match currently only works with integers and enums");
 
 	auto matchee_size = get_size(match->expression->type);
 	assert(matchee_size <= 8);
 	tmpreg(matchee);
 	output(matchee, match->expression);
 
-	List<umm> jump_to_end_indices;
+	List<umm> jumps_out_of_match;
 
 	for (auto &Case : match->cases) {
-		if (!Case.from)
+		if (!Case.froms)
 			continue;
 
-		umm prev_case_jump_over_index = 0;
-		{
-			tmpreg(from);
-			output(from, Case.from);
-			scoped_replace(current_location, Case.from->location);
+		List<umm> jumps_to_case;
+		for (auto &from : Case.froms) {
+			tmpreg(f);
+			output(f, from);
+			scoped_replace(current_location, from->location);
 			auto size = get_size(match->expression->type);
 			switch (size) {
-				case 1: I(cmp1, from, matchee, from, Comparison::equals); break;
-				case 2: I(cmp2, from, matchee, from, Comparison::equals); break;
-				case 4: I(cmp4, from, matchee, from, Comparison::equals); break;
-				case 8: I(cmp8, from, matchee, from, Comparison::equals); break;
+				case 1: I(cmp1, f, matchee, f, Comparison::equals); break;
+				case 2: I(cmp2, f, matchee, f, Comparison::equals); break;
+				case 4: I(cmp4, f, matchee, f, Comparison::equals); break;
+				case 8: I(cmp8, f, matchee, f, Comparison::equals); break;
 				default: invalid_code_path("`match` only works on sizes 1, 2, 4 or 8, but not {}", size);
 			}
-			prev_case_jump_over_index = output_bytecode.instructions.count;
-			I(jf, from, 0);
+			jumps_to_case.add(output_bytecode.instructions.count);
+			I(jt, f, 0);
+		}
+		auto jump_over_case = output_bytecode.instructions.count;
+		I(jmp, 0);
+
+		for (auto i : jumps_to_case) {
+			output_bytecode.instructions[i].jt().d = output_bytecode.instructions.count;
 		}
 		output(destination, Case.to);
-		jump_to_end_indices.add(output_bytecode.instructions.count);
+		
+		jumps_out_of_match.add(output_bytecode.instructions.count);
 		I(jmp, 0);
-		output_bytecode.instructions[prev_case_jump_over_index].jf().d = output_bytecode.instructions.count;
+
+		output_bytecode.instructions[jump_over_case].jmp().d = output_bytecode.instructions.count;
 	}
 		
 	if (match->default_case) {
@@ -1117,7 +1137,7 @@ void Builder::output_impl(Site destination, Match *match) {
 		}
 	}
 
-	for (auto i : jump_to_end_indices) {
+	for (auto i : jumps_out_of_match) {
 		output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count;
 	}
 }
@@ -1142,29 +1162,40 @@ void Builder::output_impl(Site destination, Unary *unary) {
 	}
 } 
 void Builder::output_impl(Site destination, Struct *node) { not_implemented(); } 
+void Builder::output_impl(Site destination, Enum *node) { not_implemented(); } 
 void Builder::output_impl(Site destination, ArrayType *node) { not_implemented(); } 
 void Builder::output_impl(Site destination, Subscript *subscript) {
-	auto array_type = as<ArrayType>(subscript->subscriptable->type);
-	assert(array_type);
+	if (auto array_type = direct_as<ArrayType>(subscript->subscriptable->type)) {
+		auto element_size = get_size(array_type->element_type);
 
-	auto element_size = get_size(array_type->element_type);
+		if (is_addressable(subscript->subscriptable)) {
+			tmpreg(array_address);
+			load_address(array_address, subscript->subscriptable);
 
-	if (is_addressable(subscript->subscriptable)) {
-		tmpreg(array_address);
-		load_address(array_address, subscript->subscriptable);
+			tmpreg(index_reg);
+			output(index_reg, subscript->index);
 
-		tmpreg(index_reg);
-		output(index_reg, subscript->index);
+			Address element_address = {};
+			element_address.base = array_address;
+			element_address.element_index = index_reg;
+			assert(element_size < 256);
+			element_address.element_size = element_size;
 
-		Address element_address = {};
-		element_address.base = array_address;
-		element_address.element_index = index_reg;
+			I(copy, destination, element_address, element_size);
+		} else {
+			not_implemented();
+		}
+	} else if (auto pointer = as_pointer(direct(subscript->subscriptable->type))) {
+		tmpreg(p);
+		output(p, subscript->subscriptable);
+		tmpreg(i);
+		output(i, subscript->index);
+		auto element_size = get_size(subscript->type);
 		assert(element_size < 256);
-		element_address.element_size = element_size;
-
-		I(copy, destination, element_address, element_size);
+		I(lea, p, Address{.base = p, .element_index = i, .element_size = (u8)element_size});
+		I(copy, destination, Address{.base = p}, element_size);
 	} else {
-		not_implemented();
+		invalid_code_path();
 	}
 } 
 void Builder::output_impl(Site destination, ArrayConstructor *arr) {
@@ -1177,7 +1208,11 @@ void Builder::output_impl(Site destination, ArrayConstructor *arr) {
 	}
 }
 void Builder::output_impl(Site destination, ZeroInitialized *zi) {
-	I(copy, destination, 0, get_size(zi->type));
+	if (destination.is_register()) {
+		I(copy, destination, 0, get_size(zi->type));
+	} else {
+		I(set, destination.get_address(), 0, get_size(zi->type));
+	}
 }
 void Builder::output_impl(Return *ret) {
 	if (ret->value) {
@@ -1323,6 +1358,7 @@ void Builder::load_address_impl(Site destination, Unary *unary) {
 	}
 }
 void Builder::load_address_impl(Site destination, Struct *node) { not_implemented(); }
+void Builder::load_address_impl(Site destination, Enum *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, ArrayType *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, Subscript *node) {
 	load_address(destination, node->subscriptable);

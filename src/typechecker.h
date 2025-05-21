@@ -298,34 +298,35 @@ private:
 		return typecheck(&node, false) != 0;
 	}
 
-	[[nodiscard]] Node *             typecheck(Node *node, bool can_substitute);
-	[[nodiscard]] Expression *       typecheck_impl(Block *block, bool can_substitute);
-	[[nodiscard]] Definition *       typecheck_impl(Definition *definition, bool can_substitute);
-	[[nodiscard]] IntegerLiteral *   typecheck_impl(IntegerLiteral *literal, bool can_substitute);
-	[[nodiscard]] BooleanLiteral *   typecheck_impl(BooleanLiteral *literal, bool can_substitute);
-	[[nodiscard]] NoneLiteral *      typecheck_impl(NoneLiteral *literal, bool can_substitute);
-	[[nodiscard]] StringLiteral *    typecheck_impl(StringLiteral *literal, bool can_substitute);
-	[[nodiscard]] LambdaHead *       typecheck_impl(LambdaHead *head, bool can_substitute);
-	[[nodiscard]] Lambda *           typecheck_impl(Lambda *lambda, bool can_substitute);
-	[[nodiscard]] Expression *       typecheck_impl(Name *name, bool can_substitute);
-	[[nodiscard]] Expression *       typecheck_impl(Call *call, bool can_substitute);
-	[[nodiscard]] Node *             typecheck_impl(IfStatement *If, bool can_substitute);
-	[[nodiscard]] Expression *       typecheck_impl(IfExpression *If, bool can_substitute);
-	[[nodiscard]] BuiltinTypeName *  typecheck_impl(BuiltinTypeName *type, bool can_substitute);
-	[[nodiscard]] Expression *       typecheck_impl(Binary *binary, bool can_substitute);
-	[[nodiscard]] Match *            typecheck_impl(Match *match, bool can_substitute);
-	[[nodiscard]] Expression *       typecheck_impl(Unary *unary, bool can_substitute);
-	[[nodiscard]] Return *           typecheck_impl(Return *return_, bool can_substitute);
-	[[nodiscard]] While *            typecheck_impl(While *While, bool can_substitute);
-	[[nodiscard]] Continue *         typecheck_impl(Continue *Continue, bool can_substitute);
-	[[nodiscard]] Break *            typecheck_impl(Break *Break, bool can_substitute);
-	[[nodiscard]] Struct *           typecheck_impl(Struct *Struct, bool can_substitute);
-	[[nodiscard]] ArrayType *        typecheck_impl(ArrayType *arr, bool can_substitute);
-	[[nodiscard]] Expression *       typecheck_impl(Subscript *Subscript, bool can_substitute);
-	[[nodiscard]] ArrayConstructor * typecheck_impl(ArrayConstructor *arr, bool can_substitute);
-	[[nodiscard]] Import *           typecheck_impl(Import *import, bool can_substitute);
-	[[nodiscard]] Defer *            typecheck_impl(Defer *defer_, bool can_substitute);
-	[[nodiscard]] ZeroInitialized *  typecheck_impl(ZeroInitialized *zi, bool can_substitute);
+	[[nodiscard]] Node             *typecheck(Node *node, bool can_substitute);
+	[[nodiscard]] Expression       *typecheck_impl(Block *block, bool can_substitute);
+	[[nodiscard]] Definition       *typecheck_impl(Definition *definition, bool can_substitute);
+	[[nodiscard]] IntegerLiteral   *typecheck_impl(IntegerLiteral *literal, bool can_substitute);
+	[[nodiscard]] BooleanLiteral   *typecheck_impl(BooleanLiteral *literal, bool can_substitute);
+	[[nodiscard]] NoneLiteral      *typecheck_impl(NoneLiteral *literal, bool can_substitute);
+	[[nodiscard]] StringLiteral    *typecheck_impl(StringLiteral *literal, bool can_substitute);
+	[[nodiscard]] LambdaHead       *typecheck_impl(LambdaHead *head, bool can_substitute);
+	[[nodiscard]] Lambda           *typecheck_impl(Lambda *lambda, bool can_substitute);
+	[[nodiscard]] Expression       *typecheck_impl(Name *name, bool can_substitute);
+	[[nodiscard]] Expression       *typecheck_impl(Call *call, bool can_substitute);
+	[[nodiscard]] Node             *typecheck_impl(IfStatement *If, bool can_substitute);
+	[[nodiscard]] Expression       *typecheck_impl(IfExpression *If, bool can_substitute);
+	[[nodiscard]] BuiltinTypeName  *typecheck_impl(BuiltinTypeName *type, bool can_substitute);
+	[[nodiscard]] Expression       *typecheck_impl(Binary *binary, bool can_substitute);
+	[[nodiscard]] Match            *typecheck_impl(Match *match, bool can_substitute);
+	[[nodiscard]] Expression       *typecheck_impl(Unary *unary, bool can_substitute);
+	[[nodiscard]] Return           *typecheck_impl(Return *return_, bool can_substitute);
+	[[nodiscard]] While            *typecheck_impl(While *While, bool can_substitute);
+	[[nodiscard]] Continue         *typecheck_impl(Continue *Continue, bool can_substitute);
+	[[nodiscard]] Break            *typecheck_impl(Break *Break, bool can_substitute);
+	[[nodiscard]] Struct           *typecheck_impl(Struct *Struct, bool can_substitute);
+	[[nodiscard]] Enum             *typecheck_impl(Enum *Enum, bool can_substitute);
+	[[nodiscard]] ArrayType        *typecheck_impl(ArrayType *arr, bool can_substitute);
+	[[nodiscard]] Expression       *typecheck_impl(Subscript *Subscript, bool can_substitute);
+	[[nodiscard]] ArrayConstructor *typecheck_impl(ArrayConstructor *arr, bool can_substitute);
+	[[nodiscard]] Import           *typecheck_impl(Import *import, bool can_substitute);
+	[[nodiscard]] Defer            *typecheck_impl(Defer *defer_, bool can_substitute);
+	[[nodiscard]] ZeroInitialized  *typecheck_impl(ZeroInitialized *zi, bool can_substitute);
 public:
 	/////////////////////////
 	// Binary Typecheckers //

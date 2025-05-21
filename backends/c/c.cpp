@@ -489,6 +489,8 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			}
 		},
 		[&](Match *match) {
+			not_implemented();
+			#if 0
 			if (types_match(match->type, BuiltinType::None)) {
 				// Statement match
 				append_node(code, match->expression);
@@ -538,6 +540,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				--tabs;
 				append_line(code, "}");
 			}
+			#endif
 		},
 		[&](While *While) {
 			append_line(code, "while (true) {");
@@ -695,6 +698,8 @@ bool convert_ast(Block *global_block, Lambda *main_lambda, Definition *main_lamb
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+
+#undef assert
 
 typedef bool Bool;
 typedef uint8_t U8;
@@ -967,6 +972,18 @@ void print_S64(int64_t v) {{
 	}}
 	WriteFile(GetStdHandle(-11), c, buf + sizeof(buf) - c, 0, 0);
 
+}}
+
+void debug_break() {{
+	__debugbreak();
+}}
+void panic() {{
+	print_String(__make_string("PANIC\n"));
+	__debugbreak();
+}}
+void assert(bool x) {{
+	if (!x)
+		debug_break();
 }}
 
 )", context->builtin_structs.String->uid, context->builtin_structs.String->uid, context->builtin_structs.String->uid);

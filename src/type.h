@@ -82,6 +82,7 @@ CheckResult2 types_match(Type a, BuiltinType b);
 CheckResult2 types_match(BuiltinType a, Type b);
 
 bool is_concrete_integer(Type type);
+bool is_any_integer(Type type);
 bool is_signed_integer(Type type);
 bool is_unsigned_integer(Type type);
 bool is_concrete(Type type);

@@ -176,6 +176,44 @@ void Typechecker::fiber_main() {
 	}
 }
 
+LowBinaryOperation integer_extension_low_op(umm source_size, bool source_signed, umm destination_size) {
+	if (source_size == destination_size) {
+		return LowBinaryOperation::left;
+	}
+	if (source_signed) {
+		switch (destination_size) {
+			case 2: switch (source_size) {
+				case 1: return LowBinaryOperation::sex8to16;
+			}
+			case 4:	switch (source_size) {
+				case 1: return LowBinaryOperation::sex8to32;
+				case 2: return LowBinaryOperation::sex16to32;
+			}
+			case 8: switch (source_size) {
+				case 1: return LowBinaryOperation::sex8to64;
+				case 2: return LowBinaryOperation::sex16to64;
+				case 4: return LowBinaryOperation::sex32to64;
+			}
+		}
+	} else {
+		switch (destination_size) {
+			case 2: switch (source_size) {
+				case 1: return LowBinaryOperation::zex8to16;
+			}
+			case 4:	switch (source_size) {
+				case 1: return LowBinaryOperation::zex8to32;
+				case 2: return LowBinaryOperation::zex16to32;
+			}
+			case 8: switch (source_size) {
+				case 1: return LowBinaryOperation::zex8to64;
+				case 2: return LowBinaryOperation::zex16to64;
+				case 4: return LowBinaryOperation::zex32to64;
+			}
+		}
+	}
+	invalid_code_path("can't produce LowBinaryOperation for integer extension: {} {} to {}", source_signed ? "signed" : "unsigned", source_size, destination_size);
+}
+
 bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_type, Reporter *reporter, bool apply) {
 	auto expression = *_expression;
 	defer {
@@ -356,6 +394,34 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 			}
 		}
 	}
+	
+	// Int -> Enum
+	if (auto Enum = as<::Enum>(direct_target_type)) {
+		if (Enum->allow_from_int) {
+			if (is_any_integer(direct_source_type)) {
+				if (apply) {
+					auto cast = make_cast(expression, target_type);
+					cast->low_operation = integer_extension_low_op(get_size(direct_source_type), is_signed_integer(direct_source_type), get_size(Enum));
+					expression = cast;
+				}
+				return true;
+			}
+		}
+	}
+
+	// Enum -> Int
+	if (auto Enum = as<::Enum>(direct_source_type)) {
+		if (Enum->allow_to_int) {
+			if (is_any_integer(direct_target_type)) {
+				if (apply) {
+					auto cast = make_cast(expression, target_type);
+					cast->low_operation = integer_extension_low_op(get_size(direct_source_type), is_signed_integer(direct_source_type), get_size(Enum));
+					expression = cast;
+				}
+				return true;
+			}
+		}
+	}
 
 	if (reporter) {
 		reporter->error(expression->location, "Expression of type `{}` is not implicitly convertible to `{}`.", source_type, target_type);
@@ -427,6 +493,7 @@ Expression *Typechecker::inline_body(Call *call, Lambda *lambda) {
 					Break->value = ret->value;
 					Break->tag_block = result_block;
 					Break->defers = ret->defers;
+					Break->location = ret->location;
 					ret->defers = {};
 					result_block->breaks.add(Break);
 					NOTE_LEAK(ret);
@@ -969,15 +1036,16 @@ Expression *Typechecker::typecheck_constructor(Call *call, Struct *Struct) {
 
 Expression *Typechecker::typecheck_binary_dot(Binary *binary) {
 	typecheck(&binary->left);
-	auto struct_ = direct_as<Struct>(binary->left->type);
+	auto direct_left_type = direct(binary->left->type);
+	auto struct_ = as<Struct>(direct_left_type);
 	if (!struct_) {
-		if (auto pointer = direct_as<Unary>(binary->left->type); pointer && pointer->operation == UnaryOperation::pointer) {
+		if (auto pointer = as<Unary>(direct_left_type); pointer && pointer->operation == UnaryOperation::pointer) {
 			struct_ = direct_as<Struct>(pointer->expression);
 		}
 	}
 
 	if (!struct_) {
-		if (types_match(binary->left->type, context->builtin_structs.String)) {
+		if (types_match(direct_left_type, context->builtin_structs.String)) {
 			auto member_name = as<Name>(binary->right);
 			if (!member_name) {
 				reporter.error(binary->right->location, "Expression after dot must be a name.");
@@ -1000,13 +1068,49 @@ Expression *Typechecker::typecheck_binary_dot(Binary *binary) {
 	}
 
 	if (!struct_) {
-		reporter.error(binary->left->location, "Left of the dot must have struct or pointer to struct type.");
+		if (auto Enum = direct_as<::Enum>(binary->left)) {
+			auto name = as<Name>(binary->right);
+			if (!name) {
+				reporter.error(binary->right->location, "Expression after dot must be a name, because {} is an enum.", binary->left->location);
+				fail();
+			}
+			auto found = Enum->block.definition_map.find(name->name);
+			if (!found) {
+				reporter.error(binary->right->location, "Enum {} does not contain value named {}.", Enum, name->name);
+				fail();
+			}
+
+			auto &definitions = *found.value;
+			assert(definitions.count == 1, "INTERNAL ERROR: parser was supposed to deal with multiple definitions with the same name in enum");
+
+			auto &definition = definitions[0];
+			
+			if (!yield_while_null(binary->location, &definition->type)) {
+				reporter.error(binary->right->location, "Could not wait for definition's type");
+				reporter.info(definition->location, "Definition here");
+				fail();
+			}
+
+			if (!yield_while_null(binary->location, &definition->type->type)) {
+				reporter.error(binary->right->location, "Could not wait for definition type's type");
+				reporter.info(definition->location, "Definition here");
+				fail();
+			}
+
+			auto literal = IntegerLiteral::create();
+			literal->type = Enum;
+			literal->location = binary->location;
+			literal->value = definition->constant_value.value().U64;
+			return literal;
+		}
+
+		reporter.error(binary->left->location, "Left of the dot must be a struct / pointer to struct / enum.");
 		fail();
 	}
 
 	auto member_name = as<Name>(binary->right);
 	if (!member_name) {
-		reporter.error(binary->right->location, "Expression after dot must be a name.");
+		reporter.error(binary->right->location, "Expression after dot must be a name, because {} is a struct.", binary->left->location);
 		fail();
 	}
 
@@ -1205,6 +1309,9 @@ Expression       *Typechecker::typecheck_impl(Block *block, bool can_substitute)
 }
 Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_substitute) {
 	if (definition->uid == 3651) {
+		int x = 41;
+	}
+	if (definition->name == "TokenKind") {
 		int x = 41;
 	}
 
@@ -1620,6 +1727,7 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 							switch (definition->initial_value->kind) {
 								case NodeKind::Lambda:
 								case NodeKind::Struct:
+								case NodeKind::Enum:
 									break;
 								default:
 									auto result = to_node(definition->constant_value.value());
@@ -1953,7 +2061,7 @@ BuiltinTypeName  *Typechecker::typecheck_impl(BuiltinTypeName *type, bool can_su
 	return type;
 }
 Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitute) {
-	if (binary->uid == 3647) {
+	if (binary->uid == 979) {
 		int x = 4;
 	}
 	if (binary->operation == BinaryOperation::dot) {
@@ -2279,6 +2387,18 @@ c
 				break;
 			}
 		}
+		
+		switch (binary->operation) {
+			case BinaryOperation::equ:
+			case BinaryOperation::neq: {
+				if (types_match(binary->left->type, binary->right->type)) {
+					binary->type = get_builtin_type(BuiltinType::Bool);
+					binary->low_operation = binary->operation == BinaryOperation::equ ? LowBinaryOperation::memcmp_equ : LowBinaryOperation::memcmp_neq;
+					return binary;
+				}
+				break;
+			}
+		}
 
 		if (is_modass(binary->operation)) {
 			// Turn   x += y;
@@ -2292,6 +2412,7 @@ c
 			definition->mutability = Mutability::readonly;
 			definition->initial_value = address_of_left;
 			definition->type = address_of_left->type;
+			definition->container = current_container;
 
 			auto make_deref = [&] {
 				auto deref = Unary::create();
@@ -2341,15 +2462,15 @@ Match            *Typechecker::typecheck_impl(Match *match, bool can_substitute)
 	make_concrete(match->expression);
 
 	for (auto &Case : match->cases) {
-		if (Case.from) {
-			typecheck(&Case.from);
+		for (auto &from : Case.froms) {
+			typecheck(&from);
 
-			if (!is_constant(Case.from)) {
-				reporter.error(Case.from->location, "Match case expression must be constant.");
+			if (!is_constant(from)) {
+				reporter.error(from->location, "Match case expression must be constant.");
 				fail();
 			}
 
-			if (!implicitly_cast(&Case.from, match->expression->type, true))
+			if (!implicitly_cast(&from, match->expression->type, true))
 				fail();
 		}
 
@@ -2566,6 +2687,73 @@ Struct           *Typechecker::typecheck_impl(Struct *Struct, bool can_substitut
 		return Struct;
 	}
 }
+Enum             *Typechecker::typecheck_impl(Enum *Enum, bool can_substitute) {
+	// NOTE:
+	// values are typechecked as though their underlying type is an U64.
+	// then 
+
+
+	if (Enum->parsed_underlying_type) {
+		typecheck(&Enum->parsed_underlying_type);
+		if (!is_type(Enum->parsed_underlying_type)) {
+			reporter.error(Enum->parsed_underlying_type->location, "This must be a type.");
+			fail();
+		}
+		Enum->underlying_type = Enum->parsed_underlying_type;
+	} else {
+		Enum->underlying_type = get_builtin_type(BuiltinType::U64);
+	}
+
+	scoped_replace(current_container, Enum);
+	scoped_replace(current_block, &Enum->block);
+
+	u64 next_value = 0;
+	for (auto element : Enum->block.definition_list) {
+		if (element->initial_value) {
+			element->parsed_type = Enum->underlying_type;
+
+			typecheck(&element);
+
+			assert(element->constant_value);
+			switch (element->constant_value.value().kind) {
+				case ValueKind::Bool:
+				case ValueKind::U8:
+				case ValueKind::U16:
+				case ValueKind::U32:
+				case ValueKind::U64:
+				case ValueKind::S8:
+				case ValueKind::S16:
+				case ValueKind::S32:
+				case ValueKind::S64:
+				case ValueKind::UnsizedInteger:
+					next_value = element->constant_value.value().S64 + 1;
+					break;
+				default:
+					invalid_code_path(element->initial_value->location, "ValueKind should be an integer, but is {}", element->constant_value.value().kind);
+					break;
+			}
+		} else {
+			element->constant_value = Value(next_value);
+			element->type = Enum->underlying_type;
+			next_value += 1;
+		}
+	}
+
+	Enum->type = get_builtin_type(BuiltinType::Type);
+	for (auto element : Enum->block.definition_list) {
+		element->parsed_type = 0;
+
+		assert(Enum->definition, "Enums with no definition are not implemented");
+
+		// HACK: :enum_value_type:
+		// Enum->definition is currently being typechecked, but names already reference it.
+		// This unfinished state will probably cause some bugs?
+		// Though when accessing enum values, the enum name waits for definition type, so maybe its fine?
+		element->type.expression = make_name(Enum->definition);
+		element->type.expression->type = get_builtin_type(BuiltinType::Type);
+	}
+	return Enum;
+}
 ArrayType        *Typechecker::typecheck_impl(ArrayType *arr, bool can_substitute) {
 	typecheck(&arr->count_expression);
 	if (auto maybe_count = get_constant_value(arr->count_expression)) {
@@ -2612,7 +2800,9 @@ ArrayType        *Typechecker::typecheck_impl(ArrayType *arr, bool can_substitut
 Expression       *Typechecker::typecheck_impl(Subscript *Subscript, bool can_substitute) {
 	typecheck(&Subscript->subscriptable);
 
-	if (auto array_type = direct_as<ArrayType>(Subscript->subscriptable->type)) {
+	auto direct_subscriptable_type = direct(Subscript->subscriptable->type);
+
+	if (auto array_type = as<ArrayType>(direct_subscriptable_type)) {
 		typecheck(&Subscript->index);
 		make_concrete(Subscript->index);
 		if (!::is_concrete_integer(Subscript->index->type)) {
@@ -2643,10 +2833,19 @@ Expression       *Typechecker::typecheck_impl(Subscript *Subscript, bool can_sub
 		}
 
 		return Subscript;
-	} else if (auto Struct_ = direct_as<Struct>(Subscript->subscriptable->type); Struct_ && Struct_->is_template) {
+	} else if (auto pointer = as_pointer(direct_subscriptable_type)) {
+		typecheck(&Subscript->index);
+		make_concrete(Subscript->index);
+		if (!::is_concrete_integer(Subscript->index->type)) {
+			reporter.error(Subscript->index->location, "This must be an integer.");
+			fail();
+		}
+		Subscript->type = pointer->expression;
+		return Subscript;
+	} else if (auto Struct_ = as<Struct>(direct_subscriptable_type); Struct_ && Struct_->is_template) {
 		return get_struct_template_instantiation(Struct_, Subscript->index);
 	} else {
-		reporter.error(Subscript->subscriptable->location, "This expression is not subscriptable.");
+		reporter.error(Subscript->subscriptable->location, "Expression of type {} is not subscriptable.", Subscript->subscriptable->type);
 		reporter.help("Subscriptable expressions are arrays and templates.");
 		fail();
 	}

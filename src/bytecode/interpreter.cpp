@@ -87,11 +87,57 @@ void Interpreter::run_one_instruction() {
 	auto std_out = GetStdHandle(STD_OUTPUT_HANDLE);
 
 	bool skip = false;
-	if (run_while_location_is.data == i.source_location.data && run_while_location_is.count == i.source_location.count) {
-		skip = true;
+
+	auto find_ret_index = [&](umm from_index) {
+		while (from_index < bytecode->instructions.count && bytecode->instructions[from_index].kind != InstructionKind::ret) {
+			++from_index;
+		}
+		return from_index;
+	};
+
+	run_strategy.visit(Combine{
+		[](Empty) {},
+		[&](RunWhileLocationIs r) {
+			if (r.location.data == i.source_location.data && r.location.count == i.source_location.count) {
+				skip = true;
+			}
+		},
+		[&](RunToLineAfter r) {
+			if (debug_call_stack.count < r.call_stack_size) {
+				skip = false;
+				return;
+			}
+			if (debug_call_stack.count > r.call_stack_size) {
+				skip = true;
+				return;
+			}
+
+			skip = true;
+			if (i.source_location) {
+				auto l = get_source_location(i.source_location);
+				if (l.file == r.file) {
+					if (l.location_line_number != r.line) {
+						if (find_ret_index(current_instruction_index) == find_ret_index(r.instruction_index)) {
+							skip = false;
+						}
+					} 
+				}
+			}
+		},
+		[&](RunWhileInstructionIndexIsNot r) {
+			if (current_instruction_index != r.i) {
+				skip = true;
+			}
+		},
+	});
+
+	if (skip) {
+		if (GetAsyncKeyState('S')) {
+			skip = false;
+			run_strategy = Empty{};
+		}
 	} else {
-		// Don't want to always stop on instructions that don't have a location.
-		run_while_location_is = {0, 1};
+		run_strategy = Empty{};
 	}
 
 	if (interactive && !skip) {
@@ -211,7 +257,7 @@ void Interpreter::run_one_instruction() {
 			else if (debug_window_index == (int)DebugWindowKind::arguments && header("Arguments"s, DebugWindowFlag::arguments)) {
 				if (lambda) {
 					for (auto parameter : lambda->head.parameters_block.definition_list) {
-						print("{}: ", parameter->name);
+						with(ConsoleColor::white, print("{}: ", parameter->name));
 						Address address = {
 							.base = Register::base,
 							.offset = (s64)(16 + parameter->offset),
@@ -224,7 +270,7 @@ void Interpreter::run_one_instruction() {
 			else if (debug_window_index == (int)DebugWindowKind::locals && header("Locals"s, DebugWindowFlag::locals)) {
 				if (lambda) {
 					for (auto local : lambda->locals) {
-						print("{}: ", local->name);
+						with(ConsoleColor::white, print("{}: ", local->name));
 						Address address = {
 							.base = Register::base,
 							.offset = -(s64)lambda->locals_size + (s64)local->offset,
@@ -234,20 +280,35 @@ void Interpreter::run_one_instruction() {
 					}
 				}
 			}
+			else if (debug_window_index == (int)DebugWindowKind::call_stack && header("Call stack"s, DebugWindowFlag::call_stack)) {
+				for (auto index : debug_call_stack) {
+					if (auto found = bytecode->first_instruction_to_lambda.find(index)) {
+						auto lambda = *found.value;
+						auto loc = get_source_location(lambda->location);
+						print("{}:{}: ", loc.file, loc.location_line_number);
+						with(ConsoleColor::white, println(lambda->definition ? lambda->definition->name : u8"(unnamed)"s));
+					} else {
+						println("unknown at #{}", index);
+					}
+				}
+			}
+			else if (debug_window_index == (int)DebugWindowKind::output && header("Output"s, DebugWindowFlag::output)) {
+				println(output_builder);
+			}
 		}
 
 		println();
-		println();
 		println("{} - next expression", Commands::next_expression);
 		println("{} - next instruction", Commands::next_instruction);
+		println("{} - next line", Commands::next_line);
 		println("{} - redraw window", Commands::redraw_window);
 		println("{} - toggle hex", Commands::toggle_hex);
-		println();
-		println("Output:");
-		println(output_builder);
-		println();
-		println();
-		println();
+		CONSOLE_SCREEN_BUFFER_INFO csbi;
+		GetConsoleScreenBufferInfo(std_out, &csbi);
+		for (int i = csbi.dwCursorPosition.Y; i < csbi.dwMaximumWindowSize.Y - 1; ++i) {
+			println();
+		}
+		print("                           \r");
 
 	retry_char:
 		int pressed_key = _getch();
@@ -257,10 +318,22 @@ void Interpreter::run_one_instruction() {
 				goto redraw;
 			}
 			case Commands::next_expression: {
-				run_while_location_is = i.source_location;
+				run_strategy = RunWhileLocationIs{i.source_location};
 				break;
 			}
 			case Commands::next_instruction: {
+				break;
+			}
+			case Commands::next_line: {
+				if (i.source_location) {
+					auto location = get_source_location(i.source_location);
+					run_strategy = RunToLineAfter{
+						.call_stack_size = debug_call_stack.count,
+						.instruction_index = current_instruction_index,
+						.file = location.file,
+						.line = location.location_line_number,
+					};
+				}
 				break;
 			}
 			case Commands::redraw_window: {
@@ -274,17 +347,31 @@ void Interpreter::run_one_instruction() {
 				goto retry_char;
 			}
 		}
+
+		print("... RUNNING ...");
 	}
 
 	previous_registers = registers;
 
-	{
+	__try {
 		switch (i.kind) {
 			#define x(name, fields) case InstructionKind::name: execute(i.v_##name); break;
 			ENUMERATE_BYTECODE_INSTRUCTION_KIND
 			#undef x
 		}
+	} __except ([&](EXCEPTION_POINTERS *ep){
+		if (context->run_interactive) {
+			println("EXCEPTION: {}", ep->ExceptionRecord->ExceptionCode);
+			println("ADDRESS: {}", ep->ExceptionRecord->ExceptionAddress);
+			current_instruction_index -= 1;
+			run_strategy = Empty{};
+			return EXCEPTION_EXECUTE_HANDLER;
+		} else {
+			return EXCEPTION_EXECUTE_FAULT;
+		}
+	}(GetExceptionInformation())) {
 	}
+
 	++current_instruction_index;
 }
 	

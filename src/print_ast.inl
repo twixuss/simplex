@@ -4,15 +4,7 @@ void print_tabs() {
 		print("    ");
 }
 
-struct {
-	void operator+=(auto fn) {
-		++tabs;
-		fn();
-		--tabs;
-	}
-} _tabber;
-
-#define tabbed _tabber += [&]
+#define tabbed ++tabs; defer { --tabs; }
 
 static constexpr ConsoleColor untypechecked_color = ConsoleColor::red;
 
@@ -29,6 +21,7 @@ void print_if_type(Node *type, Node *fallback) {
 void print_ast(Value value) {
 	switch (value.kind) {
 		case ValueKind::lambda: print_ast(value.lambda); break;
+		case ValueKind::Type: print_ast(value.Type); break;
 		default: print(value); break;
 	}
 }
@@ -38,27 +31,27 @@ void print_ast_impl(Block *block) {
 		print(" :{}", block->tag);
 	}
 	print('\n');
-	tabbed {
+	{ tabbed;
 		for (auto child : block->children) {
 			print_tabs();
 			print_ast(child);
 			println();
 		}
-	};
+	}
 	print_tabs();
 	println("}");
 }
 void print_ast_impl(Call *call) {
 	print_ast(call->callable);
 	print('(');
-	tabbed {
+	{ tabbed;
 		for (auto &argument : call->arguments) {
 			if (&argument != call->arguments.data) {
 				print(", ");
 			}
 			print_ast(argument.expression);
 		}
-	};
+	}
 	print(')');
 }
 void print_ast_impl(Definition *definition) {
@@ -86,11 +79,11 @@ void print_ast_impl(Definition *definition) {
 }
 void print_ast_impl(IntegerLiteral *literal) {
 	print('{');
-	tabbed {
+	{ tabbed;
 		print(literal->value);
 		print(" as ");
 		print_ast(literal->type);
-	};
+	}
 	print('}');
 }
 void print_ast_impl(BooleanLiteral *literal) {
@@ -108,7 +101,7 @@ void print_ast_impl(LambdaHead *head, bool print_braces = true) {
 		++tabs;
 	}
 	print("fn (");
-	tabbed {
+	{ tabbed;
 	#if 1
 		// Individual parameters
 		foreach (it, head->parameters_block.definition_list) {
@@ -150,7 +143,7 @@ void print_ast_impl(LambdaHead *head, bool print_braces = true) {
 			print_ast(group[0]->type);
 		}
 	#endif
-	};
+	}
 	print("): ");
 	print_if_type(head->return_type, head->parsed_return_type);
 	if (print_braces) {
@@ -160,7 +153,7 @@ void print_ast_impl(LambdaHead *head, bool print_braces = true) {
 }
 void print_ast_impl(Lambda *lambda) {
 	print("{");
-	tabbed {
+	{ tabbed;
 		switch (lambda->inline_status) {
 			case InlineStatus::always: print("inline "); break;
 			case InlineStatus::never: print("noinline "); break;
@@ -174,7 +167,7 @@ void print_ast_impl(Lambda *lambda) {
 		if (lambda->body) {
 			print_ast(lambda->body);
 		}
-	};
+	}
 	print_tabs();
 	print("}");
 }
@@ -237,24 +230,28 @@ void print_ast_impl(Break *Break) {
 }
 void print_ast_impl(Binary *binary) {
 	print('{');
-	tabbed {
+	{ tabbed;
 		print_ast(binary->left);
 		print(' ');
 		print(binary->operation);
 		print(' ');
 		print_ast(binary->right);
-	};
+	}
 	print('}');
 }
 void print_ast_impl(Match *match) {
 	print("match ");
 	print_ast(match->expression);
 	print(" {\n");
-	tabbed {
+	{ tabbed;
 		for (auto Case : match->cases) {
 			print_tabs();
-			if (Case.from) {
-				print_ast(Case.from);
+			if (Case.froms) {
+				for (auto &from : Case.froms) {
+					if (&from != Case.froms.data)
+						print(" or ");
+					print_ast(from);
+				}
 			} else {
 				print("else");
 			}
@@ -262,25 +259,39 @@ void print_ast_impl(Match *match) {
 			print_ast(Case.to);
 			print("\n");
 		}
-	};
+	}
 	print_tabs();
 	print("}");
 }
 void print_ast_impl(Unary *unary) {
 	print('{');
-	tabbed {
+	{ tabbed;
 		print(unary->operation);
 		print_ast(unary->expression);
-	};
+	}
 	print('}');
 }
 void print_ast_impl(Struct *Struct) {
 	print("struct {\n");
-	tabbed {
+	{ tabbed;
 		for (auto member : Struct->members) {
 			print_ast(member);
 		}
-	};
+	}
+	print("}");
+}
+void print_ast_impl(Enum *Enum) {
+	print("enum : ");
+	print_if_type(Enum->underlying_type, Enum->parsed_underlying_type);
+	print(" {\n");
+	{ tabbed;
+		for (auto element : Enum->block.definition_list) {
+			print_tabs();
+			print_ast(element);
+			println();
+		}
+	}
+	print_tabs();
 	print("}");
 }
 void print_ast_impl(ArrayType *Array) {
@@ -312,11 +323,11 @@ void print_ast_impl(Import *import) {
 }
 void print_ast_impl(Defer *defer_) {
 	print("defer {\n");
-	tabbed {
+	{ tabbed;
 		print_tabs();
 		print_ast(defer_->body);
 		println();
-	};
+	}
 	print_tabs();
 	print("}");
 }

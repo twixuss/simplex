@@ -147,6 +147,7 @@ Value NodeInterpreter::load_address_impl(Unary *unary) {
 	invalid_code_path();
 }
 Value NodeInterpreter::load_address_impl(Struct *) { invalid_code_path(); }
+Value NodeInterpreter::load_address_impl(Enum *) { invalid_code_path(); }
 Value NodeInterpreter::load_address_impl(ArrayType *) { invalid_code_path(); }
 Value NodeInterpreter::load_address_impl(Subscript *subscript) {
 	LOAD_ADDRESS_DEFN(arr, subscript->subscriptable);
@@ -607,13 +608,12 @@ Value NodeInterpreter::execute_impl(Match *match) {
 	assert(value.kind == ValueKind::S64, "Only this is implemented");
 
 	for (auto Case : match->cases) {
-		if (!Case.from)
-			continue;
-
-		EXECUTE_DEFN(from, Case.from);
-		assert(from.kind == ValueKind::S64, "Only this is implemented");
-		if (value.S64 == from.S64) {
-			return execute(Case.to);
+		for (auto from : Case.froms) {
+			EXECUTE_DEFN(from_value, from);
+			assert(from_value.kind == ValueKind::S64, "Only this is implemented");
+			if (value.S64 == from_value.S64) {
+				return execute(Case.to);
+			}
 		}
 	}
 
@@ -660,6 +660,9 @@ Value NodeInterpreter::execute_impl(Struct *Struct) {
 		yield(YieldResult::fail);
 	}
 	return Value(Type(Struct));
+}
+Value NodeInterpreter::execute_impl(Enum *Enum) { 
+	return Value(Type(Enum));
 }
 Value NodeInterpreter::execute_impl(ArrayType *array) {
 	return Value((Type)array);

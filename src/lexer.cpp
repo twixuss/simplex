@@ -9,7 +9,10 @@ Lexer Lexer::create(String source) {
 	Lexer result;
 	result.source = source;
 	result.cursor = source.data;
-		
+	
+	assert(source.data[-1] == 0, "Source must be terminated with zero at the beginning!");
+	assert(source.data[source.count] == 0, "Source must be terminated with zero at the end!");
+
 	for (umm i = 0; i < source.count; ++i) {
 		auto c = source.data[i];
 		if (c <= 0x08 || (0x0b <= c && c <= 0x0c) || (0x0e <= c && c <= 0x1f)) {
@@ -22,105 +25,40 @@ Lexer Lexer::create(String source) {
 }
 	
 Token Lexer::next_token() {
-	Token eof;
-	eof.kind = Token_eof;
-	eof.string = {source.end() - 1, source.end()};
-
-restart:
-	if (cursor >= source.end()) {
-		return eof;
-	}
-
-	while (true) {
-		if (*cursor != ' ' && *cursor != '\t' && *cursor != '\r')
-			break;
-		next();
-		if (cursor == source.end())
-			return eof;
-	}
-
+	auto end = source.end();
 
 	Token token;
+	token.kind = Token_eof;
+	token.string = {source.end() - 1, source.end()};
+
+restart:
+
+	while (cursor < end) {
+		switch (*cursor) {
+			case '\t':
+			case '\v':
+			case '\f':
+			case '\r':
+			case ' ':
+				++cursor;
+				continue;
+		}
+		break;
+	}
+
+	if (cursor >= source.end()) {
+		goto finish;
+	}
+
 	token.string.data = cursor;
 	
-	// ("&", "=")
-	// "&"
-	// "&="
-#define CASE_SINGLE_OR_DOUBLE(a, b)                                   \
-case a: {                                                         \
-	next();                                                       \
-	if (*cursor == b) {                                           \
-		next();                                                   \
-		token.kind = (TokenKind)const_string_to_token_kind(a, b); \
-		token.string.count = 2;                                   \
-	} else {                                                      \
-		token.kind = (TokenKind)a;                                \
-		token.string.count = 1;                                   \
-	}                                                             \
-	return token;                                                 \
-}
-
-	// ("&", "=")
-	// "&"
-	// "&&"
-	// "&="
-#define CASE_SINGLE_OR_TWO_DOUBLES(a, b)                                  \
-case a: {                                                             \
-	next();                                                           \
-	switch (*cursor) {                                                \
-		case a:                                                       \
-			next();                                                   \
-			token.kind = (TokenKind)const_string_to_token_kind(a, a); \
-			token.string.count = 2;                                   \
-			break;                                                    \
-		case b:                                                       \
-			next();                                                   \
-			token.kind = (TokenKind)const_string_to_token_kind(a, b); \
-			token.string.count = 2;                                   \
-			break;                                                    \
-		default: {                                                    \
-			token.kind = (TokenKind)a;                                \
-			token.string.count = 1;                                   \
-			break;                                                    \
-		}                                                             \
-	}                                                                 \
-	return token;                                                     \
-}
-	// ("<", "=")
-	// "<"
-	// "<="
-	// "<<"
-	// "<<="
-#define CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE(a, b)                               \
-case a: {                                                                    \
-	next();                                                                  \
-	switch (*cursor) {                                                       \
-		case b:                                                              \
-			token.kind = (TokenKind)const_string_to_token_kind(a, b);        \
-			next();                                                          \
-			token.string.count = 2;                                          \
-			break;                                                           \
-		case a: {                                                            \
-			next();                                                          \
-			if (*cursor == b) {                                              \
-				next();                                                      \
-				token.kind = (TokenKind)const_string_to_token_kind(a, a, b); \
-				token.string.count = 3;                                      \
-			} else {                                                         \
-				token.kind = (TokenKind)const_string_to_token_kind(a, a);    \
-				token.string.count = 2;                                      \
-			}                                                                \
-			break;                                                           \
-		}                                                                    \
-		default: {                                                           \
-			token.kind = (TokenKind)a;                                       \
-			token.string.count = 1;                                          \
-			break;                                                           \
-		}                                                                    \
-	}                                                                        \
-	return token;                                                            \
-}
 	switch (*cursor) {
+		case '\0':
+			goto finish;
+
+		//
+		//  Single char
+		// 
 		case '(': case ')':
 		case '[': case ']':
 		case '{': case '}':
@@ -130,48 +68,88 @@ case a: {                                                                    \
 		case ':': case ',':
 		case '?':
 		case '\\': case '\n': {
-			token.kind = (TokenKind)*cursor;
-			token.string.count = 1;
-			next();
-			return token;
+			token.kind = (TokenKind)*cursor++;
+			goto finish;
 		}
-		CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE('>', '=')
-		CASE_SINGLE_OR_TWO_DOUBLES_OR_TRIPLE('<', '=')
-		CASE_SINGLE_OR_DOUBLE('.', '.');
+
+		//
+		//  x  xx
+		// 
+		case '.': {
+			auto first = *cursor++;
+			u64 kind = first;
+
+			bool same = *cursor == first;
+			cursor += same;
+			kind = same ? first | (first << 8) : first;
+
+			token.kind = (TokenKind)kind;
+			goto finish;
+		}
+
+		//
+		//  x  x=
+		//
 		case '+':
 		case '-':
 		case '*':
 		case '%':
 		case '^':
 		case '!': {
-			char a = *cursor;
-			next();
-
-			u8 shift_table[] = {0, 8};
-			u16 or_table[] = {0, '=' << 8};
-			bool is_equals = *cursor == '=';
-
-			cursor += is_equals;
-			token.kind = (TokenKind)(a | or_table[is_equals]);
-			token.string.count = is_equals + 1;
-
-			return token;
+			u64 kind = *cursor++;
+			if (*cursor == '=') {
+				kind = kind << 8 | *cursor++;
+			}
+			token.kind = (TokenKind)kind;
+			goto finish;
+		}
+				
+		//
+		//  x  xx  x>
+		// 
+		case '=': {
+			u8 first = *cursor++;
+			u64 kind = first;
+			if (*cursor == '>') {
+				kind = kind << 8 | *cursor++;
+			} else if (*cursor == first) {
+				kind = kind << 8 | *cursor++;
+			}
+			token.kind = (TokenKind)kind;
+			goto finish;
+		}
+		//
+		//  x  xx  x=  xx=
+		//
+		case '&':
+		case '|':
+		case '<':
+		case '>': {
+			u8 first = *cursor++;
+			u64 kind = first; // x
+			if (*cursor == '=') {
+				kind = kind << 8 | *cursor++; // x=
+			} else if (*cursor == first) {
+				kind = kind << 8 | *cursor++; // xx
+				if (*cursor == '=') {
+					kind = kind << 8 | *cursor++; // xx=
+				}
+			}
+			token.kind = (TokenKind)kind;
+			goto finish;
 		}
 
-		CASE_SINGLE_OR_TWO_DOUBLES('=', '>');
-		CASE_SINGLE_OR_TWO_DOUBLES('&', '=');
-		CASE_SINGLE_OR_TWO_DOUBLES('|', '=');
 		case '/': {
 			token.kind = (TokenKind)*cursor;
-			next();
+			++cursor;
 			if (*cursor == '/') {
 				while (*cursor != '\n' && cursor != source.end()) {
-					next();
+					++cursor;
 				}
 				goto restart;
 			} else if (*cursor == '*') {
 				int level = 1;
-				enum class In {
+				enum class In : u8 {
 					nothing,
 					string,
 				};
@@ -209,46 +187,129 @@ case a: {                                                                    \
 					}
 					if (cursor >= source.end()) {
 						immediate_reporter.error(token.string.take(2), "Unclosed comment");
-						return {};
+						token = {};
+						goto finish;
 					}
 				}
 				goto restart;
 			} else {
 				token.kind = (TokenKind)'/';
-				token.string.count = 1;
-				return token;
+				goto finish;
 			}
 			break;
 		}
 		case '"': {
 			token.kind = Token_string;
-			next();
+			++cursor;
 			while (true) {
 				if (*cursor == '"' && cursor[-1] != '\\') {
 					break;
 				}
-				next();
+				++cursor;
 				if (cursor > source.end()) {
 					immediate_reporter.error(token.string.take(2), "Unclosed string literal");
-					return {};
+					token = {};
+					goto finish;
 				}
 			}
 
-			next();
+			++cursor;
+			goto finish;
+		}
+		case '\'': {
+			token.kind = Token_number;
+			++cursor;
+		
+			string_value.clear();
 
-			token.string.set_end(cursor);
-			return token;
+			while (1) {
+				switch (*cursor) {
+					case '\0': {
+						immediate_reporter.error(token.string.take(1), "Unclosed character literal");
+						token = {};
+						goto finish;
+					}
+					case '\\': {
+						++cursor;
+						switch (*cursor) {
+							case '\0':
+								immediate_reporter.error(token.string.take(1), "Unclosed character literal");
+								token = {};
+								goto finish;
+							case 'a': string_value.add('\a'); ++cursor; break;
+							case 'b': string_value.add('\b'); ++cursor; break;
+							case 'f': string_value.add('\f'); ++cursor; break;
+							case 'n': string_value.add('\n'); ++cursor; break;
+							case 'r': string_value.add('\r'); ++cursor; break;
+							case 't': string_value.add('\t'); ++cursor; break;
+							case 'v': string_value.add('\v'); ++cursor; break;
+							case '\\': string_value.add('\\'); ++cursor; break;
+							case 'x': case 'X': {
+								++cursor;
+
+								switch (*cursor) {
+									case '\0': {
+										immediate_reporter.error(token.string.take(1), "Unclosed character literal");
+										token = {};
+										goto finish;
+									}
+									case '0':case '1':case '2':case '3':case '4':case '5':case '6':case '7':case '8':case '9':
+									case 'a':case 'b':case 'c':case 'd':case 'e':case 'f':
+									case 'A':case 'B':case 'C':case 'D':case 'E':case 'F': {
+										break;
+									}
+									default: {
+										immediate_reporter.error(Span(cursor, (umm)1), "Invalid hexadecimal escape sequence");
+										token = {};
+										goto finish;
+									}
+								}
+
+								char x = 0;
+								while (is_hex_digit(*cursor)) {
+									x = (x << 4) | hex_digit_to_int_unchecked(*cursor++);
+								}
+								string_value.add(x);
+								break;
+							}
+							default: {
+								string_value.add(*cursor++);
+								break;
+							}
+						}
+						case '\'': {
+							++cursor;
+							int_value = 0;
+							umm max_length = 8;
+							if (string_value.count > max_length) {
+								immediate_reporter.error(Span(token.string.data, cursor), "Multi-character can't be longer than number of bytes in the biggest integer, in this case {}.", max_length);
+								token = {};
+								goto finish;
+							}
+							for (umm i = 0; i < string_value.count; ++i) {
+								int_value |= (u64)string_value.data[i] << (i * 8);
+							}
+							goto finish;
+						} 
+						default: {
+							string_value.add(*cursor);
+							++cursor;
+							break;
+						}
+					}
+				}
+			}
 		}
 		case '#': {
 			token.kind = Token_directive;
 
-			next();
+			++cursor;
 			while (true) {
 				switch (*cursor) {
 					ENUMERATE_CHARS_ALPHA(PASTE_CASE)
 					ENUMERATE_CHARS_DIGIT(PASTE_CASE)
 					case '_': {
-						next();
+						++cursor;
 						break;
 					}
 					default:
@@ -256,22 +317,94 @@ case a: {                                                                    \
 				}
 			}
 		directive_loop_end:;
-
-			token.string.set_end(cursor);
-			return token;
+			goto finish;
 		}
 
 		ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
 			token.kind = Token_number;
 
-			next();
-				
-			while (is_digit((ascii)*cursor) || is_alpha((ascii)*cursor) || *cursor == '_') {
-				next();
-			}
+			int_value = 0;
 
-			token.string.set_end(cursor);
-			return token;
+			if (*cursor == '0') {
+				++cursor;
+				switch (*cursor) {
+					default: goto finish;
+					case 'b': {
+						++cursor;
+						while (1) {
+							switch (*cursor) {
+								default:
+									goto finish;
+								case '0': case '1':
+									int_value = (int_value << 1) | (*cursor++ - '0'); break;
+								case '_':
+									*cursor++; break;
+							}
+						}
+						break;
+					}
+					case 'o': {
+						++cursor;
+						while (1) {
+							switch (*cursor) {
+								default:
+									goto finish;
+								case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7':
+									int_value = (int_value << 3) | (*cursor++ - '0'); break;
+								case '_':
+									*cursor++; break;
+							}
+						}
+						break;
+					}
+					case 'x': {
+						++cursor;
+						while (1) {
+							switch (*cursor) {
+								default:
+									goto finish;
+								case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
+									int_value = (int_value << 4) | (*cursor++ - '0'); break;
+								case 'a':case 'b':case 'c':case 'd':case 'e':case 'f':
+									int_value = (int_value << 4) | (*cursor++ - ('a' - 10)); break;
+								case 'A':case 'B':case 'C':case 'D':case 'E':case 'F':
+									int_value = (int_value << 4) | (*cursor++ - ('A' - 10)); break;
+								case '_':
+									*cursor++; break;
+							}
+						}
+						break;
+					}
+
+					case '0':case '1':case '2':case '3':case '4':case '5':case '6':case '7':case '8':case '9':
+					case '_': {
+						while (1) {
+							switch (*cursor) {
+								case '0':case '1':case '2':case '3':case '4':case '5':case '6':case '7':case '8':case '9':
+								case '_':
+									++cursor;
+									continue;
+							}
+							break;
+						}
+						immediate_reporter.error(Span(token.string.data, cursor), "C-like octal literals are not supported. Use 0o{}", Span(token.string.data + 1, cursor));
+						token = {};
+						goto finish;
+					}
+				}
+			} else {
+				while (1) {
+					switch (*cursor) {
+						default:
+							goto finish;
+						case '0':case '1':case '2':case '3':case '4':case '5':case '6':case '7':case '8':case '9':
+							int_value = int_value * 10 + (*cursor++ - '0'); break;
+						case '_':
+							++cursor; break;
+					}
+				}
+			}
+			goto finish;
 		}
 		default: {
 			token.kind = Token_name;
@@ -286,7 +419,7 @@ case a: {                                                                    \
 					goto name_loop_end;
 				}
 
-				next();
+				++cursor;
 			}
 		name_loop_end:;
 
@@ -303,6 +436,23 @@ case a: {                                                                    \
 				#undef x
 				return max; 
 			}();
+			
+			auto swp = [](u64 x) {
+				u64 r = 0;
+				while (x) {
+					r = (r << 8) | (x & 0xff);
+					x >>= 8;
+				}
+				return r;
+			};
+
+			auto swp2 = [](Span<char> x) {
+				u64 r = 0;
+				for (umm i = 0; i < x.count; ++i) {
+					r = (r << 8) | x.data[x.count-i-1];
+				}
+				return r;
+			};
 
 			#if 0
 				
@@ -348,70 +498,72 @@ case a: {                                                                    \
 				case 2: {
 					u16 token_as_int = *(u16 *)token.string.data;
 					switch (token_as_int) {
-						case const_string_to_token_kind("U8"s): { token.kind = Token_U8; break; }
-						case const_string_to_token_kind("S8"s): { token.kind = Token_S8; break; }
-						case const_string_to_token_kind("if"s): { token.kind = Token_if; break; }
-						case const_string_to_token_kind("as"s): { token.kind = Token_as; break; }
-						case const_string_to_token_kind("fn"s): { token.kind = Token_fn; break; }
+						case swp('or'): { token.kind = Token_or; break; }
+						case swp('U8'): { token.kind = Token_U8; break; }
+						case swp('S8'): { token.kind = Token_S8; break; }
+						case swp('if'): { token.kind = Token_if; break; }
+						case swp('as'): { token.kind = Token_as; break; }
+						case swp('fn'): { token.kind = Token_fn; break; }
 					}
 					break;
 				}
 				case 3: {
 					u32 token_as_int = *(u32 *)token.string.data & 0xff'ff'ff;
 					switch (token_as_int) {
-						case const_string_to_token_kind("U16"s): { token.kind = Token_U16; break; }
-						case const_string_to_token_kind("U32"s): { token.kind = Token_U32; break; }
-						case const_string_to_token_kind("U64"s): { token.kind = Token_U64; break; }
-						case const_string_to_token_kind("S16"s): { token.kind = Token_S16; break; }
-						case const_string_to_token_kind("S32"s): { token.kind = Token_S32; break; }
-						case const_string_to_token_kind("S64"s): { token.kind = Token_S64; break; }
-						case const_string_to_token_kind("let"s): { token.kind = Token_let; break; }
-						case const_string_to_token_kind("var"s): { token.kind = Token_var; break; }
+						case swp('U16'): { token.kind = Token_U16; break; }
+						case swp('U32'): { token.kind = Token_U32; break; }
+						case swp('U64'): { token.kind = Token_U64; break; }
+						case swp('S16'): { token.kind = Token_S16; break; }
+						case swp('S32'): { token.kind = Token_S32; break; }
+						case swp('S64'): { token.kind = Token_S64; break; }
+						case swp('let'): { token.kind = Token_let; break; }
+						case swp('var'): { token.kind = Token_var; break; }
 					}
 					break;
 				}
 				case 4: {
 					u32 token_as_int = *(u32 *)token.string.data;
 					switch (token_as_int) {
-						case const_string_to_token_kind("Type"s): { token.kind = Token_Type; break; }
-						case const_string_to_token_kind("Bool"s): { token.kind = Token_Bool; break; }
-						case const_string_to_token_kind("None"s): { token.kind = Token_None; break; }
-						case const_string_to_token_kind("none"s): { token.kind = Token_none; break; }
-						case const_string_to_token_kind("then"s): { token.kind = Token_then; break; }
-						case const_string_to_token_kind("else"s): { token.kind = Token_else; break; }
-						case const_string_to_token_kind("true"s): { token.kind = Token_true; break; }
+						case swp('Type'): { token.kind = Token_Type; break; }
+						case swp('Bool'): { token.kind = Token_Bool; break; }
+						case swp('None'): { token.kind = Token_None; break; }
+						case swp('none'): { token.kind = Token_none; break; }
+						case swp('then'): { token.kind = Token_then; break; }
+						case swp('else'): { token.kind = Token_else; break; }
+						case swp('true'): { token.kind = Token_true; break; }
+						case swp('enum'): { token.kind = Token_enum; break; }
 					}
 					break;
 				}
 				case 5: {
 					u64 token_as_int = *(u64 *)token.string.data & 0xff'ff'ff'ff'ff;
 					switch (token_as_int) {
-						case const_string_to_token_kind("const"s): { token.kind = Token_const; break; }
-						case const_string_to_token_kind("false"s): { token.kind = Token_false; break; }
-						case const_string_to_token_kind("while"s): { token.kind = Token_while; break; }
-						case const_string_to_token_kind("break"s): { token.kind = Token_break; break; }
-						case const_string_to_token_kind("match"s): { token.kind = Token_match; break; }
-						case const_string_to_token_kind("defer"s): { token.kind = Token_defer; break; }
+						case swp2("const"s): { token.kind = Token_const; break; }
+						case swp2("false"s): { token.kind = Token_false; break; }
+						case swp2("while"s): { token.kind = Token_while; break; }
+						case swp2("break"s): { token.kind = Token_break; break; }
+						case swp2("match"s): { token.kind = Token_match; break; }
+						case swp2("defer"s): { token.kind = Token_defer; break; }
 					}
 					break;
 				}
 				case 6: {
 					u64 token_as_int = *(u64 *)token.string.data & 0xff'ff'ff'ff'ff'ff;
 					switch (token_as_int) {
-						case const_string_to_token_kind("String"s): { token.kind = Token_String; break; }
-						case const_string_to_token_kind("return"s): { token.kind = Token_return; break; }
-						case const_string_to_token_kind("typeof"s): { token.kind = Token_typeof; break; }
-						case const_string_to_token_kind("inline"s): { token.kind = Token_inline; break; }
-						case const_string_to_token_kind("struct"s): { token.kind = Token_struct; break; }
-						case const_string_to_token_kind("import"s): { token.kind = Token_import; break; }
+						case swp2("String"s): { token.kind = Token_String; break; }
+						case swp2("return"s): { token.kind = Token_return; break; }
+						case swp2("typeof"s): { token.kind = Token_typeof; break; }
+						case swp2("inline"s): { token.kind = Token_inline; break; }
+						case swp2("struct"s): { token.kind = Token_struct; break; }
+						case swp2("import"s): { token.kind = Token_import; break; }
 					}
 					break;
 				}
 				case 8: {
 					u64 token_as_int = *(u64 *)token.string.data;
 					switch (token_as_int) {
-						case const_string_to_token_kind("continue"s): { token.kind = Token_continue; break; }
-						case const_string_to_token_kind("noinline"s): { token.kind = Token_noinline; break; }
+						case swp2("continue"s): { token.kind = Token_continue; break; }
+						case swp2("noinline"s): { token.kind = Token_noinline; break; }
 					}
 					break;
 				}
@@ -503,16 +655,15 @@ case a: {                                                                    \
 			}
 			#endif
 			
-			return token;
+			goto finish;
 		}
 	} 
+
+finish:
+	token.string.set_end(cursor);
+	return token;
 }
 
 void Lexer::print_invalid_character_error() {
 	immediate_reporter.error({cursor, 1}, "Invalid uft8 character.");
-}
-	
-void Lexer::next() {
-	assert(cursor <= source.end());
-	++cursor;
 }

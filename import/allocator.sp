@@ -1,11 +1,13 @@
 import "windows"
 
 // Allocator Actions
-const AA_ALLOCATE   = 0
-const AA_REALLOCATE = 1
-const AA_FREE = 2
+enum AllocatorAction {
+    allocate
+    reallocate
+    free
+}
 
-const Allocation = struct {
+struct Allocation {
     data: *var None
     size: U64
     alignment: U64
@@ -15,23 +17,23 @@ const Allocation = struct {
 // 
 // Dynamic Allocator
 //
-const Allocator = struct {
-    func: fn (state: *None, action: Int, old: Allocation, new: Allocation): Allocation
+struct Allocator {
+    func: fn (state: *None, action: AllocatorAction, old: Allocation, new: Allocation): Allocation
     state: *None
 }
 
 var current_allocator: Allocator
 
-fn allocate(allocator: Allocator, new: Allocation): Allocation => allocator.func(allocator.state, AA_ALLOCATE, Allocation(), new)
-fn reallocate(allocator: Allocator, old: Allocation, new: Allocation): Allocation => allocator.func(allocator.state, AA_REALLOCATE, old, new)
-fn free(allocator: Allocator, old: Allocation): None => allocator.func(allocator.state, AA_FREE, old, Allocation())
+fn allocate(allocator: Allocator, new: Allocation): Allocation => allocator.func(allocator.state, AllocatorAction.allocate, Allocation(), new)
+fn reallocate(allocator: Allocator, old: Allocation, new: Allocation): Allocation => allocator.func(allocator.state, AllocatorAction.reallocate, old, new)
+fn free(allocator: Allocator, old: Allocation): None => allocator.func(allocator.state, AllocatorAction.free, old, Allocation())
 
 // 
 // Page Allocator
 //
 const PAGE_SIZE = 4096
 
-const PageAllocator = struct {}
+struct PageAllocator {}
 let page_allocator = PageAllocator()
 
 fn allocate(allocator: PageAllocator, new: Allocation): Allocation => {
@@ -66,12 +68,13 @@ fn free(allocator: PageAllocator, old: Allocation): None => {
     VirtualFree(old.data, 0, MEM_RELEASE)
 }
 
+// TODO: add implicit conversion from PageAllocator to Allocator
 let dyn_page_allocator = Allocator(
-    func = fn (state: *None, action: Int, old: Allocation, new: Allocation): Allocation => {
+    func = fn (state: *None, action: AllocatorAction, old: Allocation, new: Allocation): Allocation => {
         match (action) {
-            AA_ALLOCATE => page_allocator.allocate(new)
-            AA_REALLOCATE => page_allocator.reallocate(old, new)
-            AA_FREE => {page_allocator.free(old); Allocation() }
+            AllocatorAction.allocate => page_allocator.allocate(new)
+            AllocatorAction.reallocate => page_allocator.reallocate(old, new)
+            AllocatorAction.free => {page_allocator.free(old); Allocation() }
             else => Allocation()
         }
     }

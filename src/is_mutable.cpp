@@ -60,6 +60,7 @@ Result<Empty, Expression *> is_mutable_impl(Unary *unary) {
 	return unary;
 }
 Result<Empty, Expression *> is_mutable_impl(Struct *Struct) { return Struct; }
+Result<Empty, Expression *> is_mutable_impl(Enum *Enum) { return Enum; }
 Result<Empty, Expression *> is_mutable_impl(ArrayType *Array) { return Array; }
 Result<Empty, Expression *> is_mutable_impl(Subscript *Subscript) { return is_mutable(Subscript->subscriptable); }
 Result<Empty, Expression *> is_mutable_impl(ArrayConstructor *Array) { return Array; }

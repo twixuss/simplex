@@ -1,7 +1,7 @@
 #include "nodes.h"
 
 Node::Node() {
-	if (uid == 3647) {
+	if (uid == 3674) {
 		int x = 4;
 	}
 }
@@ -52,6 +52,15 @@ void append(StringBuilder &builder, Node *node) {
 				append(builder, Struct->definition->name);
 			} else {
 				append(builder, "struct");
+			}
+			break;
+		}
+		case NodeKind::Enum: {
+			auto Enum = (::Enum *)node;
+			if (Enum->definition) {
+				append(builder, Enum->definition->name);
+			} else {
+				append(builder, "enum");
 			}
 			break;
 		}

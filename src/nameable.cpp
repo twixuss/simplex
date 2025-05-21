@@ -38,6 +38,12 @@ void append(StringBuilder &builder, Nameable<Struct *> expr) {
 	else
 		return append_format(builder, "__{}", expr.value->uid);
 }
+void append(StringBuilder &builder, Nameable<Enum *> expr) {
+	if (expr.value->definition)
+		return append(builder, expr.value->definition->name);
+	else
+		return append_format(builder, "__{}", expr.value->uid);
+}
 void append(StringBuilder &builder, Nameable<ArrayType *> expr) { not_implemented("ArrayType"); }
 void append(StringBuilder &builder, Nameable<Subscript *> expr) { not_implemented("Subscript"); }
 void append(StringBuilder &builder, Nameable<ArrayConstructor *> expr) { not_implemented("ArrayConstructor"); }

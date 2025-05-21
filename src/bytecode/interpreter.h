@@ -3,6 +3,8 @@
 #include "../type.h"
 #include "../target_platform.h"
 
+#include <tl/variant.h>
+
 namespace Bytecode {
 
 struct Interpreter {
@@ -15,34 +17,39 @@ struct Interpreter {
 		source,
 		arguments,
 		locals,
+		call_stack,
 		bytecode,
 		registers,
 		stack,
+		output,
 		count,
 	};
 	struct DebugWindowFlag {
-		static constexpr int bytecode  = 1 << (int)DebugWindowKind::bytecode;
-		static constexpr int registers = 1 << (int)DebugWindowKind::registers;
-		static constexpr int stack     = 1 << (int)DebugWindowKind::stack;
-		static constexpr int source    = 1 << (int)DebugWindowKind::source;
-		static constexpr int arguments = 1 << (int)DebugWindowKind::arguments;
-		static constexpr int locals    = 1 << (int)DebugWindowKind::locals;
+		static constexpr int bytecode   = 1 << (int)DebugWindowKind::bytecode;
+		static constexpr int registers  = 1 << (int)DebugWindowKind::registers;
+		static constexpr int stack      = 1 << (int)DebugWindowKind::stack;
+		static constexpr int source     = 1 << (int)DebugWindowKind::source;
+		static constexpr int arguments  = 1 << (int)DebugWindowKind::arguments;
+		static constexpr int locals     = 1 << (int)DebugWindowKind::locals;
+		static constexpr int call_stack = 1 << (int)DebugWindowKind::call_stack;
+		static constexpr int output     = 1 << (int)DebugWindowKind::output;
 	};
 
 	int enabled_windows = ~DebugWindowFlag::stack;
 
 	struct Commands {
-		static constexpr char next_expression = '.';
+		static constexpr char next_expression  = '.';
 		static constexpr char next_instruction = 'n';
-		static constexpr char redraw_window = 'r';
-		static constexpr char toggle_hex = 'x';
+		static constexpr char next_line        = 'l';
+		static constexpr char redraw_window    = 'r';
+		static constexpr char toggle_hex       = 'x';
 	};
 	
 	static constexpr ConsoleColor next_instruction_color = ConsoleColor::green;
 
 	Optional<u64> run(Bytecode *bytecode, umm entry_index, bool interactive);
 	void run_one_instruction();
-
+	
 	void run_while(auto predicate) {
 		while (predicate()) {
 			run_one_instruction();
@@ -74,7 +81,20 @@ struct Interpreter {
 	}
 
 	StringBuilder output_builder;
-	String run_while_location_is;
+
+	struct RunWhileLocationIs {
+		String location;
+	};
+	struct RunToLineAfter {
+		umm call_stack_size;
+		umm instruction_index;
+		String file;
+		u64 line;
+	};
+	struct RunWhileInstructionIndexIsNot {
+		u64 i;
+	};
+	Variant<Empty, RunWhileLocationIs, RunToLineAfter, RunWhileInstructionIndexIsNot> run_strategy;
 
 	ContiguousHashMap<s8 *, Empty> printed_value_addresses;
 

@@ -102,7 +102,7 @@ bool Parser::parse_template_parameter_list(Expression *parent, Block *template_p
 
 }
 
-Parser::ParsedLambda Parser::parse_lambda() {
+Parser::NamedLambda Parser::parse_lambda() {
 	auto lambda = Lambda::create();
 	lambda->location = token.string;
 	lambda->head.template_parameters_block.parent = current_block;
@@ -202,14 +202,13 @@ Parser::ParsedLambda Parser::parse_lambda() {
 	lambda->head.location = lambda->location = { lambda->location.begin(), previous_token.string.end() };
 
 	if (should_expect_arrow) {
-		constexpr auto arrow = const_string_to_token_kind("=>"s);
 		if (lambda->head.parsed_return_type) {
-			if (token.kind == arrow) {
+			if (token.kind == '=>') {
 				next();
 				body_required = true;
 			}
 		} else {
-			if (token.kind != arrow) {
+			if (token.kind != '=>') {
 				reporter.error(token.string, "Expected : or => after )");
 
 				reporter.help("Functions are written like this:\n\n    (a: Type1, b: Type2): ReturnType => BodyExpression\n\nReturnType can be omitted:\n\n    (a: Type1, b: Type2) => BodyExpression");
@@ -262,6 +261,146 @@ Parser::ParsedLambda Parser::parse_lambda() {
 	}
 
 	return {finish_node(&lambda->head), lambda_name};
+}
+
+Parser::NamedStruct Parser::parse_struct() {
+	auto Struct = Struct::create();
+	scoped_replace(current_container, Struct);
+
+	Struct->location = token.string;
+	next();
+	skip_lines();
+	String name_location, name;
+	if (token.kind == Token_name) {
+		parse_name(&name_location, &name);
+		skip_lines();
+	}
+	if (token.kind == Token_directive) {
+		if (token.string == u8"#must_be_fully_initialized"s) {
+			Struct->must_be_fully_initialized = true;
+		} else {
+			reporter.error(token.string, "Unknown directive for struct");
+			yield(YieldResult::fail);
+		}
+		next();
+		skip_lines();
+	}
+
+	Struct->is_template = parse_template_parameter_list(Struct, &Struct->template_parameters_block);
+
+	expect('{');
+	next();
+	skip_lines();
+
+	while (token.kind != '}') {
+		auto definition = Definition::create();
+
+		parse_name(&definition->location, &definition->name);
+
+		expect(':');
+		next();
+		definition->parsed_type = parse_expression();
+
+		expect('\n');
+		skip_lines();
+
+		definition->container = Struct;
+		definition->mutability = Mutability::variable;
+		Struct->members.add(definition);
+	}
+	next();
+
+	return {
+		.Struct = finish_node(Struct),
+		.name = name,
+	};
+}
+
+Parser::NamedEnum Parser::parse_enum() {
+	auto Enum = ::Enum::create();
+
+	next();
+	skip_lines();
+	
+	String name_location, name;
+	if (token.kind == Token_name) {
+		parse_name(&name_location, &name);
+		skip_lines();
+	}
+
+	if (token.kind == ':') {
+		next();
+		skip_lines();
+		Enum->parsed_underlying_type = parse_expression();
+		skip_lines();
+	}
+
+	while (1) {
+		if (token.kind == Token_directive) {
+			if (token.string == "#allow_from_int") {
+				Enum->allow_from_int = true;
+			} else if (token.string == "#allow_to_int") {
+				Enum->allow_to_int = true;
+			} else {
+				reporter.error(token.string, "Unknown directive for enum: {}", token.string);
+				yield(YieldResult::fail);
+			}
+			next();
+		} else {
+			break;
+		}
+	}
+
+	expect('{');
+	next();
+			
+	scoped_replace(current_container, Enum);
+	scoped_replace(current_block, &Enum->block);
+
+	while (1) {
+		skip_lines();
+				
+		if (token.kind == '}') {
+			next();
+			break;
+		}
+				
+		if (token.kind == ';') {
+			next();
+			continue;
+		}
+				
+		auto element = Definition::create();
+
+		element->mutability = Mutability::constant;
+
+		expect(Token_name);
+		element->name = token.string;
+		element->location = token.string;
+		next();
+
+		if (token.kind == '=') {
+			next();
+			element->initial_value = parse_expression();
+		}
+				
+		for (auto other : Enum->block.definition_list) {
+			if (element->name == other->name) {
+				reporter.error(element->location, "Redefinition of enum value {}", element->name);
+				reporter.info(other->location, "Previously defined here");
+				yield(YieldResult::fail);
+			}
+		}
+		Enum->block.add(element);
+
+		expect({';', '\n'});
+		next();
+	}
+
+	return {
+		.Enum = finish_node(Enum),
+		.name = name,
+	};
 }
 
 bool Parser::fail_due_to_unseparated_ambiguous_expression(Expression *expression, String separator) {
@@ -529,6 +668,10 @@ Expression *Parser::parse_expression_0() {
 
 			parse_name(&definition->location, &definition->name);
 
+			if (definition->name == "file_size") {
+				int x = 2;
+			}
+
 			skip_lines();
 
 			expect({':', '='});
@@ -679,91 +822,16 @@ Expression *Parser::parse_expression_0() {
 		case Token_name: {
 			auto name = Name::create();
 			parse_name(&name->location, &name->name);
+			if (name->name == "bytes_remaining") {
+				int x = 4;
+			}
 			return finish_node(name);
 		}
 		case Token_number: {
 			auto literal = IntegerLiteral::create();
 			literal->location = token.string;
-				
-			auto digit_char_to_int = [](utf8 c) -> u8 {
-				u32 u = c;
-				if (u - '0' < 10) {
-					return u - '0';
-				}
-				if (u - 'A' < 6) {
-					return u - 'A' + 10;
-				}
-				if (u - 'a' < 6) {
-					return u - 'a' + 10;
-				}
-				return -1;
-			};
-				
-			u64 base = 10;
-			String base_name = u8"decimal"s;
-			String number_string = token.string;
-
-			if (token.string.count >= 2) {
-				auto &first_char = token.string.data[0];
-				auto &base_char = token.string.data[1];
-
-				if (first_char == '0') {
-					switch (to_lower(base_char)) {
-						case 'x':
-							base = 16;
-							base_name = u8"hexadecimal"s;
-							number_string = token.string.skip(2);
-							break;
-						case 'o':
-							base = 8;
-							base_name = u8"octal"s;
-							number_string = token.string.skip(2);
-							break;
-						case 'b':
-							base = 2;
-							base_name = u8"binary"s;
-							number_string = token.string.skip(2);
-							break;
-
-						case '0':case '1':case '2':case '3':case '4':
-						case '5':case '6':case '7':case '8':case '9': {
-							reporter.error(token.string, "If an integer literal starts with zero, the second character determines the base. To make an octal literal use `0o`.");
-							reporter.help(Span(&base_char, (umm)1), "Allowed bases are: b - binary, o - octal, x - hexadecimal.");
-							yield(YieldResult::fail);
-							break;
-						}
-
-						default: {
-							reporter.error(Span(&base_char, (umm)1), "Invalid base '{}' in integer literal.", base_char);
-							reporter.help(Span(&base_char, (umm)1), "Allowed bases are: b - binary, o - octal, x - hexadecimal.");
-							yield(YieldResult::fail);
-						}
-					}
-				}
-			}
-
-			UnsizedInteger result = {};
-			for (auto &ch : number_string) {
-				if (ch == '_')
-					continue;
-
-				u64 digit = digit_char_to_int(ch);
-				if (digit >= base) {
-					reporter.error(Span(&ch, (umm)1), "Invalid character '{}' in {} integer literal", ch, base_name);
-					yield(YieldResult::fail);
-				}
-
-				UnsizedInteger prev = result;
-				result = result * base + digit;
-				if ((result - digit) / base != prev) {
-					reporter.error(Span(&ch, (umm)1), "{} integer literal is too big", Capitalized{base_name});
-					yield(YieldResult::fail);
-				}
-			}
-			literal->value = result;
-
+			literal->value = lexer.int_value;
 			next();
-
 			return finish_node(literal);
 		}
 		case Token_false:
@@ -838,19 +906,29 @@ Expression *Parser::parse_expression_0() {
 				auto &Case = match->cases.add();
 				if (token.kind == Token_else) {
 					next();
+					skip_lines();
+					expect('=>');
+					next();
 				} else {
-					Case.from = parse_expression();
+					while (1) {
+						Case.froms.add(parse_expression());
+						skip_lines();
+						if (token.kind == 'or') {
+							next();
+							skip_lines();
+						} else if (token.kind == '=>') {
+							Case.arrow_location = token.string;
+							next();
+							break;
+						}
+					}
 				}
 
-				skip_lines();
-				expect(const_string_to_token_kind("=>"s));
-				Case.arrow_location = token.string;
-				next();
 				skip_lines();
 
 				Case.to = parse_expression();
 
-				if (!Case.from) {
+				if (!Case.froms) {
 					if (match->default_case) {
 						reporter.error(Case.to->location, "Match expression can not have multiple default cases.");
 						yield(YieldResult::fail);
@@ -889,48 +967,10 @@ Expression *Parser::parse_expression_0() {
 			return 0;
 		}
 		case Token_struct: {
-			auto Struct = Struct::create();
-			scoped_replace(current_container, Struct);
-
-			Struct->location = token.string;
-			next();
-			skip_lines();
-			if (token.kind == Token_directive) {
-				if (token.string == u8"#must_be_fully_initialized"s) {
-					Struct->must_be_fully_initialized = true;
-				} else {
-					reporter.error(token.string, "Unknown directive for struct");
-					yield(YieldResult::fail);
-				}
-				next();
-				skip_lines();
-			}
-
-			Struct->is_template = parse_template_parameter_list(Struct, &Struct->template_parameters_block);
-
-			expect('{');
-			next();
-			skip_lines();
-
-			while (token.kind != '}') {
-				auto definition = Definition::create();
-
-				parse_name(&definition->location, &definition->name);
-
-				expect(':');
-				next();
-				definition->parsed_type = parse_expression();
-
-				expect('\n');
-				skip_lines();
-
-				definition->container = Struct;
-				definition->mutability = Mutability::variable;
-				Struct->members.add(definition);
-			}
-			next();
-
-			return finish_node(Struct);
+			return parse_struct().Struct;
+		}
+		case Token_enum: {
+			return parse_enum().Enum;
 		}
 #define x(name) case Token_##name:
 		ENUMERATE_CONCRETE_BUILTIN_TYPES(x)
@@ -1207,6 +1247,7 @@ Node *Parser::parse_statement() {
 
 			if (parsed.lambda_or_head->kind == NodeKind::LambdaHead) {
 				reporter.error(parsed.lambda_or_head->location, "This is a type, but an actual lambda was expected.");
+				reporter.help(parsed.lambda_or_head->location, "Sorry if this is confusing. Maybe you missed => after return type?");
 				yield(YieldResult::fail);
 			}
 			assert(parsed.lambda_or_head->kind == NodeKind::Lambda);
@@ -1214,6 +1255,38 @@ Node *Parser::parse_statement() {
 			auto definition = Definition::create();
 			definition->name = parsed.name;
 			definition->initial_value = parsed.lambda_or_head;
+			definition->location = parsed.name;
+			definition->mutability = Mutability::constant;
+			link_constant_definition_to_initial_value(definition);
+			add_definition_to_block(definition, current_block);
+			return definition;
+		}
+		case Token_struct: {
+			auto parsed = parse_struct();
+				
+			if (!parsed.name.count) {
+				return parsed.Struct;
+			}
+
+			auto definition = Definition::create();
+			definition->name = parsed.name;
+			definition->initial_value = parsed.Struct;
+			definition->location = parsed.name;
+			definition->mutability = Mutability::constant;
+			link_constant_definition_to_initial_value(definition);
+			add_definition_to_block(definition, current_block);
+			return definition;
+		}
+		case Token_enum: {
+			auto parsed = parse_enum();
+				
+			if (!parsed.name.count) {
+				return parsed.Enum;
+			}
+
+			auto definition = Definition::create();
+			definition->name = parsed.name;
+			definition->initial_value = parsed.Enum;
 			definition->location = parsed.name;
 			definition->mutability = Mutability::constant;
 			link_constant_definition_to_initial_value(definition);
@@ -1288,6 +1361,8 @@ void Parser::link_constant_definition_to_initial_value(Definition *definition) {
 		lambda->definition = definition;
 	} else if (auto Struct = as<::Struct>(definition->initial_value)) {
 		Struct->definition = definition;
+	} else if (auto Enum = as<::Enum>(definition->initial_value)) {
+		Enum->definition = definition;
 	}
 }
 

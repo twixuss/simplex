@@ -86,8 +86,8 @@ ForEachDirective visit_impl(Unary *unary, auto &&visitor) {
 ForEachDirective visit_impl(Match *match, auto &&visitor) {
 	VISIT(&match->expression);
 	for (auto &Case : match->cases) {
-		if (Case.from) {
-			VISIT(&Case.from);
+		for (auto &from : Case.froms) {
+			VISIT(&from);
 		}
 		VISIT(&Case.to);
 	}
@@ -120,6 +120,15 @@ ForEachDirective visit_impl(Struct *Struct, auto &&visitor) {
 ForEachDirective visit_impl(ArrayType *arr, auto &&visitor) {
 	VISIT(&arr->count_expression);
 	VISIT(&arr->element_type);
+	return ForEach_continue;
+}
+ForEachDirective visit_impl(Enum *Enum, auto &&visitor) {
+	if (Enum->parsed_underlying_type) {
+		VISIT(&Enum->parsed_underlying_type);
+	}
+	for (auto &element : Enum->block.definition_list) {
+		VISIT(&element);
+	}
 	return ForEach_continue;
 }
 ForEachDirective visit_impl(Subscript *subscript, auto &&visitor) {

@@ -137,6 +137,15 @@ CheckResult2 types_match(Type a, Type b) {
 				}
 				break;
 			}
+			case NodeKind::Enum: {
+				REDECLARE_VAL(a, (Enum *)a);
+				REDECLARE_VAL(b, (Enum *)b);
+
+				if (a == b) {
+					return true;
+				}
+				break;
+			}
 			case NodeKind::ArrayType: {
 				REDECLARE_VAL(a, (ArrayType *)a);
 				REDECLARE_VAL(b, (ArrayType *)b);
@@ -194,6 +203,25 @@ bool is_concrete_integer(Type type) {
 			case BuiltinType::S16:
 			case BuiltinType::S32:
 			case BuiltinType::S64:
+				return true;
+		}
+	}
+
+	return false;
+}
+bool is_any_integer(Type type) {
+	type = direct(type);
+	if (auto builtin_type = as<BuiltinTypeName>(type)) {
+		switch (builtin_type->type_kind) {
+			case BuiltinType::U8:
+			case BuiltinType::U16:
+			case BuiltinType::U32:
+			case BuiltinType::U64:
+			case BuiltinType::S8:
+			case BuiltinType::S16:
+			case BuiltinType::S32:
+			case BuiltinType::S64:
+			case BuiltinType::UnsizedInteger:
 				return true;
 		}
 	}
@@ -321,6 +349,9 @@ u64 get_size_impl(Struct *Struct) {
 }
 u64 get_size_impl(ArrayType *arr) {
 	return get_size(arr->element_type) * arr->count.value();
+}
+u64 get_size_impl(Enum *Enum) {
+	return get_size(Enum->underlying_type);
 }
 
 u64 get_size(Type type) {

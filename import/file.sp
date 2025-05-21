@@ -2,7 +2,7 @@ import "windows"
 import "allocator"
 
 // TODO: implicit cast to string
-const Buffer = struct {
+struct Buffer {
     span: String
     allocator: Allocator
 }
@@ -23,7 +23,7 @@ fn free(buffer: *var Buffer): None => {
 
 const File = HANDLE
 
-const OpenFileOptions = struct {
+struct OpenFileOptions {
     read: Bool
     write: Bool
 }
@@ -34,7 +34,7 @@ fn open_file(path: String, options: OpenFileOptions): File => {
 
 // If anything goes wrong, returns an empty buffer
 // TODO: return option
-fn read_entire_file(path: String, out_result: *var Buffer): Bool => {
+fn read_entire_file(path: String, out_result: *var Buffer, extra_space_before: U64 = 0, extra_space_after: U64 = 0): Bool => {
     var ok: Bool = true
 
     var file = CreateFileA(path.data, GENERIC_READ, FILE_SHARE_READ, none, OPEN_EXISTING, 0, none)
@@ -42,17 +42,17 @@ fn read_entire_file(path: String, out_result: *var Buffer): Bool => {
 
     SetFilePointerEx(file, 0, none, FILE_END);
 
-	var file_size: S64
-	SetFilePointerEx(file, 0, &file_size, FILE_CURRENT)
+	var file_size: U64
+	SetFilePointerEx(file, 0, @&file_size, FILE_CURRENT)
 
     SetFilePointerEx(file, 0, none, FILE_BEGIN);
 
-    var result = create_buffer(@file_size)
+    var result = create_buffer(file_size + extra_space_before + extra_space_after)
     defer if !ok then result.free()
 
     const max_read_size = 0xffff_ffff
     var bytes_remaining = file_size
-    var dest = result.span.data
+    var dest = result.span.data + extra_space_before
     var bytes_read: DWORD
     while bytes_remaining >= max_read_size {
         if !ReadFile(file, dest, max_read_size, &bytes_read, 0) {

@@ -289,11 +289,13 @@ DEFINE_EXPRESSION(Binary) {
 	Expression *left = 0;
 	Expression *right = 0;
 	BinaryOperation operation = {};
+
+	// Set this at typechecking stage to rid bytecode builder of redundant work.
 	LowBinaryOperation low_operation = {};
 };
 DEFINE_EXPRESSION(Match) {
 	struct Case {
-		Expression *from = 0; // null in default case.
+		GList<Expression *> froms; // empty in default case. case is taken if any of those matches
 		Expression *to = 0;
 		String arrow_location;
 	};
@@ -318,6 +320,21 @@ DEFINE_EXPRESSION(Struct) {
 	s64 size = -1;
 	bool must_be_fully_initialized : 1 = false;
 	bool is_template : 1 = false;
+};
+DEFINE_EXPRESSION(Enum) {
+	Enum() {
+		block.container = this;
+	}
+
+	Definition *definition = 0;
+
+	Type underlying_type;
+	Expression *parsed_underlying_type = 0;
+
+	Block block;
+
+	bool allow_from_int : 1 = false;
+	bool allow_to_int   : 1 = false;
 };
 DEFINE_EXPRESSION(ArrayType) {
 	Expression *parsed_element_type = 0;
