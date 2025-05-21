@@ -1651,6 +1651,10 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 	return lambda;
 }
 Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
+	if (name->name == "end") {
+		int x = 42;
+	}
+
 	name->possible_definitions.clear();
 
 	for (auto block = current_block; block; block = block->parent) {
@@ -1667,24 +1671,15 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 			}
 
 			for (auto definition : definitions) {
-				auto definition_index = find_index_of(block->children, definition);
-				if (definition_index < block->children.count) {
-					if (block->container && as<Lambda>(block->container)) {
-						// Find our parent node in found definition's block
-						for (auto node : reversed(node_stack)) {
-							auto parent_index = find_index_of(block->children, node);
-							if (parent_index < block->children.count) {
-								if (parent_index < definition_index) {
-									// Can't access definition because it is declared after. Skip it.
-									goto next_definition;
-								}
-								break;
-							}
-						}
+				if (block->container && as<Lambda>(block->container) && block->container == definition->container) {
+					// Currently in a lambda.
+					// Make sure definitions that are declared later are not accessible
+
+					if (definition->mutability != Mutability::constant && !definition->type) {
+						// Can't refer to non-constant definition that is declared after.
+						// If it is declared before it should have it's type already set. 
+						goto next_definition;
 					}
-				} else {
-					// Definition is not a direct child of the block.
-					// TODO: check that definition is earlier than the name.
 				}
 					
 				name->possible_definitions.add(definition);
@@ -1716,7 +1711,10 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 			next_definition:;
 			}
 
-			if (auto definition = name->definition()) {
+			if (name->possible_definitions.count == 0) {
+				continue;
+			} else if (name->possible_definitions.count == 1) {
+				auto definition = name->possible_definitions.data[0];
 				name->type = definition->type;
 
 				if (context_base->constant_name_inlining) {
@@ -1757,7 +1755,7 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 }
 Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 	defer { assert(call->callable->type != 0); };
-	if (find(call->location, u8"buffer.free()"s)) {
+	if (call->location == u8"l.source.end()"s) {
 		int x = 4;
 	}
 	if (auto binary = as<Binary>(call->callable)) {
@@ -1767,7 +1765,7 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 				bool dot_binop_succeeded = false;
 
 				{
-					scoped_replace(reporter, dot_binop_reporter);
+					scoped_exchange(reporter, dot_binop_reporter);
 					dot_binop_succeeded = with_unwind_strategy([&] {
 						if (auto subst = typecheck_binary_dot(binary)) {
 							call->callable = subst;
