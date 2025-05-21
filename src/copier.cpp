@@ -11,10 +11,10 @@
 	} else {                                         \
 		to->x = from->x;                             \
 	}
-#define COPY_LIST(x, COPY_MODE)               \
-	to->x.resize(from->x.count);              \
-	for (umm i = 0; i < from->x.count; ++i) { \
-		COPY_MODE(x[i]);                      \
+#define COPY_LIST(x, COPY_MODE)                     \
+	to->x.resize(from->x.count);                    \
+	for (umm __i = 0; __i < from->x.count; ++__i) { \
+		COPY_MODE(x[__i]);                          \
 	}
 	
 Node *Copier::deep_copy(Node *from) {
