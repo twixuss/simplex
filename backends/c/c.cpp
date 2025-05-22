@@ -34,14 +34,24 @@ void append(StringBuilder &builder, CName<String> name) {
 	}
 }
 
+template <CNode Node>
+void append(StringBuilder &builder, CName<Node *> node) {
+	return append_format(builder, "_{}", node.value->uid);
+}
+
 void append(StringBuilder &builder, CName<Lambda *> lambda) {
 	if (lambda.value->link_name.count) {
 		append(builder, lambda.value->link_name);
 		return;
 	}
-
+	
 	if (lambda.value->is_extern) {
 		append(builder, lambda.value->definition ? lambda.value->definition->name : lambda.value->link_name ? lambda.value->link_name : tformat(u8"UNKNOWN_EXTERN_LAMBDA_{}"s, lambda.value->uid));
+		return;
+	}
+
+	if (lambda.value->is_intrinsic) {
+		append(builder, lambda.value->definition ? lambda.value->definition->name : lambda.value->link_name ? lambda.value->link_name : tformat(u8"UNKNOWN_INTRINSIC_LAMBDA_{}"s, lambda.value->uid));
 		return;
 	}
 
@@ -55,12 +65,40 @@ void append(StringBuilder &builder, CName<Struct *> t) {
 	append(builder, '_');
 	append(builder, t.value->uid);
 }
+void append(StringBuilder &builder, CName<Definition *> t) {
+	return append_format(builder, "{}_{}", t.value->name, t.value->uid);
+}
 void append(StringBuilder &builder, CName<Name *> t) {
 	visit_one(direct(t.value), Combine{
 		[&](Lambda *node) { append(builder, CName{node}); },
 		[&](Struct *node) { append(builder, CName{node}); },
+		//[&](Definition *node) { append(builder, CName{node}); },
 		[&](auto *node) { append_format(builder, "_{}", node->uid); },
 	});
+}
+void append(StringBuilder &builder, CName<Node *> t) {
+	switch (t.value->kind) {
+		#define x(name) case NodeKind::name: return append(builder, CName{(name *)t.value});
+		ENUMERATE_NODE_KIND(x)
+		#undef x
+	}
+	invalid_code_path();
+}
+void append(StringBuilder &builder, CName<Expression *> t) {
+	switch (t.value->kind) {
+		#define x(name) case NodeKind::name: return append(builder, CName{(name *)t.value});
+		ENUMERATE_EXPRESSION_KIND(x)
+		#undef x
+	}
+	invalid_code_path();
+}
+void append(StringBuilder &builder, CName<Statement *> t) {
+	switch (t.value->kind) {
+		#define x(name) case NodeKind::name: return append(builder, CName{(name *)t.value});
+		ENUMERATE_STATEMENT_KIND(x)
+		#undef x
+	}
+	invalid_code_path();
 }
 
 struct CType {
@@ -129,6 +167,9 @@ void append(StringBuilder &builder, CType type) {
 			append(builder, ctype(t->definition()->initial_value));
 		},
 		[&](Struct *t) {
+			append_format(builder, "_{}", t->uid);
+		},
+		[&](Enum *t) {
 			append_format(builder, "_{}", t->uid);
 		},
 		[&](LambdaHead *head) {
@@ -219,14 +260,19 @@ struct Tabs {
 		append_line(code, "}"); \
 	}
 
+bool make_debug_info_work = true;
 void append_line(StringBuilder &builder, auto const &...args) {
-	tabs(builder);
+	if (!make_debug_info_work) {
+		tabs(builder);
+	}
 	if constexpr (sizeof...(args) == 1) {
 		append(builder, args...);
 	} else {
 		append_format(builder, args...);
 	}
-	append(builder, '\n');
+	if (!make_debug_info_work) {
+		append(builder, '\n');
+	}
 }
 
 // Format:
@@ -303,17 +349,51 @@ void append_address(StringBuilder &code, Node *node) {
 	});
 }
 
+String debug_info_last_file;
+u32 debug_info_last_line;
+
+void append_debug_info(StringBuilder &builder, String location) {
+	if (!make_debug_info_work)
+		return;
+
+	if (location) {
+		auto sloc = get_source_location(location);
+		if (debug_info_last_line != sloc.lines_start_number || debug_info_last_file != sloc.file) {
+			append_format(builder, "\n#line {} \"{}\"\n", sloc.lines_start_number, EscapedCString{sloc.file});
+		}
+		debug_info_last_line = sloc.lines_start_number;
+		debug_info_last_file = sloc.file;
+	}
+}
+
 // if `define` is false, definition for resulting variable will be omitted.
 // one defer body can be appended multiple times, which will create duplicate definitions.
 // `define` is not propagated.
 void append_node(StringBuilder &code, Node *node, bool define) {
+	auto prev_node = debug_current_node;
 	scoped_replace(debug_current_node, node);
 
 	if (node->uid == 291) {
 		int x = 2;
 	}
 
-	append_line(code, "/* {} */", node->location);
+	append_debug_info(code, node->location);
+
+	//defer{
+	//	if (prev_node && prev_node->location) {
+	//		auto sloc = get_source_location(prev_node->location);
+	//		if (debug_info_last_line != sloc.lines_start_number - 1 || debug_info_last_file != sloc.file) {
+	//			append_format(code, "#line {} \"{}\"\n", sloc.lines_start_number-1, EscapedCString{sloc.file});
+	//		}
+	//		debug_info_last_line = sloc.lines_start_number - 1;
+	//		debug_info_last_file = sloc.file;
+	//	}
+	//};
+
+	if (!make_debug_info_work) {
+		append_line(code, "/* {} */", node->location);
+	}
+
 	if (auto expression = as<Expression>(node); expression && !types_match(expression->type, BuiltinType::None) && define) {
 		append_line(code, "{} _{};", ctype(expression->type), node->uid);
 		append_line(code, "memset(&_{}, 0, sizeof(_{}));", node->uid, node->uid);
@@ -468,7 +548,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 						}
 						append_format(code, "_{}", arg.expression->uid);
 					}
-					append_format(code, ");\n");
+					append_format(code, ");");
 					break;
 				}
 				case CallKind::constructor: {
@@ -484,7 +564,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 						auto member = s->members[i];
 						append_format(code, "._{} = _{},", member->uid, call->arguments[i].expression->uid);
 					}
-					append(code, "};\n");
+					append(code, "};");
 
 					break;
 				}
@@ -616,7 +696,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			for (auto e : constructor->elements) {
 				append_format(code, "_{}, ", e->uid);
 			}
-			append(code, "};\n");
+			append(code, "};");
 		},
 	});
 }
@@ -850,6 +930,7 @@ void print_S64(int64_t v);
 	visit(global_block, Combine {
 		[&] (auto) {},
 		[&] (Lambda *lambda) {
+			append_debug_info(builder, lambda->location);
 			append_line(builder, "/* {} */", lambda->location);
 			if (lambda->body && !lambda->head.is_template) {
 				append_format(builder, "{} {}(", ctype(lambda->head.return_type), CName{lambda});
@@ -862,7 +943,7 @@ void print_S64(int64_t v);
 
 					append_format(builder, "{} _{}", ctype(param->type), param->uid);
 				}
-				append(builder, ") {\n");
+				append(builder, ") {");
 
 				++tabs;
 				code.clear();
@@ -870,7 +951,7 @@ void print_S64(int64_t v);
 				append_node(code, lambda->body);
 
 				append     (builder, code);
-				append     (builder, "retlabel:\n");
+				append     (builder, "retlabel:");
 				if (types_match(lambda->body->type, BuiltinType::None)) {
 					append_line(builder, "return;");
 				} else {
@@ -881,6 +962,20 @@ void print_S64(int64_t v);
 			}
 		},
 	});
+	
+	auto path_base = parse_path(context_base->input_source_path).path_without_extension();
+
+	{
+		u32 lines = 0;
+		builder.for_each_block([&](StringBuilder::Block *block) {
+			for (auto c : *block) {
+				lines += c == '\n';
+			}
+		});
+		append_format(builder, R"(
+#line {} "{}.c"
+)", lines + 3, EscapedCString{path_base});
+	}
 
 	append_format(builder, R"(
 int main() {{
@@ -914,83 +1009,107 @@ int main() {{
 }}
 )", CName{main_lambda});
 
+	write_entire_file(tformat(u8"{}.c", path_base), to_string(builder));
 	
-	append_format(builder, R"(
+	builder.clear();
+
+	append(builder, R"(
+#include <stdint.h>
+#include <stdbool.h>
+
+#pragma warning(push, 0)
+
 //
 // Intrinsics implementation
 //
 
+typedef struct {
+	uint8_t *data;
+	size_t count;
+} String;
+
 bool __stdcall WriteFile(void *hFile, void const *lpBuffer, unsigned nNumberOfBytesToWrite, unsigned *lpNumberOfBytesWritten, void *lpOverlapped);
 
-_{} __make_string(char const *str) {{
-	return (_{}){{str, strlen(str)}};
-}}
+String __make_string(char const *str) {
+	return (String){str, strlen(str)};
+}
 
 // stdio replaces \n with \r\n ...
 // thats why winapi
-void print_String(_{} x) {{
-	char *data = (char *)(((void **)&x)[0]);
-	unsigned count = (unsigned)(((void **)&x)[1]);
-	WriteFile(GetStdHandle(-11), data, count, 0, 0);
-}}
-void print_S64(int64_t v) {{
+void print_String(String x) {
+	WriteFile(GetStdHandle(-11), x.data, x.count, 0, 0);
+}
+void print_S64(int64_t v) {
 	int radix = 10;
 	char buf[64];
 	char const *digits = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 	char *c = buf + sizeof(buf);
-	if (v == 0) {{
+	if (v == 0) {
 		WriteFile(GetStdHandle(-11), "0", 1, 0, 0);
 		return;
-	}}
+	}
 	bool neg = v < 0;
 	v = neg ? -v : v;
 
-	do {{
+	do {
 		*--c = digits[v % radix];
-	}} while (v /= radix);
+	} while (v /= radix);
 
-	if (neg) {{
+	if (neg) {
 		*--c = '-';
-	}}
+	}
 	WriteFile(GetStdHandle(-11), c, buf + sizeof(buf) - c, 0, 0);
 
-}}
+}
 
-void debug_break() {{
+void debug_break() {
 	__debugbreak();
-}}
-void panic() {{
+}
+void panic() {
 	print_String(__make_string("PANIC\n"));
 	__debugbreak();
-}}
-void assert(bool x) {{
+}
+void assert(bool x) {
 	if (!x)
 		debug_break();
-}}
+}
 
-)", context->builtin_structs.String->uid, context->builtin_structs.String->uid, context->builtin_structs.String->uid);
+)");
+
+	write_entire_file(tformat(u8"{}.intrinsics.c", path_base), to_string(builder));
+
+	auto run = [&](String cmd) {
+		standard_error_printer.writeln(cmd);
+
+		auto ret = start_process(cmd, [](auto x) {standard_error_printer.write(x); });
 	
-	auto path_base = parse_path(context_base->input_source_path).path_without_extension();
-
-	write_entire_file(tformat(u8"{}.c", path_base), to_string(builder));
-
-	auto cmd = tformat(u8"cl {}.c /Zi /FS /nologo /link /out:{}.exe", path_base, path_base);
-	standard_error_printer.writeln(cmd);
-
-	auto ret = start_process(cmd, [](auto x) {standard_error_printer.write(x); });
+		if (!ret) {
+			standard_error_printer.writeln(u8"Could not start process. Make sure it is in your PATH."s);
+			return false;
+		}
+		return ret.value() == 0;
+	};
 	
-	if (!ret) {
-		standard_error_printer.writeln(u8"Could not start `cl` process. Make sure it is in your PATH."s);
+	if (!run(tformat(u8"cl /c {}.intrinsics.c /FS /nologo", path_base))) {
+		standard_error_printer.writeln(u8"C compiler failed."s);
+		return false;
+	}
+	
+	if (!run(tformat(u8"cl /c {}.c /Zi /FS /JMC /nologo", path_base))) {
+		standard_error_printer.writeln(u8"C compiler failed."s);
 		return false;
 	}
 
-	if (ret.value()) {
-		standard_error_printer.writeln(u8"C compiler failed."s);
+	if (!run(tformat(u8"link /DEBUG {}.obj {}.intrinsics.obj /out:{}.exe", path_base, path_base, path_base))) {
+		standard_error_printer.writeln(u8"C linker failed."s);
 		return false;
 	}
 
 	if (!context_base->keep_build_artifacts) {
 		delete_file(tformat(u8"{}.c", path_base));
+		delete_file(tformat(u8"{}.intrinsics.c", path_base));
+		delete_file(tformat(u8"{}.obj", path_base));
+		delete_file(tformat(u8"{}.intrinsics.obj", path_base));
 		delete_file(tformat(u8"{}.ilk", path_base));
 	}
 

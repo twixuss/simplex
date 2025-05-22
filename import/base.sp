@@ -1,13 +1,13 @@
 const Int = S64
 const UInt = U64
 
-fn debug_break() => #intrinsic #linkname "debug_break"
-fn panic() => #intrinsic #linkname "panic"
+fn debug_break() => #intrinsic
+fn panic() => #intrinsic
 fn print(value: S64) => #intrinsic #linkname "print_S64"
 fn print(value: String) => #intrinsic #linkname "print_String"
 fn println(value: S64) => { print(value); print("\n"); }
 fn println(value: String) => { print(value); print("\n"); }
-fn assert(x: Bool) => #intrinsic #linkname "assert" // intrinsic because theres no expression string and caller location yet
+fn assert(x: Bool) => #intrinsic // intrinsic because theres no expression string and caller location yet
 
 fn memcpy(dst: *var None  src: *let None size: U64): *var None => {
     var d = dst as *var U8

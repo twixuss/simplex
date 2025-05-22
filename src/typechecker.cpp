@@ -2425,6 +2425,7 @@ c
 				deref->expression = name;
 				deref->operation = UnaryOperation::dereference;
 				deref->location = binary->left->location;
+				deref->type = binary->left->type;
 				return deref;
 			};
 
@@ -2437,6 +2438,7 @@ c
 			ass->location = binary->location;
 			ass->left = make_deref();
 			ass->right = binary;
+			ass->type = get_builtin_type(BuiltinType::None);
 			
 			auto block = Block::create();
 			block->location = binary->location;
