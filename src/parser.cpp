@@ -962,14 +962,14 @@ Expression *Parser::parse_expression_0() {
 
 				skip_lines();
 
-				Case.to = parse_expression();
+				Case.to = parse_statement();
 
 				if (!Case.froms) {
 					if (match->default_case) {
 						reporter.error(Case.to->location, "Match expression can not have multiple default cases.");
 						yield(YieldResult::fail);
 					}
-					match->default_case = Case.to;
+					match->default_case = &Case;
 				}
 
 				skip_lines();

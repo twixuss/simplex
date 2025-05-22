@@ -1085,6 +1085,14 @@ void Builder::output_impl(Site destination, Match *match) {
 	tmpreg(matchee);
 	output(matchee, match->expression);
 
+	auto output_case = [&](Match::Case &Case) {
+		if (Case.to_expression()) {
+			output(destination, Case.to_expression());
+		} else {
+			output((Statement *)Case.to);
+		}
+	};
+
 	List<umm> jumps_out_of_match;
 
 	for (auto &Case : match->cases) {
@@ -1113,7 +1121,7 @@ void Builder::output_impl(Site destination, Match *match) {
 		for (auto i : jumps_to_case) {
 			output_bytecode.instructions[i].jt().d = output_bytecode.instructions.count;
 		}
-		output(destination, Case.to);
+		output_case(Case);
 		
 		jumps_out_of_match.add(output_bytecode.instructions.count);
 		I(jmp, 0);
@@ -1122,7 +1130,7 @@ void Builder::output_impl(Site destination, Match *match) {
 	}
 		
 	if (match->default_case) {
-		output(destination, match->default_case);
+		output_case(*match->default_case);
 	} else {
 		if (!types_match(match->type, BuiltinType::None)) {
 			reserve_space_for_arguments(16);

@@ -600,14 +600,14 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				}
 				if (is_expression) {
 					if (match->default_case) {
-						append_node(code, match->default_case);
-						append_line(code, "_{} = _{};", node->uid, match->default_case->uid);
+						append_node(code, match->default_case->to);
+						append_line(code, "_{} = _{};", node->uid, match->default_case->to->uid);
 					} else {
 						append_line(code, "*(int *)0 = 0; // incomplete match");
 					}
 				} else {
 					if (match->default_case) {
-						append_node(code, match->default_case);
+						append_node(code, match->default_case->to);
 					}
 				}
 				append_line(code, "endmatch{}:;", match->uid);

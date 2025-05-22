@@ -296,13 +296,14 @@ DEFINE_EXPRESSION(Binary) {
 DEFINE_EXPRESSION(Match) {
 	struct Case {
 		GList<Expression *> froms; // empty in default case. case is taken if any of those matches
-		Expression *to = 0;
+		Node *to = 0;
+		Expression *to_expression() { return to ? as<Expression>(to) : 0; }
 		String arrow_location;
 	};
 
 	Expression *expression = 0;
 	GList<Case> cases;
-	Expression *default_case = 0;
+	Case *default_case = 0;
 };
 DEFINE_EXPRESSION(Unary) {
 	Expression *expression = 0;

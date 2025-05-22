@@ -620,7 +620,7 @@ Value NodeInterpreter::execute_impl(Match *match) {
 	}
 
 	if (match->default_case) {
-		return execute(match->default_case);
+		return execute(match->default_case->to);
 	}
 
 	invalid_code_path(match->location, "match did not match value {}", value);

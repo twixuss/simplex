@@ -64,7 +64,9 @@ Result<Empty, Expression *> is_constant_impl(Binary *binary) {
 Result<Empty, Expression *> is_constant_impl(Match *match) {
 	MUST_BE_CONSTANT(match->expression);
 	for (auto &Case : match->cases) {
-		MUST_BE_CONSTANT(Case.to);
+		if (Case.to_expression()) {
+			MUST_BE_CONSTANT(Case.to_expression());
+		}
 	}
 
 	return Empty{};

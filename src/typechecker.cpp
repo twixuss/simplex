@@ -2485,28 +2485,56 @@ Match            *Typechecker::typecheck_impl(Match *match, bool can_substitute)
 		typecheck(&Case.to);
 	}
 
-	if (match->default_case) {
+	bool is_expression = true;
+
+	// All cases must be expressions for match to be an expression
+	for (auto &Case : match->cases) {
+		if (!Case.to_expression()) {
+			is_expression = false;
+			break;
+		}
+	}
+
+	// Match expression should always return something, so default case is required
+	if (!match->default_case) {
+		is_expression = false;
+	}
+
+	if (is_expression) {
 		for (auto &Case : match->cases) {
-			if (is_concrete(Case.to->type)) {
-				match->type = Case.to->type;
+			assert(Case.to_expression());
+		}
+
+		// Select first concrete type to be the match's type
+		for (auto &Case : match->cases) {
+			if (is_concrete(Case.to_expression()->type)) {
+				match->type = Case.to_expression()->type;
 				break;
 			}
 		}
 
+		// If theres no concrete types, select first inconcrete and make it concrete.
 		if (!match->type) {
-			make_concrete(match->cases[0].to);
-			match->type = match->cases[0].to->type;
+			for (auto &Case : match->cases) {
+				make_concrete(Case.to_expression());
+				match->type = Case.to_expression()->type;
+				break;
+			}
 		}
+		
+		assert(match->type, "match->type should be set by now. something went wrong");
 
 		for (auto &Case : match->cases) {
-			if (!implicitly_cast(&Case.to, match->type, true)) {
+			if (!implicitly_cast((Expression **)&Case.to, match->type, true)) {
 				fail();
 			}
 		}
 	} else {
-
+		
 		for (auto &Case : match->cases) {
-			make_concrete(Case.to);
+			if (Case.to_expression()) {
+				make_concrete(Case.to_expression());
+			}
 		}
 
 		match->type = get_builtin_type(BuiltinType::None);
