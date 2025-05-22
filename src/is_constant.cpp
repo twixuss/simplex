@@ -87,6 +87,8 @@ Result<Empty, Expression *> is_constant_impl(ArrayConstructor *node) {
 	return Empty{};
 }
 Result<Empty, Expression *> is_constant_impl(ZeroInitialized *) { return Empty{}; }
+Result<Empty, Expression *> is_constant_impl(CallerLocation *) { return Empty{}; }
+Result<Empty, Expression *> is_constant_impl(CallerArgumentString *) { return Empty{}; }
 Result<Empty, Expression *> is_constant(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {

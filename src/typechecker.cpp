@@ -797,7 +797,15 @@ void Typechecker::sort_arguments(GList<Call::Argument> &arguments, GList<Definit
 
 		if (!argument.expression) {
 			if (parameter->initial_value) {
-				argument.expression = Copier{}.deep_copy(parameter->initial_value);
+				if (auto cl = as<CallerLocation>(parameter->initial_value)) {
+					auto l = get_source_location(call_location);
+					argument.expression = make_string(format(u8"{}:{}:{}", l.file, l.lines_start_number, l.location_column_number), call_location);
+				} else if (auto cas = as<CallerArgumentString>(parameter->initial_value)) {
+					auto target_argument = sorted_arguments[find_index_of(parameters, cas->parameter)];
+					argument.expression = make_string(target_argument.expression ? target_argument.expression->location : String{}, call_location);
+				} else {
+					argument.expression = Copier{}.deep_copy(parameter->initial_value);
+				}
 			}
 		}
 
@@ -2876,6 +2884,14 @@ Defer            *Typechecker::typecheck_impl(Defer *Defer, bool can_substitute)
 }
 ZeroInitialized  *Typechecker::typecheck_impl(ZeroInitialized *zi, bool can_substitute) {
 	invalid_code_path("ZeroInitialized cannot be typechecked.");
+}
+CallerLocation   *Typechecker::typecheck_impl(CallerLocation *cl, bool can_substitute) {
+	cl->type = make_name(context->builtin_structs.String->definition, cl->location);
+	return cl;
+}
+CallerArgumentString *Typechecker::typecheck_impl(CallerArgumentString *cas, bool can_substitute) {
+	cas->type = make_name(context->builtin_structs.String->definition, cas->location);
+	return cas;
 }
 
 Expression *Typechecker::bt_take_left(Binary *binary) {

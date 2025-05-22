@@ -202,6 +202,13 @@ void Copier::deep_copy_impl(Defer *from, Defer *to) {
 void Copier::deep_copy_impl(ZeroInitialized *from, ZeroInitialized *to) {
 	LOOKUP_COPY(type);
 }
+void Copier::deep_copy_impl(CallerLocation *from, CallerLocation *to) {
+	LOOKUP_COPY(type);
+}
+void Copier::deep_copy_impl(CallerArgumentString *from, CallerArgumentString *to) {
+	COPY(parameter_name);
+	LOOKUP_COPY(type);
+}
 
 #undef LOOKUP_COPY
 #undef DEEP_COPY

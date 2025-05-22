@@ -156,6 +156,8 @@ Value NodeInterpreter::load_address_impl(Subscript *subscript) {
 }
 Value NodeInterpreter::load_address_impl(ArrayConstructor *) { invalid_code_path(); }
 Value NodeInterpreter::load_address_impl(ZeroInitialized *) { invalid_code_path(); }
+Value NodeInterpreter::load_address_impl(CallerLocation *) { invalid_code_path(); }
+Value NodeInterpreter::load_address_impl(CallerArgumentString *) { invalid_code_path(); }
 
 Value NodeInterpreter::execute(Node *node) {
 	scoped_replace(debug_current_location, node->location);
@@ -686,6 +688,12 @@ Value NodeInterpreter::execute_impl(Import *import) { invalid_code_path(); }
 Value NodeInterpreter::execute_impl(Defer *defer_) { not_implemented(); }
 Value NodeInterpreter::execute_impl(ZeroInitialized *zi) {
 	return zero_of_type(zi->type);
+}
+Value NodeInterpreter::execute_impl(CallerLocation *) {
+	invalid_code_path("Should have been replaced by a string literal when typechecking caller arguments");
+}
+Value NodeInterpreter::execute_impl(CallerArgumentString *) {
+	invalid_code_path("Should have been replaced by a string literal when typechecking caller arguments");
 }
 
 #undef PERFORM_WITH_BREAKS

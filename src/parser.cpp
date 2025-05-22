@@ -161,14 +161,36 @@ Parser::NamedLambda Parser::parse_lambda() {
 		next();
 		skip_lines();
 
-		auto parsed_type = parse_expression_2(); // NOTE: don't parse default value
+		Expression *parsed_type = 0;
+		if (token.kind != '=') {
+			parsed_type = parse_expression_2(); // NOTE: don't parse default value
+			skip_lines();
+		}
 
-		skip_lines();
 		if (token.kind == '=') {
 			next();
 			skip_lines();
 
-			parameter->initial_value = parse_expression();
+			if (token.kind == Token_directive) {
+				if (token.string == "#caller_location") {
+					parameter->initial_value = CallerLocation::create();
+					next();
+				} else if (token.string == "#argument_string") {
+					auto cas = CallerArgumentString::create();
+					next();
+					skip_lines();
+
+					expect(Token_name);
+					String name_location;
+					parse_name(&name_location, &cas->parameter_name);
+
+					parameter->initial_value = cas;
+				}
+			} 
+
+			if (!parameter->initial_value) {
+				parameter->initial_value = parse_expression();
+			}
 		}
 
 		parameter->container = lambda;
@@ -184,6 +206,20 @@ Parser::NamedLambda Parser::parse_lambda() {
 
 		lambda->head.parameters_block.add(parameter);
 	});
+
+	for (auto parameter : lambda->head.parameters_block.definition_list) {
+		if (parameter->initial_value) {
+			if (auto cas = as<CallerArgumentString>(parameter->initial_value)) {
+				auto found = lambda->head.parameters_block.definition_map.find(cas->parameter_name);
+				if (found && found.value->count == 1) {
+					cas->parameter = found.value->data[0];
+				} else {
+					reporter.error(cas->location, "No parameter named {} to take expression string of", cas->parameter);
+					yield(YieldResult::fail);
+				}
+			}
+		}
+	}
 
 	bool body_required = true;
 	bool should_expect_arrow = true;

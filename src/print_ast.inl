@@ -336,6 +336,12 @@ void print_ast_impl(ZeroInitialized *zi) {
 	print_ast(zi->type);
 	print("}");
 }
+void print_ast_impl(CallerLocation *cl) {
+	print("#caller_location");
+}
+void print_ast_impl(CallerArgumentString *cas) {
+	print("#argument_string {}", cas->parameter_name);
+}
 void print_ast(Node *node) {
 	if (!node) {
 		print("<NULL>");

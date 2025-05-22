@@ -48,6 +48,8 @@ void append(StringBuilder &builder, Nameable<ArrayType *> expr) { not_implemente
 void append(StringBuilder &builder, Nameable<Subscript *> expr) { not_implemented("Subscript"); }
 void append(StringBuilder &builder, Nameable<ArrayConstructor *> expr) { not_implemented("ArrayConstructor"); }
 void append(StringBuilder &builder, Nameable<ZeroInitialized *> expr) { not_implemented("ZeroInitialized"); }
+void append(StringBuilder &builder, Nameable<CallerLocation *> expr) { not_implemented("CallerLocation"); }
+void append(StringBuilder &builder, Nameable<CallerArgumentString *> expr) { not_implemented("CallerArgumentString"); }
 void append(StringBuilder &builder, Nameable<IfStatement *> expr) { not_implemented("IfStatement"); }
 void append(StringBuilder &builder, Nameable<Return *> expr) { not_implemented("Return"); }
 void append(StringBuilder &builder, Nameable<While *> expr) { not_implemented("While"); }

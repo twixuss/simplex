@@ -1214,6 +1214,12 @@ void Builder::output_impl(Site destination, ZeroInitialized *zi) {
 		I(set, destination.get_address(), 0, get_size(zi->type));
 	}
 }
+void Builder::output_impl(Site destination, CallerLocation *) {
+	invalid_code_path("Should have been replaced by a string literal when typechecking caller arguments");
+}
+void Builder::output_impl(Site destination, CallerArgumentString *) {
+	invalid_code_path("Should have been replaced by a string literal when typechecking caller arguments");
+}
 void Builder::output_impl(Return *ret) {
 	if (ret->value) {
 		Site return_value_destination = Address { .base = Register::returns };
@@ -1370,6 +1376,8 @@ void Builder::load_address_impl(Site destination, Subscript *node) {
 }
 void Builder::load_address_impl(Site destination, ArrayConstructor *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, ZeroInitialized *zi) { not_implemented(); }
+void Builder::load_address_impl(Site destination, CallerLocation *) { invalid_code_path(); }
+void Builder::load_address_impl(Site destination, CallerArgumentString *) { invalid_code_path(); }
 
 #undef MI
 #undef I

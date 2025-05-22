@@ -78,6 +78,8 @@ Result<Value, Expression *> get_constant_value_impl(ArrayConstructor *node) {
 	return result;
 }
 Result<Value, Expression *> get_constant_value_impl(ZeroInitialized *zi) { return zero_of_type(zi->type); }
+Result<Value, Expression *> get_constant_value_impl(CallerLocation *node) { return node; }
+Result<Value, Expression *> get_constant_value_impl(CallerArgumentString *node) { return node; }
 Result<Value, Expression *> get_constant_value(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {

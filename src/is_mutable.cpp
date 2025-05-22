@@ -65,6 +65,8 @@ Result<Empty, Expression *> is_mutable_impl(ArrayType *Array) { return Array; }
 Result<Empty, Expression *> is_mutable_impl(Subscript *Subscript) { return is_mutable(Subscript->subscriptable); }
 Result<Empty, Expression *> is_mutable_impl(ArrayConstructor *Array) { return Array; }
 Result<Empty, Expression *> is_mutable_impl(ZeroInitialized *zi) { return zi; }
+Result<Empty, Expression *> is_mutable_impl(CallerLocation *node) { return node; }
+Result<Empty, Expression *> is_mutable_impl(CallerArgumentString *node) { return node; }
 Result<Empty, Expression *> is_mutable(Expression *expression) {
 	scoped_replace(debug_current_location, expression->location);
 	switch (expression->kind) {

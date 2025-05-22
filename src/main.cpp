@@ -591,7 +591,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 	timed_function();
 
 	context_base->compiler_path = args[0];
-	context_base->compiler_bin_directory = parse_path(context_base->compiler_path).directory;
+	context_base->compiler_bin_directory = make_absolute_path(parse_path(context_base->compiler_path).directory);
 	context_base->compiler_root_directory = format(u8"{}\\..", context_base->compiler_bin_directory);
 	context_base->generated_source_directory = format(u8"{}\\generated", context_base->compiler_root_directory);
 

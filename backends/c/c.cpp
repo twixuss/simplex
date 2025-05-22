@@ -1011,9 +1011,44 @@ int main() {{
 
 	write_entire_file(tformat(u8"{}.c", path_base), to_string(builder));
 	
-	builder.clear();
+	
+	auto run = [&](String cmd) {
+		standard_error_printer.writeln(cmd);
 
-	append(builder, R"(
+		
+		auto process = start_process(cmd);
+		if (!is_valid(process)) {
+			standard_error_printer.writeln(u8"Could not start process. Make sure it is in your PATH."s);
+			return false;
+		}
+		while (true) {
+			u8 buffer[256];
+			auto bytes_read = process.standard_out->read(array_as_span(buffer));
+			if (bytes_read == 0) {
+				break;
+			}
+			standard_error_printer.write(Span(buffer, bytes_read));
+		}
+
+		wait(process);
+		auto code = get_exit_code(process);
+		free(process);
+	
+		if (code) {
+			standard_error_printer.writeln(u8"Process failed."s);
+			return false;
+		}
+		return true;
+	};
+	
+
+	auto intrinsics_c_path = tformat("{}\\intrinsics.c", context_base->compiler_bin_directory);
+	auto intrinsics_obj_path = tformat("{}\\intrinsics.obj", context_base->compiler_bin_directory);
+
+	if (get_file_write_time(tformat("{}\\targets\\c.dll", context_base->compiler_bin_directory)).value_or(0) > get_file_write_time(intrinsics_obj_path).value_or(0)) {
+		builder.clear();
+
+		append(builder, R"(
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -1076,40 +1111,20 @@ void assert(bool x) {
 
 )");
 
-	write_entire_file(tformat(u8"{}.intrinsics.c", path_base), to_string(builder));
-
-	auto run = [&](String cmd) {
-		standard_error_printer.writeln(cmd);
-
-		auto ret = start_process(cmd, [](auto x) {standard_error_printer.write(x); });
-	
-		if (!ret) {
-			standard_error_printer.writeln(u8"Could not start process. Make sure it is in your PATH."s);
+		write_entire_file(intrinsics_c_path, to_string(builder));
+		if (!run(tformat(u8"cl /c {} /Fo:\"{}\" /FS /nologo", intrinsics_c_path, intrinsics_obj_path))) {
 			return false;
 		}
-		return ret.value() == 0;
-	};
-	
-	if (!run(tformat(u8"cl /c {}.intrinsics.c /FS /nologo", path_base))) {
-		standard_error_printer.writeln(u8"C compiler failed."s);
-		return false;
-	}
-	
-	if (!run(tformat(u8"cl /c {}.c /Zi /FS /JMC /nologo", path_base))) {
-		standard_error_printer.writeln(u8"C compiler failed."s);
-		return false;
 	}
 
-	if (!run(tformat(u8"link /DEBUG {}.obj {}.intrinsics.obj /out:{}.exe", path_base, path_base, path_base))) {
-		standard_error_printer.writeln(u8"C linker failed."s);
+	
+	if (!run(tformat(u8"cl {}.c /Fo:\"{}\" {} /Zi /FS /JMC /nologo /link /out:{}.exe", path_base, tformat("{}.obj", path_base), intrinsics_obj_path, path_base))) {
 		return false;
 	}
 
 	if (!context_base->keep_build_artifacts) {
 		delete_file(tformat(u8"{}.c", path_base));
-		delete_file(tformat(u8"{}.intrinsics.c", path_base));
 		delete_file(tformat(u8"{}.obj", path_base));
-		delete_file(tformat(u8"{}.intrinsics.obj", path_base));
 		delete_file(tformat(u8"{}.ilk", path_base));
 	}
 

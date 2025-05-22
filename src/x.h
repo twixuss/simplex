@@ -282,6 +282,8 @@ ENUMERATE_EXPRESSION_KIND(x)
 	x(Subscript) \
 	x(ArrayConstructor) \
 	x(ZeroInitialized) \
+	x(CallerLocation) \
+	x(CallerArgumentString) \
 
 /*
 #define x(name)

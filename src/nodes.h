@@ -350,6 +350,11 @@ DEFINE_EXPRESSION(ArrayConstructor) {
 	List<Expression *> elements;
 };
 DEFINE_EXPRESSION(ZeroInitialized) {}; // Might get rid of this if `none as type` becomes real
+DEFINE_EXPRESSION(CallerLocation) {};
+DEFINE_EXPRESSION(CallerArgumentString) {
+	String parameter_name = {};
+	Definition *parameter = 0;
+};
 DEFINE_STATEMENT(Return) {
 	Expression *value = 0;
 	Lambda *lambda = 0;

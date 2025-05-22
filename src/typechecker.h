@@ -327,6 +327,8 @@ private:
 	[[nodiscard]] Import           *typecheck_impl(Import *import, bool can_substitute);
 	[[nodiscard]] Defer            *typecheck_impl(Defer *defer_, bool can_substitute);
 	[[nodiscard]] ZeroInitialized  *typecheck_impl(ZeroInitialized *zi, bool can_substitute);
+	[[nodiscard]] CallerLocation   *typecheck_impl(CallerLocation *cl, bool can_substitute);
+	[[nodiscard]] CallerArgumentString *typecheck_impl(CallerArgumentString *cl, bool can_substitute);
 public:
 	/////////////////////////
 	// Binary Typecheckers //
