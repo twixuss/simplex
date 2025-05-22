@@ -679,6 +679,14 @@ void Builder::output_impl(Site destination, Binary *binary) {
 		case LowBinaryOperation::mul16:
 		case LowBinaryOperation::mul32:
 		case LowBinaryOperation::mul64:
+		case LowBinaryOperation::divu8:
+		case LowBinaryOperation::divu16:
+		case LowBinaryOperation::divu32:
+		case LowBinaryOperation::divu64:
+		case LowBinaryOperation::divs8:
+		case LowBinaryOperation::divs16:
+		case LowBinaryOperation::divs32:
+		case LowBinaryOperation::divs64:
 		case LowBinaryOperation::equ8:
 		case LowBinaryOperation::equ16:
 		case LowBinaryOperation::equ32:
@@ -736,6 +744,14 @@ void Builder::output_impl(Site destination, Binary *binary) {
 				case LowBinaryOperation::mul16: I(mul2, destination, left, right); break;
 				case LowBinaryOperation::mul32: I(mul4, destination, left, right); break;
 				case LowBinaryOperation::mul64: I(mul8, destination, left, right); break;
+				case LowBinaryOperation::divu8:  I(divu1, destination, left, right); break;
+				case LowBinaryOperation::divu16: I(divu2, destination, left, right); break;
+				case LowBinaryOperation::divu32: I(divu4, destination, left, right); break;
+				case LowBinaryOperation::divu64: I(divu8, destination, left, right); break;
+				case LowBinaryOperation::divs8:  I(divs1, destination, left, right); break;
+				case LowBinaryOperation::divs16: I(divs2, destination, left, right); break;
+				case LowBinaryOperation::divs32: I(divs4, destination, left, right); break;
+				case LowBinaryOperation::divs64: I(divs8, destination, left, right); break;
 				case LowBinaryOperation::equ8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
 				case LowBinaryOperation::equ16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
 				case LowBinaryOperation::equ32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
@@ -900,34 +916,40 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			tmpreg(right);
 			output(right, binary->right);
 
-#define x(n)                                                                                       \
-case n: {                                                                                      \
-	switch (binary->operation) {                                                               \
-		case BinaryOperation::add: I(add##n, .d = destination, .a = left, .b = right);  break; \
-		case BinaryOperation::sub: I(sub##n, .d = destination, .a = left, .b = right);  break; \
-		case BinaryOperation::mul: I(mul##n, .d = destination, .a = left, .b = right);  break; \
-		case BinaryOperation::div: I(div##n, .d = destination, .a = left, .b = right);  break; \
-		case BinaryOperation::mod: I(mod##n, .d = destination, .a = left, .b = right);  break; \
-		case BinaryOperation::bxo: I(xor##n, .d = destination, .a = left, .b = right);  break; \
-		case BinaryOperation::ban: I(and##n, .d = destination, .a = left, .b = right);  break; \
-		case BinaryOperation::bor: I(or##n,  .d = destination, .a = left, .b = right);  break; \
-		case BinaryOperation::bsl: I(sll##n, .d = destination, .a = left, .b = right);  break; \
-		case BinaryOperation::bsr: {                                                           \
-			if (is_signed_integer(dleft))                                                      \
-				I(sra##n, .d = destination, .a = left, .b = right);                            \
-			else                                                                               \
-				I(srl##n, .d = destination, .a = left, .b = right);                            \
-			break;                                                                             \
-		}                                                                                      \
-		default: not_implemented();                                                            \
-	}                                                                                          \
-	break;                                                                                     \
-}
 
 			switch (result_size) {
+				#define x(n)                                                                                       \
+					case n: {                                                                                      \
+						switch (binary->operation) {                                                               \
+							case BinaryOperation::add: I(add##n, .d = destination, .a = left, .b = right);  break; \
+							case BinaryOperation::sub: I(sub##n, .d = destination, .a = left, .b = right);  break; \
+							case BinaryOperation::mul: I(mul##n, .d = destination, .a = left, .b = right);  break; \
+							case BinaryOperation::div:                                                             \
+								if (is_signed_integer(dleft)) {                                                    \
+									I(divs##n, .d = destination, .a = left, .b = right);                           \
+								} else {                                                                           \
+									I(divu##n, .d = destination, .a = left, .b = right);                           \
+								}                                                                                  \
+								break;                                                                             \
+							case BinaryOperation::mod: I(mod##n, .d = destination, .a = left, .b = right);  break; \
+							case BinaryOperation::bxo: I(xor##n, .d = destination, .a = left, .b = right);  break; \
+							case BinaryOperation::ban: I(and##n, .d = destination, .a = left, .b = right);  break; \
+							case BinaryOperation::bor: I(or##n,  .d = destination, .a = left, .b = right);  break; \
+							case BinaryOperation::bsl: I(sll##n, .d = destination, .a = left, .b = right);  break; \
+							case BinaryOperation::bsr: {                                                           \
+								if (is_signed_integer(dleft))                                                      \
+									I(sra##n, .d = destination, .a = left, .b = right);                            \
+								else                                                                               \
+									I(srl##n, .d = destination, .a = left, .b = right);                            \
+								break;                                                                             \
+							}                                                                                      \
+							default: not_implemented();                                                            \
+						}                                                                                          \
+						break;                                                                                     \
+					}
 				ENUMERATE_1248
+				#undef x
 			}
-#undef x
 
 			return;
 		}

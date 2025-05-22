@@ -2183,59 +2183,89 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 		auto dleft  = direct(binary->left->type);
 		auto dright = direct(binary->right->type);
 
-		// 
-		// Pointer arithmetic
-		//
-		switch (binary->operation) {
-			case BinaryOperation::add:
-			case BinaryOperation::sub: {
-				Unary *pointer = as_pointer(dleft);
-				Expression *addend_type = dright;
-				if (!pointer) {
-					pointer = as_pointer(dright);
-					addend_type = dleft;
+		/* Pointer arithmetic */ {
+			auto handle_ptr_plus_or_minus_int = [&](Unary *pointer_type, Expression *&pointer_value, Expression *&int_value, LowBinaryOperation op) -> Binary * {
+				if (is_concrete_integer(int_value->type)) {
+					if (get_size(int_value->type) != 8) {
+						int_value = make_cast(int_value, get_builtin_type(BuiltinType::S64));
+					}
+					binary->type = pointer_value->type;
+					binary->low_operation = op;
+				} else if (auto literal = as<IntegerLiteral>(int_value)) {
+					literal->type = get_builtin_type(BuiltinType::S64);
+					binary->type = pointer_value->type;
+					binary->low_operation = op;
+				} else if (types_match(int_value->type, BuiltinType::UnsizedInteger)) {
+					int_value = make_cast(int_value, get_builtin_type(BuiltinType::S64));
+					binary->type = pointer_value->type;
+					binary->low_operation = op;
 				}
 
-				if (pointer) {
-					auto low_operation = [&] {
-						switch (binary->operation) {
-							case BinaryOperation::add: return LowBinaryOperation::add64;
-							case BinaryOperation::sub: return LowBinaryOperation::sub64;
-							default: invalid_code_path();
+				if (binary->type) {
+					// Multiply integer by size of pointer's type.
+					auto mul = Binary::create();
+					mul->left = int_value;
+					mul->right = make_integer(get_size(pointer_type->expression), get_builtin_type(BuiltinType::S64));
+					mul->operation = BinaryOperation::mul;
+					mul->low_operation = LowBinaryOperation::mul64;
+					mul->location = int_value->location;
+					mul->type = get_builtin_type(BuiltinType::S64);
+					int_value = mul;
+
+					return binary;
+				}
+
+				return 0;
+			};
+
+			/* ptr + int */ {
+				if (binary->operation == BinaryOperation::add) {
+					if (auto pointer = as_pointer(dleft)) {
+						if (auto result = handle_ptr_plus_or_minus_int(pointer, binary->left, binary->right, LowBinaryOperation::add64)) {
+							return result;
 						}
-					}();
-
-					if (is_concrete_integer(dright)) {
-						if (get_size(dright) != 8) {
-							binary->right = make_cast(binary->right, get_builtin_type(BuiltinType::S64));
-						}
-						binary->type = binary->left->type;
-						binary->low_operation = low_operation;
-					} else if (auto literal = as<IntegerLiteral>(binary->right)) {
-						literal->type = get_builtin_type(BuiltinType::S64);
-						binary->type = binary->left->type;
-						binary->low_operation = low_operation;
-					} else if (types_match(dright, BuiltinType::UnsizedInteger)) {
-						binary->right = make_cast(binary->right, get_builtin_type(BuiltinType::S64));
-						binary->type = binary->left->type;
-						binary->low_operation = low_operation;
-					}
-
-					if (binary->type) {
-						// Multiply integer by size of pointer's type.
-						auto mul = Binary::create();
-						mul->left = binary->right;
-						mul->right = make_integer(get_size(pointer->expression), get_builtin_type(BuiltinType::S64));
-						mul->operation = BinaryOperation::mul;
-						mul->low_operation = LowBinaryOperation::mul64;
-						mul->location = binary->right->location;
-						mul->type = get_builtin_type(BuiltinType::S64);
-						binary->right = mul;
-
-						return binary;
 					}
 				}
-				break;
+			}
+			/* int + ptr */ {
+				if (binary->operation == BinaryOperation::add) {
+					if (auto pointer = as_pointer(dright)) {
+						if (auto result = handle_ptr_plus_or_minus_int(pointer, binary->right, binary->left, LowBinaryOperation::add64)) {
+							return result;
+						}
+					}
+				}
+			}
+			/* ptr - int */ {
+				if (binary->operation == BinaryOperation::sub) {
+					if (auto pointer = as_pointer(dleft)) {
+						if (auto result = handle_ptr_plus_or_minus_int(pointer, binary->left, binary->right, LowBinaryOperation::sub64)) {
+							return result;
+						}
+					}
+				}
+			}
+			/* ptr - ptr */ {
+				if (binary->operation == BinaryOperation::sub) {
+					if (auto left_pointer = as_pointer(dleft)) {
+						if (auto right_pointer = as_pointer(dright)) {
+							if (types_match(left_pointer->expression, right_pointer->expression)) {
+								binary->low_operation = LowBinaryOperation::sub64;
+								binary->type = get_builtin_type(BuiltinType::S64);
+
+								auto div = Binary::create();
+								div->left = binary;
+								div->right = make_integer(get_size(left_pointer->expression), get_builtin_type(BuiltinType::S64));
+								div->operation = BinaryOperation::div;
+								div->low_operation = LowBinaryOperation::divs64;
+								div->location = binary->location;
+								div->type = get_builtin_type(BuiltinType::S64);
+
+								return div;
+							}
+						}
+					}
+				}
 			}
 		}
 		

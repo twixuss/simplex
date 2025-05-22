@@ -179,7 +179,8 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(add1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(sub1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(mul1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(div1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divu1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divs1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(mod1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(xor1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(and1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
@@ -191,7 +192,8 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(add2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(sub2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(mul2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(div2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divu2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divs2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(mod2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(xor2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(and2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
@@ -203,7 +205,8 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(add4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(sub4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(mul4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(div4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divu4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divs4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(mod4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(xor4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(and4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
@@ -215,7 +218,8 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(add8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(sub8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(mul8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(div8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divu8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divs8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(mod8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(xor8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(and8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \

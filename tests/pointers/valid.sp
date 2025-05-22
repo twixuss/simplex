@@ -1,4 +1,4 @@
-// COMPILER OUTPUT 1337\n8\n8\n
+// COMPILER OUTPUT 1337\n8\n8\n1\n1\n
 
 const main = fn () => {
     var a = 42
@@ -11,4 +11,6 @@ const main = fn () => {
     let r = p + 1
     println(q as S64 - p as S64)
     println(r as S64 - p as S64)
+    println(q - p)
+    println(r - p)
 }
