@@ -687,6 +687,14 @@ void Builder::output_impl(Site destination, Binary *binary) {
 		case LowBinaryOperation::divs16:
 		case LowBinaryOperation::divs32:
 		case LowBinaryOperation::divs64:
+		case LowBinaryOperation::modu8:
+		case LowBinaryOperation::modu16:
+		case LowBinaryOperation::modu32:
+		case LowBinaryOperation::modu64:
+		case LowBinaryOperation::mods8:
+		case LowBinaryOperation::mods16:
+		case LowBinaryOperation::mods32:
+		case LowBinaryOperation::mods64:
 		case LowBinaryOperation::equ8:
 		case LowBinaryOperation::equ16:
 		case LowBinaryOperation::equ32:
@@ -752,6 +760,14 @@ void Builder::output_impl(Site destination, Binary *binary) {
 				case LowBinaryOperation::divs16: I(divs2, destination, left, right); break;
 				case LowBinaryOperation::divs32: I(divs4, destination, left, right); break;
 				case LowBinaryOperation::divs64: I(divs8, destination, left, right); break;
+				case LowBinaryOperation::modu8:  I(modu1, destination, left, right); break;
+				case LowBinaryOperation::modu16: I(modu2, destination, left, right); break;
+				case LowBinaryOperation::modu32: I(modu4, destination, left, right); break;
+				case LowBinaryOperation::modu64: I(modu8, destination, left, right); break;
+				case LowBinaryOperation::mods8:  I(mods1, destination, left, right); break;
+				case LowBinaryOperation::mods16: I(mods2, destination, left, right); break;
+				case LowBinaryOperation::mods32: I(mods4, destination, left, right); break;
+				case LowBinaryOperation::mods64: I(mods8, destination, left, right); break;
 				case LowBinaryOperation::equ8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
 				case LowBinaryOperation::equ16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
 				case LowBinaryOperation::equ32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
@@ -931,7 +947,13 @@ void Builder::output_impl(Site destination, Binary *binary) {
 									I(divu##n, .d = destination, .a = left, .b = right);                           \
 								}                                                                                  \
 								break;                                                                             \
-							case BinaryOperation::mod: I(mod##n, .d = destination, .a = left, .b = right);  break; \
+							case BinaryOperation::mod:                                                             \
+								if (is_signed_integer(dleft)) {                                                    \
+									I(mods##n, .d = destination, .a = left, .b = right);                           \
+								} else {                                                                           \
+									I(modu##n, .d = destination, .a = left, .b = right);                           \
+								}                                                                                  \
+								break;                                                                             \
 							case BinaryOperation::bxo: I(xor##n, .d = destination, .a = left, .b = right);  break; \
 							case BinaryOperation::ban: I(and##n, .d = destination, .a = left, .b = right);  break; \
 							case BinaryOperation::bor: I(or##n,  .d = destination, .a = left, .b = right);  break; \

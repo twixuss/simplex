@@ -387,6 +387,14 @@ Unary *as_pointer(Type type) {
 	return 0;
 }
 
+Unary *as_some_enum(Expression *expression) {
+	if (auto unary = as<Unary>(expression); unary && unary->operation == UnaryOperation::dot) {
+		assert(unary->expression->kind == NodeKind::Name);
+		return unary;
+	}
+	return 0;
+}
+
 Expression *is_pointer_to_none_comparison(Expression *left, Expression *right) {
 	auto dleft  = direct(left->type);
 	auto dright = direct(right->type);

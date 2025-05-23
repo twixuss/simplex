@@ -535,17 +535,57 @@ void Interpreter::execute(Instruction::set_t i) {
 }
 void Interpreter::execute(Instruction::lea_t i) { val8(i.d) = (s64) &val8(i.s); }
 void Interpreter::execute(Instruction::add1_t i) { val1(i.d) = val1(i.a) + val1(i.b); }
+void Interpreter::execute(Instruction::add2_t i) { val2(i.d) = val2(i.a) + val2(i.b); }
+void Interpreter::execute(Instruction::add4_t i) { val4(i.d) = val4(i.a) + val4(i.b); }
+void Interpreter::execute(Instruction::add8_t i) { val8(i.d) = val8(i.a) + val8(i.b); }
 void Interpreter::execute(Instruction::sub1_t i) { val1(i.d) = val1(i.a) - val1(i.b); }
+void Interpreter::execute(Instruction::sub2_t i) { val2(i.d) = val2(i.a) - val2(i.b); }
+void Interpreter::execute(Instruction::sub4_t i) { val4(i.d) = val4(i.a) - val4(i.b); }
+void Interpreter::execute(Instruction::sub8_t i) { val8(i.d) = val8(i.a) - val8(i.b); }
 void Interpreter::execute(Instruction::mul1_t i) { val1(i.d) = val1(i.a) * val1(i.b); }
-void Interpreter::execute(Instruction::divu1_t i) { val1(i.d) = (u8)val1(i.a) / (u8)val1(i.b); }
-void Interpreter::execute(Instruction::divs1_t i) { val1(i.d) = (s8)val1(i.a) / (s8)val1(i.b); }
-void Interpreter::execute(Instruction::mod1_t i) { val1(i.d) = val1(i.a) % val1(i.b); }
+void Interpreter::execute(Instruction::mul2_t i) { val2(i.d) = val2(i.a) * val2(i.b); }
+void Interpreter::execute(Instruction::mul4_t i) { val4(i.d) = val4(i.a) * val4(i.b); }
+void Interpreter::execute(Instruction::mul8_t i) { val8(i.d) = val8(i.a) * val8(i.b); }
+void Interpreter::execute(Instruction::divu1_t i) { val1(i.d) = (u8 )val1(i.a) / (u8 )val1(i.b); }
+void Interpreter::execute(Instruction::divu2_t i) { val2(i.d) = (u16)val2(i.a) / (u16)val2(i.b); }
+void Interpreter::execute(Instruction::divu4_t i) { val4(i.d) = (u32)val4(i.a) / (u32)val4(i.b); }
+void Interpreter::execute(Instruction::divu8_t i) { val8(i.d) = (u64)val8(i.a) / (u64)val8(i.b); }
+void Interpreter::execute(Instruction::divs1_t i) { val1(i.d) = (s8 )val1(i.a) / (s8 )val1(i.b); }
+void Interpreter::execute(Instruction::divs2_t i) { val2(i.d) = (s16)val2(i.a) / (s16)val2(i.b); }
+void Interpreter::execute(Instruction::divs4_t i) { val4(i.d) = (s32)val4(i.a) / (s32)val4(i.b); }
+void Interpreter::execute(Instruction::divs8_t i) { val8(i.d) = (s64)val8(i.a) / (s64)val8(i.b); }
+void Interpreter::execute(Instruction::modu1_t i) { val1(i.d) = (u8 )val1(i.a) % (u8 )val1(i.b); }
+void Interpreter::execute(Instruction::modu2_t i) { val2(i.d) = (u16)val2(i.a) % (u16)val2(i.b); }
+void Interpreter::execute(Instruction::modu4_t i) { val4(i.d) = (u32)val4(i.a) % (u32)val4(i.b); }
+void Interpreter::execute(Instruction::modu8_t i) { val8(i.d) = (u64)val8(i.a) % (u64)val8(i.b); }
+void Interpreter::execute(Instruction::mods1_t i) { val1(i.d) = (s8 )val1(i.a) % (s8 )val1(i.b); }
+void Interpreter::execute(Instruction::mods2_t i) { val2(i.d) = (s16)val2(i.a) % (s16)val2(i.b); }
+void Interpreter::execute(Instruction::mods4_t i) { val4(i.d) = (s32)val4(i.a) % (s32)val4(i.b); }
+void Interpreter::execute(Instruction::mods8_t i) { val8(i.d) = (s64)val8(i.a) % (s64)val8(i.b); }
 void Interpreter::execute(Instruction::xor1_t i) { val1(i.d) = val1(i.a) ^ val1(i.b); }
+void Interpreter::execute(Instruction::xor2_t i) { val2(i.d) = val2(i.a) ^ val2(i.b); }
+void Interpreter::execute(Instruction::xor4_t i) { val4(i.d) = val4(i.a) ^ val4(i.b); }
+void Interpreter::execute(Instruction::xor8_t i) { val8(i.d) = val8(i.a) ^ val8(i.b); }
 void Interpreter::execute(Instruction::and1_t i) { val1(i.d) = val1(i.a) & val1(i.b); }
+void Interpreter::execute(Instruction::and2_t i) { val2(i.d) = val2(i.a) & val2(i.b); }
+void Interpreter::execute(Instruction::and4_t i) { val4(i.d) = val4(i.a) & val4(i.b); }
+void Interpreter::execute(Instruction::and8_t i) { val8(i.d) = val8(i.a) & val8(i.b); }
 void Interpreter::execute(Instruction::or1_t i)  { val1(i.d) = val1(i.a) | val1(i.b); }
+void Interpreter::execute(Instruction::or2_t i)  { val2(i.d) = val2(i.a) | val2(i.b); }
+void Interpreter::execute(Instruction::or4_t i)  { val4(i.d) = val4(i.a) | val4(i.b); }
+void Interpreter::execute(Instruction::or8_t i)  { val8(i.d) = val8(i.a) | val8(i.b); }
 void Interpreter::execute(Instruction::sll1_t i) { val1(i.d) = val1(i.a) << val1(i.b); }
+void Interpreter::execute(Instruction::sll2_t i) { val2(i.d) = val2(i.a) << val2(i.b); }
+void Interpreter::execute(Instruction::sll4_t i) { val4(i.d) = val4(i.a) << val4(i.b); }
+void Interpreter::execute(Instruction::sll8_t i) { val8(i.d) = val8(i.a) << val8(i.b); }
 void Interpreter::execute(Instruction::srl1_t i) { val1(i.d) = (u8)val1(i.a) >> (u8)val1(i.b); }
+void Interpreter::execute(Instruction::srl2_t i) { val2(i.d) = (u16)val2(i.a) >> (u16)val2(i.b); }
+void Interpreter::execute(Instruction::srl4_t i) { val4(i.d) = (u32)val4(i.a) >> (u32)val4(i.b); }
+void Interpreter::execute(Instruction::srl8_t i) { val8(i.d) = (u64)val8(i.a) >> (u64)val8(i.b); }
 void Interpreter::execute(Instruction::sra1_t i) { val1(i.d) = (s8)val1(i.a) >> (s8)val1(i.b); }
+void Interpreter::execute(Instruction::sra2_t i) { val2(i.d) = (s16)val2(i.a) >> (s16)val2(i.b); }
+void Interpreter::execute(Instruction::sra4_t i) { val4(i.d) = (s32)val4(i.a) >> (s32)val4(i.b); }
+void Interpreter::execute(Instruction::sra8_t i) { val8(i.d) = (s64)val8(i.a) >> (s64)val8(i.b); }
 void Interpreter::execute(Instruction::cmp1_t i) {
 	switch (i.cmp) {
 		case Comparison::equals:                  val1(i.d) =     val1(i.a) ==     val1(i.b); break;
@@ -560,18 +600,6 @@ void Interpreter::execute(Instruction::cmp1_t i) {
 		case Comparison::unsigned_greater_equals: val1(i.d) = (u8)val1(i.a) >= (u8)val1(i.b); break;
 	}
 }
-void Interpreter::execute(Instruction::add2_t i) { val2(i.d) = val2(i.a) + val2(i.b); }
-void Interpreter::execute(Instruction::sub2_t i) { val2(i.d) = val2(i.a) - val2(i.b); }
-void Interpreter::execute(Instruction::mul2_t i) { val2(i.d) = val2(i.a) * val2(i.b); }
-void Interpreter::execute(Instruction::divu2_t i) { val2(i.d) = (u16)val2(i.a) / (u16)val2(i.b); }
-void Interpreter::execute(Instruction::divs2_t i) { val2(i.d) = (s16)val2(i.a) / (s16)val2(i.b); }
-void Interpreter::execute(Instruction::mod2_t i) { val2(i.d) = val2(i.a) % val2(i.b); }
-void Interpreter::execute(Instruction::xor2_t i) { val2(i.d) = val2(i.a) ^ val2(i.b); }
-void Interpreter::execute(Instruction::and2_t i) { val2(i.d) = val2(i.a) & val2(i.b); }
-void Interpreter::execute(Instruction::or2_t i)  { val2(i.d) = val2(i.a) | val2(i.b); }
-void Interpreter::execute(Instruction::sll2_t i) { val2(i.d) = val2(i.a) << val2(i.b); }
-void Interpreter::execute(Instruction::srl2_t i) { val2(i.d) = (u16)val2(i.a) >> (u16)val2(i.b); }
-void Interpreter::execute(Instruction::sra2_t i) { val2(i.d) = (s16)val2(i.a) >> (s16)val2(i.b); }
 void Interpreter::execute(Instruction::cmp2_t i) {
 	switch (i.cmp) {
 		case Comparison::equals:                  val1(i.d) =      val2(i.a) ==      val2(i.b); break;
@@ -586,18 +614,6 @@ void Interpreter::execute(Instruction::cmp2_t i) {
 		case Comparison::unsigned_greater_equals: val1(i.d) = (u16)val2(i.a) >= (u16)val2(i.b); break;
 	}
 }
-void Interpreter::execute(Instruction::add4_t i) { val4(i.d) = val4(i.a) + val4(i.b); }
-void Interpreter::execute(Instruction::sub4_t i) { val4(i.d) = val4(i.a) - val4(i.b); }
-void Interpreter::execute(Instruction::mul4_t i) { val4(i.d) = val4(i.a) * val4(i.b); }
-void Interpreter::execute(Instruction::divu4_t i) { val4(i.d) = (u32)val4(i.a) / (u32)val4(i.b); }
-void Interpreter::execute(Instruction::divs4_t i) { val4(i.d) = (s32)val4(i.a) / (s32)val4(i.b); }
-void Interpreter::execute(Instruction::mod4_t i) { val4(i.d) = val4(i.a) % val4(i.b); }
-void Interpreter::execute(Instruction::xor4_t i) { val4(i.d) = val4(i.a) ^ val4(i.b); }
-void Interpreter::execute(Instruction::and4_t i) { val4(i.d) = val4(i.a) & val4(i.b); }
-void Interpreter::execute(Instruction::or4_t i)  { val4(i.d) = val4(i.a) | val4(i.b); }
-void Interpreter::execute(Instruction::sll4_t i) { val4(i.d) = val4(i.a) << val4(i.b); }
-void Interpreter::execute(Instruction::srl4_t i) { val4(i.d) = (u32)val4(i.a) >> (u32)val4(i.b); }
-void Interpreter::execute(Instruction::sra4_t i) { val4(i.d) = (s32)val4(i.a) >> (s32)val4(i.b); }
 void Interpreter::execute(Instruction::cmp4_t i) {
 	switch (i.cmp) {
 		case Comparison::equals:                  val1(i.d) =      val4(i.a) ==      val4(i.b); break;
@@ -612,18 +628,6 @@ void Interpreter::execute(Instruction::cmp4_t i) {
 		case Comparison::unsigned_greater_equals: val1(i.d) = (u32)val4(i.a) >= (u32)val4(i.b); break;
 	}
 }
-void Interpreter::execute(Instruction::add8_t i) { val8(i.d) = val8(i.a) + val8(i.b); }
-void Interpreter::execute(Instruction::sub8_t i) { val8(i.d) = val8(i.a) - val8(i.b); }
-void Interpreter::execute(Instruction::mul8_t i) { val8(i.d) = val8(i.a) * val8(i.b); }
-void Interpreter::execute(Instruction::divu8_t i) { val8(i.d) = (u64)val8(i.a) / (u64)val8(i.b); }
-void Interpreter::execute(Instruction::divs8_t i) { val8(i.d) = (s64)val8(i.a) / (s64)val8(i.b); }
-void Interpreter::execute(Instruction::mod8_t i) { val8(i.d) = val8(i.a) % val8(i.b); }
-void Interpreter::execute(Instruction::xor8_t i) { val8(i.d) = val8(i.a) ^ val8(i.b); }
-void Interpreter::execute(Instruction::and8_t i) { val8(i.d) = val8(i.a) & val8(i.b); }
-void Interpreter::execute(Instruction::or8_t i)  { val8(i.d) = val8(i.a) | val8(i.b); }
-void Interpreter::execute(Instruction::sll8_t i) { val8(i.d) = val8(i.a) << val8(i.b); }
-void Interpreter::execute(Instruction::srl8_t i) { val8(i.d) = (u64)val8(i.a) >> (u64)val8(i.b); }
-void Interpreter::execute(Instruction::sra8_t i) { val8(i.d) = (s64)val8(i.a) >> (s64)val8(i.b); }
 void Interpreter::execute(Instruction::cmp8_t i) {
 	switch (i.cmp) {
 		case Comparison::equals:                  val1(i.d) =      val8(i.a) ==      val8(i.b); break;

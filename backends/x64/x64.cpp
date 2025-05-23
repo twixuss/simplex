@@ -328,45 +328,12 @@ struct Emitter {
 	}
 	void emit_instruction_impl(b::Instruction::lea_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::add1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::sub1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::mul1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::divu1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::divs1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::mod1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::xor1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::and1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::or1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::sll1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::srl1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::sra1_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::cmp1_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::add2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::sub2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::mul2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::divu2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::divs2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::mod2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::xor2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::and2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::or2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::sll2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::srl2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::sra2_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::cmp2_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::add4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::sub4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::mul4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::divu4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::divs4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::mod4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::xor4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::and4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::or4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::sll4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::srl4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::sra4_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::cmp4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::add8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::sub1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::sub2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::sub4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::sub8_t i) {
 		if (i.d.is_register() && i.a.is_register() && (i.d.get_register() == i.a.get_register())) {
 			auto mapped_d = map(i.d.get_register());
@@ -397,16 +364,53 @@ struct Emitter {
 			not_implemented();
 		}
 	}
+	void emit_instruction_impl(b::Instruction::mul1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::mul2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::mul4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::mul8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::divu1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::divu2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::divu4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::divu8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::divs1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::divs2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::divs4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::divs8_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::mod8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::modu1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::modu2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::modu4_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::modu8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::mods1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::mods2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::mods4_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::mods8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::xor1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::xor2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::xor4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::xor8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::and1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::and2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::and4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::and8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::or1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::or2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::or4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::or8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::sll1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::sll2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::sll4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::sll8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::srl1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::srl2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::srl4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::srl8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::sra1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::sra2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::sra4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::sra8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::cmp1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::cmp2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::cmp4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::cmp8_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::sex21_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::sex41_t i) { not_implemented(); }

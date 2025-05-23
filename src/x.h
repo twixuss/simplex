@@ -117,6 +117,7 @@ ENUMERATE_ABSTRACT_BUILTIN_TYPES(x)
 	x(UnsizedInteger) \
 	x(Overload) \
 	x(Template) \
+	x(SomeEnum) \
 
 /*
 #define x(name)
@@ -223,6 +224,7 @@ ENUMERATE_UNARY_OPERATIONS(x, y)
 	x(addr, "&") \
 	x(typeof, "typeof") \
 	x(atcast, "@") \
+	x(dot, ".") \
 	y(pointer) \
 	y(dereference) \
 

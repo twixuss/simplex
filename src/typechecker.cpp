@@ -423,6 +423,31 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 		}
 	}
 
+	// SomeEnum -> Enum
+	if (auto Enum = as<::Enum>(direct_target_type)) {
+		if (auto some_enum = as_some_enum(expression)) {
+			auto name = as<Name>(some_enum->expression);
+			assert(name);
+			auto definition = try_find_enum_value(Enum, name, reporter);
+			if (definition) {
+				if (apply) {
+					auto literal = IntegerLiteral::create();
+					literal->type = Enum;
+					literal->location = expression->location;
+					literal->value = definition->constant_value.value().U64;
+					expression = literal;
+				}
+				return true;
+			} else {
+				if (reporter) {
+					reporter->error(expression->location, "Enum {} does not contain {}", Enum->definition ? Enum->definition->name : u8"unnamed"s, name->name);
+					reporter->info(Enum->location, "Enum defined here");
+				}
+				return false;
+			}
+		}
+	}
+
 	if (reporter) {
 		reporter->error(expression->location, "Expression of type `{}` is not implicitly convertible to `{}`.", source_type, target_type);
 		if (auto match = as<Match>(expression)) {
@@ -1042,6 +1067,44 @@ Expression *Typechecker::typecheck_constructor(Call *call, Struct *Struct) {
 	return call;
 };
 
+Definition *Typechecker::try_find_enum_value(Enum *Enum, Name *name, Reporter *reporter) {
+	auto found = Enum->block.definition_map.find(name->name);
+	if (!found) {
+		if (reporter) {
+			reporter->error(name->location, "Enum {} does not contain value named {}.", Enum, name->name);
+		}
+		return 0;
+	}
+
+	auto &definitions = *found.value;
+	assert(definitions.count == 1, "INTERNAL ERROR: parser was supposed to deal with multiple definitions with the same name in enum");
+
+	auto &definition = definitions[0];
+			
+	if (!yield_while_null(name->location, &definition->type)) {
+		if (reporter) {
+			reporter->error(name->location, "Could not wait for definition's type");
+			reporter->info(definition->location, "Definition here");
+		}
+		return 0;
+	}
+
+	if (!yield_while_null(name->location, &definition->type->type)) {
+		if (reporter) {
+			reporter->error(name->location, "Could not wait for definition type's type");
+			reporter->info(definition->location, "Definition here");
+		}
+		return 0;
+	}
+	return definition;
+}
+Definition *Typechecker::find_enum_value(Enum *Enum, Name *name) {
+	if (auto found = try_find_enum_value(Enum, name, &reporter)) {
+		return found;
+	}
+	fail();
+}
+
 Expression *Typechecker::typecheck_binary_dot(Binary *binary) {
 	typecheck(&binary->left);
 	auto direct_left_type = direct(binary->left->type);
@@ -1082,32 +1145,11 @@ Expression *Typechecker::typecheck_binary_dot(Binary *binary) {
 				reporter.error(binary->right->location, "Expression after dot must be a name, because {} is an enum.", binary->left->location);
 				fail();
 			}
-			auto found = Enum->block.definition_map.find(name->name);
-			if (!found) {
-				reporter.error(binary->right->location, "Enum {} does not contain value named {}.", Enum, name->name);
-				fail();
-			}
 
-			auto &definitions = *found.value;
-			assert(definitions.count == 1, "INTERNAL ERROR: parser was supposed to deal with multiple definitions with the same name in enum");
-
-			auto &definition = definitions[0];
-			
-			if (!yield_while_null(binary->location, &definition->type)) {
-				reporter.error(binary->right->location, "Could not wait for definition's type");
-				reporter.info(definition->location, "Definition here");
-				fail();
-			}
-
-			if (!yield_while_null(binary->location, &definition->type->type)) {
-				reporter.error(binary->right->location, "Could not wait for definition type's type");
-				reporter.info(definition->location, "Definition here");
-				fail();
-			}
-
+			auto definition = find_enum_value(Enum, name);
 			auto literal = IntegerLiteral::create();
 			literal->type = Enum;
-			literal->location = binary->location;
+			literal->location = name->location;
 			literal->value = definition->constant_value.value().U64;
 			return literal;
 		}
@@ -2302,7 +2344,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 			}
 		}
 
-		if (auto found = binary_typecheckers.find({ dleft, dright, binary->operation })) {
+		if (auto found = locked_use(binary_typecheckers) { return binary_typecheckers.find({dleft, dright, binary->operation}); }) {
 			return (this->*(*found.value))(binary);
 		}
 		if (auto left_array = as<ArrayType>(dleft)) {
@@ -2322,7 +2364,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 					auto dleft_element = direct(left_array->element_type);
 					auto dright_element = direct(right_array->element_type);
 					auto element_count = left_count_result.value();
-					if (auto found = binary_typecheckers.find({ dleft_element, dright_element, binary->operation })) {
+					if (auto found = locked_use(binary_typecheckers) { return binary_typecheckers.find({ dleft_element, dright_element, binary->operation }); }) {
 						VectorizedBinaryValue vectorized = {};
 
 						locked_use(vectorized_binarys) {
@@ -2573,11 +2615,11 @@ Match            *Typechecker::typecheck_impl(Match *match, bool can_substitute)
 	return match;
 }
 Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute) {
-	typecheck(&unary->expression);
 	switch (unary->operation) {
 		case UnaryOperation::star:
 		case UnaryOperation::dereference:
 		case UnaryOperation::pointer: {
+			typecheck(&unary->expression);
 			if (types_match(unary->expression->type, BuiltinType::Type)) {
 				unary->operation = UnaryOperation::pointer;
 				unary->type = get_builtin_type(BuiltinType::Type);
@@ -2592,6 +2634,7 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			break;
 		}
 		case UnaryOperation::addr: {
+			typecheck(&unary->expression);
 			auto last_child = get_last_child_recursive(unary->expression);
 			if (auto name = as<Name>(last_child)) {
 				auto definition = name->definition();
@@ -2606,6 +2649,7 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			break;
 		}
 		case UnaryOperation::plus: {
+			typecheck(&unary->expression);
 			if (auto builtin = as<BuiltinTypeName>(unary->expression->type)) {
 				switch (builtin->type_kind) {
 					case BuiltinType::U8:
@@ -2630,6 +2674,7 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			return unary->expression;
 		}
 		case UnaryOperation::minus: {
+			typecheck(&unary->expression);
 			if (auto literal = as<IntegerLiteral>(unary->expression)) {
 				literal->value = -literal->value;
 				return literal;
@@ -2652,6 +2697,7 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			break;
 		}
 		case UnaryOperation::typeof: {
+			typecheck(&unary->expression);
 			make_concrete(unary->expression);
 			unary->type = get_builtin_type(BuiltinType::Type);
 
@@ -2665,6 +2711,7 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			break;
 		}
 		case UnaryOperation::lnot: {
+			typecheck(&unary->expression);
 			if (!implicitly_cast(&unary->expression, get_builtin_type(BuiltinType::Bool), true)) {
 				fail();
 			}
@@ -2674,6 +2721,15 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 		case UnaryOperation::atcast: {
 			typecheck(&unary->expression);
 			unary->type = unary->expression->type;
+			break;
+		}
+		case UnaryOperation::dot: {
+			auto name = as<Name>(unary->expression);
+			if (!name) {
+				reporter.error(unary->location, "Unary dot must be followed by a name");
+				fail();
+			}
+			unary->type = get_builtin_type(BuiltinType::SomeEnum);
 			break;
 		}
 		default: {
@@ -2818,6 +2874,33 @@ Enum             *Typechecker::typecheck_impl(Enum *Enum, bool can_substitute) {
 		element->type.expression = make_name(Enum->definition);
 		element->type.expression->type = get_builtin_type(BuiltinType::Type);
 	}
+
+	locked_use(binary_typecheckers) {
+		#define BINT(l, r, op) \
+			binary_typecheckers.get_or_insert({.left_type = l, .right_type = r, .operation = BinaryOperation::op})
+
+		auto some_enum = get_builtin_type(BuiltinType::SomeEnum);
+
+		BINT(Enum, some_enum, add) = 
+		BINT(Enum, some_enum, sub) = 
+		BINT(Enum, some_enum, mul) = 
+		BINT(Enum, some_enum, div) = 
+		BINT(Enum, some_enum, mod) = 
+		BINT(Enum, some_enum, bxo) = 
+		BINT(Enum, some_enum, ban) = 
+		BINT(Enum, some_enum, bor) = 
+		BINT(Enum, some_enum, bsr) = 
+		BINT(Enum, some_enum, bsl) = 
+		BINT(Enum, some_enum, equ) = 
+		BINT(Enum, some_enum, neq) = 
+		BINT(Enum, some_enum, les) = 
+		BINT(Enum, some_enum, leq) = 
+		BINT(Enum, some_enum, grt) = 
+		BINT(Enum, some_enum, grq) = 
+			&Typechecker::bt_enum_and_some_enum;
+
+		#undef BINT
+	};
 	return Enum;
 }
 ArrayType        *Typechecker::typecheck_impl(ArrayType *arr, bool can_substitute) {
@@ -3048,8 +3131,67 @@ Expression *Typechecker::bt_sized_int_modify_ass_unsized_int(Binary *binary) {
 	return binary;
 }
 
+Expression *Typechecker::bt_enum_and_some_enum(Binary *binary) {
+	auto Enum = direct_as<::Enum>(binary->left->type);
+	assert(Enum);
+	auto some_enum = as_some_enum(binary->right);
+	assert(some_enum);
+	auto name = as<Name>(some_enum->expression);
+	assert(name);
+
+	implicitly_cast(&binary->right, binary->left->type, true);
+	
+	switch (binary->operation) {
+		case BinaryOperation::equ:
+		case BinaryOperation::neq:
+		case BinaryOperation::les:
+		case BinaryOperation::leq:
+		case BinaryOperation::grt:
+		case BinaryOperation::grq:
+			binary->type = get_builtin_type(BuiltinType::Bool);
+			break;
+		default:
+			binary->type = binary->left->type;
+	}
+
+	auto enum_size = get_size(Enum);
+
+	int size_op_offset = [&] {
+		switch (enum_size) {
+			case 1: return 0;
+			case 2: return 1;
+			case 4: return 2;
+			case 8: return 3;
+		}
+		invalid_code_path("unhandled enum size: {}", enum_size);
+	}();
+
+	bool sign = is_signed_integer(Enum->underlying_type);
+
+	switch (binary->operation) {
+		case BinaryOperation::add: binary->low_operation = (LowBinaryOperation)((int)LowBinaryOperation::add8 + size_op_offset); break;
+		case BinaryOperation::sub: binary->low_operation = (LowBinaryOperation)((int)LowBinaryOperation::sub8 + size_op_offset); break;
+		case BinaryOperation::mul: binary->low_operation = (LowBinaryOperation)((int)LowBinaryOperation::mul8 + size_op_offset); break;
+		case BinaryOperation::div: binary->low_operation = (LowBinaryOperation)((int)(sign ? LowBinaryOperation::divs8 : LowBinaryOperation::divu8) + size_op_offset); break;
+		case BinaryOperation::mod: binary->low_operation = (LowBinaryOperation)((int)(sign ? LowBinaryOperation::mods8 : LowBinaryOperation::modu8) + size_op_offset); break;
+		case BinaryOperation::bxo: binary->low_operation = (LowBinaryOperation)((int)LowBinaryOperation::bxor8 + size_op_offset); break;
+		case BinaryOperation::ban: binary->low_operation = (LowBinaryOperation)((int)LowBinaryOperation::band8 + size_op_offset); break;
+		case BinaryOperation::bor: binary->low_operation = (LowBinaryOperation)((int)LowBinaryOperation::bor8 + size_op_offset); break;
+		case BinaryOperation::bsr: binary->low_operation = (LowBinaryOperation)((int)(sign ? LowBinaryOperation::bsrs8 : LowBinaryOperation::bsru8) + size_op_offset); break;
+		case BinaryOperation::bsl: binary->low_operation = (LowBinaryOperation)((int)LowBinaryOperation::bsl8 + size_op_offset); break;
+		case BinaryOperation::equ: binary->low_operation = (LowBinaryOperation)((int)LowBinaryOperation::equ8 + size_op_offset); break;
+		case BinaryOperation::neq: binary->low_operation = (LowBinaryOperation)((int)LowBinaryOperation::neq8 + size_op_offset); break;
+		case BinaryOperation::les: binary->low_operation = (LowBinaryOperation)((int)(sign ? LowBinaryOperation::lts8 : LowBinaryOperation::ltu8) + size_op_offset); break;
+		case BinaryOperation::leq: binary->low_operation = (LowBinaryOperation)((int)(sign ? LowBinaryOperation::les8 : LowBinaryOperation::leu8) + size_op_offset); break;
+		case BinaryOperation::grt: binary->low_operation = (LowBinaryOperation)((int)(sign ? LowBinaryOperation::gts8 : LowBinaryOperation::gtu8) + size_op_offset); break;
+		case BinaryOperation::grq: binary->low_operation = (LowBinaryOperation)((int)(sign ? LowBinaryOperation::ges8 : LowBinaryOperation::geu8) + size_op_offset); break;
+	}
+
+	return binary;
+}
+
 void Typechecker::init_binary_typecheckers() {
-	construct(binary_typecheckers);
+	auto &binary_typecheckers = Typechecker::binary_typecheckers.unprotected;
 
 	#define y(left, right, operation) binary_typecheckers.get_or_insert({ get_builtin_type(left), get_builtin_type(right), operation })
 	#define x(left, right, operation) y(BuiltinType::left, BuiltinType::right, BinaryOperation::operation)

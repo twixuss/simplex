@@ -824,26 +824,43 @@ Expression *Parser::parse_expression_0() {
 			return finish_node(Array);
 		}
 		case '.': {
-			auto constructor = ArrayConstructor::create();
-			constructor->location = token.string;
+			auto dot_token = token.string;
 			next();
-			expect('[');
-			next();
-			while (true) {
-				skip_lines();
-				constructor->elements.add(parse_expression());
-				skip_lines();
+			switch (token.kind) {
+				case '[': {
+					auto constructor = ArrayConstructor::create();
+					constructor->location = dot_token;
+					next();
+					while (true) {
+						skip_lines();
+						constructor->elements.add(parse_expression());
+						skip_lines();
 
-				expect({',', ']'});
+						expect({',', ']'});
 
-				if (token.kind == ']') {
-					break;
+						if (token.kind == ']') {
+							break;
+						}
+						next();
+					}
+					constructor->location = {constructor->location.begin(), token.string.end()};
+					next();
+					return finish_node(constructor);
 				}
-				next();
+				case Token_name: {
+					auto unary = Unary::create();
+					auto name = Name::create();
+					parse_name(&name->location, &name->name);
+					unary->expression = name;
+					unary->operation = UnaryOperation::dot;
+					unary->location = {dot_token.begin(), name->location.end()};
+					next();
+					return finish_node(unary);
+				}
+				default: {
+					goto unexpected_token;
+				}
 			}
-			constructor->location = {constructor->location.begin(), token.string.end()};
-			next();
-			return finish_node(constructor);
 		}
 		case Token_none: {
 			auto none = NoneLiteral::create();
@@ -1045,6 +1062,7 @@ Expression *Parser::parse_expression_0() {
 				return finish_node(unop);
 			}
 
+		unexpected_token:
 			reporter.error(token.string, "Unexpected token {} when parsing expression.", token.kind);
 			// report_last_parsed_node();
 			yield(YieldResult::fail);

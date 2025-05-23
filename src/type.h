@@ -101,6 +101,7 @@ enum class Sign : u8 {
 Sign get_sign(BuiltinType type_kind);
 
 Unary *as_pointer(Type type);
+Unary *as_some_enum(Expression *expression);
 Expression *is_pointer_to_none_comparison(Expression *left, Expression *right);
 
 std::pair<Lambda *, LambdaHead *> get_lambda_and_head(Expression *expression);

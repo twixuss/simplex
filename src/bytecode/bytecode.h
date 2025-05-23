@@ -177,56 +177,60 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(set,  (y(Address, d) y(u8, value) y(u64, size))) \
 	x(lea,  (y(Site, d) y(Address, s))) \
 	x(add1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sub1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mul1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divu1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divs1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mod1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(xor1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(and1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(or1,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sll1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(srl1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sra1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(cmp1, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
 	x(add2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sub2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mul2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divu2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divs2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mod2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(xor2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(and2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(or2,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sll2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(srl2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sra2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(cmp2, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
 	x(add4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sub4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mul4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divu4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divs4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mod4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(xor4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(and4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(or4,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sll4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(srl4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sra4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(cmp4, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
 	x(add8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sub1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sub2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sub4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(sub8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mul1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mul2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mul4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(mul8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divu1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divu2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divu4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(divu8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divs1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divs2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(divs4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(divs8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mod8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(modu1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(modu2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(modu4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(modu8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mods1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mods2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mods4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(mods8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(xor1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(xor2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(xor4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(xor8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(and1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(and2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(and4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(and8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(or1,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(or2,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(or4,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(or8,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sll1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sll2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sll4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(sll8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(srl1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(srl2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(srl4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(srl8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sra1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sra2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(sra4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(sra8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(cmp1, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
+	x(cmp2, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
+	x(cmp4, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
 	x(cmp8, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
 	x(sex21,  (y(Site, d) y(InputValue, a))) \
 	x(sex41,  (y(Site, d) y(InputValue, a))) \

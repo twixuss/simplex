@@ -272,6 +272,9 @@ private:
 	void add_defers(GList<Defer *> &defers);
 	
 	void ensure_mutable(Expression *expression);
+	
+	Definition *try_find_enum_value(Enum *Enum, Name *name, Reporter *reporter);
+	Definition *find_enum_value(Enum *Enum, Name *name);
 
 	//
 	// These `typecheck` overloads automatically substitute old node with new one.
@@ -334,7 +337,7 @@ public:
 	// Binary Typecheckers //
 	/////////////////////////
 	
-	inline static GHashMap<BinaryTypecheckerKey, Expression *(Typechecker::*)(Binary *)> binary_typecheckers;
+	inline static LockProtected<GHashMap<BinaryTypecheckerKey, Expression *(Typechecker::*)(Binary *)>, SpinLock> binary_typecheckers;
 
 	Expression *bt_take_left(Binary *binary);
 	Expression *bt_set_bool(Binary *binary);
@@ -344,6 +347,7 @@ public:
 	Expression *bt_unsized_int_and_sized_int_comp(Binary *binary);
 	Expression *bt_unsized_int(Binary *binary);
 	Expression *bt_sized_int_modify_ass_unsized_int(Binary *binary);
+	Expression *bt_enum_and_some_enum(Binary *binary);
 
 	template <bool invert>
 	Expression *bt_comp_Type(Binary *binary);

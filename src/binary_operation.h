@@ -52,6 +52,16 @@ enum class LowBinaryOperation : u8 {
 	divs16,
 	divs32,
 	divs64,
+	// unsigned modision
+	modu8,
+	modu16,
+	modu32,
+	modu64,
+	// signed modision
+	mods8,
+	mods16,
+	mods32,
+	mods64,
 	// binary xor
 	bxor8,
 	bxor16,

@@ -28,11 +28,6 @@ fn memcpy(dst: *var None  src: *let None size: U64): *var None => {
     return dst
 }
 
-fn floor(a: U64, b: U64) => {
-    return a / b * b
-}
-fn ceil(a: U64, b: U64) => {
-    return (a + b - 1) / b * b
-}
-
+fn floor(a: U64, b: U64) => a / b * b
+fn ceil(a: U64, b: U64) => (a + b - 1) / b * b
 fn is_power_of_2(a: U64) => a & (a - 1) == 0
