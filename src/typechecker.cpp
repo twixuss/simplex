@@ -2329,6 +2329,28 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 			}
 		}
 		
+		/* Range */ {
+			if (binary->operation == BinaryOperation::ran) {
+				binary->left = make_cast(binary->left, get_builtin_type(BuiltinType::S64));
+				binary->right = make_cast(binary->right, get_builtin_type(BuiltinType::S64));
+				binary->left->type = 0;
+				binary->right->type = 0;
+				typecheck(&binary->left);
+				typecheck(&binary->right);
+
+				auto call = Call::create();
+				call->callable = make_name(context->builtin_structs.Range->definition);
+				call->call_kind = CallKind::constructor;
+				call->arguments.add({.expression = binary->left,  .parameter = context->builtin_structs.Range->members[0]});
+				call->arguments.add({.expression = binary->right, .parameter = context->builtin_structs.Range->members[1]});
+				call->location = binary->location;
+				call->type = context->builtin_structs.Range;
+
+				NOTE_LEAK(binary);
+				return call;
+			}
+		}
+
 		// 
 		// Pointer comparison
 		//

@@ -427,40 +427,78 @@ void init_builtin_types() {
 		}
 	ENUMERATE_BUILTIN_TYPES(x)
 	#undef x
+		
+	/* String */ {
+		auto s = Struct::create();
+		auto d = Definition::create();
 
-	auto s = Struct::create();
-	auto d = Definition::create();
+		auto data = Definition::create();
+		data->name = u8"data"s;
+		data->mutability = Mutability::variable;
+		data->offset = 0;
+		data->type = make_pointer(get_builtin_type(BuiltinType::U8), Mutability::variable);
+		data->container = s;
+		s->members.add(data);
 
-	auto data = Definition::create();
-	data->name = u8"data"s;
-	data->mutability = Mutability::variable;
-	data->offset = 0;
-	data->type = make_pointer(get_builtin_type(BuiltinType::U8), Mutability::variable);
-	data->container = s;
-	s->members.add(data);
+		auto count = Definition::create();
+		count->name = u8"count"s;
+		count->mutability = Mutability::variable;
+		count->offset = 8;
+		count->type = get_builtin_type(BuiltinType::U64);
+		count->container = s;
+		s->members.add(count);
 
-	auto count = Definition::create();
-	count->name = u8"count"s;
-	count->mutability = Mutability::variable;
-	count->offset = 8;
-	count->type = get_builtin_type(BuiltinType::U64);
-	count->container = s;
-	s->members.add(count);
+		s->definition = d;
+		s->is_template = false;
+		s->size = 16;
+		s->type = get_builtin_type(BuiltinType::Type);
 
-	s->definition = d;
-	s->is_template = false;
-	s->size = 16;
-	s->type = get_builtin_type(BuiltinType::Type);
+		d->initial_value = s;
+		d->constant_value = Value((Type)s);
+		d->mutability = Mutability::constant;
+		d->name = u8"String"s;
+		d->type = s->type;
 
-	d->initial_value = s;
-	d->constant_value = Value((Type)s);
-	d->mutability = Mutability::constant;
-	d->name = u8"String"s;
-	d->type = s->type;
+		context->builtin_structs.String = s;
 
-	context->builtin_structs.String = s;
+		context->global_block.unprotected.add(d);
+	}
 
-	context->global_block.unprotected.add(d);
+	/* Range */ {
+		auto s = Struct::create();
+		auto d = Definition::create();
+
+		auto begin = Definition::create();
+		begin->name = u8"begin"s;
+		begin->mutability = Mutability::variable;
+		begin->offset = 0;
+		begin->type = get_builtin_type(BuiltinType::S64);
+		begin->container = s;
+		s->members.add(begin);
+
+		auto end = Definition::create();
+		end->name = u8"end"s;
+		end->mutability = Mutability::variable;
+		end->offset = 8;
+		end->type = get_builtin_type(BuiltinType::S64);
+		end->container = s;
+		s->members.add(end);
+
+		s->definition = d;
+		s->is_template = false;
+		s->size = 16;
+		s->type = get_builtin_type(BuiltinType::Type);
+
+		d->initial_value = s;
+		d->constant_value = Value((Type)s);
+		d->mutability = Mutability::constant;
+		d->name = u8"Range"s;
+		d->type = s->type;
+
+		context->builtin_structs.Range = s;
+
+		context->global_block.unprotected.add(d);
+	}
 }
 
 #if 0

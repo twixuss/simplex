@@ -3,4 +3,5 @@
 
 struct BuiltinStructs {
 	Struct *String;
+	Struct *Range;
 };
