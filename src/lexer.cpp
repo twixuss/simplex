@@ -90,8 +90,6 @@ restart:
 		//
 		//  x  x=
 		//
-		case '+':
-		case '-':
 		case '*':
 		case '%':
 		case '^':
@@ -103,6 +101,27 @@ restart:
 			token.kind = (TokenKind)kind;
 			goto finish;
 		}
+			
+		//
+		//  x  xx  x=
+		//
+		case '+':
+		case '-': {
+			u8 first = *cursor++;
+			u64 kind = first;
+			if (*cursor == '=' || *cursor == first) {
+				kind = kind << 8 | *cursor++;
+			}
+			token.kind = (TokenKind)kind;
+
+			if (token.kind == (first | (first << 8))) {
+				immediate_reporter.error(String{token.string.data, cursor}, "This language does not support {}{} operation. Use {}= instead", (char)first, (char)first, (char)first);
+				token = {};
+				goto finish;
+			}
+
+			goto finish;
+		}
 				
 		//
 		//  x  xx  x>
@@ -110,9 +129,7 @@ restart:
 		case '=': {
 			u8 first = *cursor++;
 			u64 kind = first;
-			if (*cursor == '>') {
-				kind = kind << 8 | *cursor++;
-			} else if (*cursor == first) {
+			if (*cursor == '>' || *cursor == first) {
 				kind = kind << 8 | *cursor++;
 			}
 			token.kind = (TokenKind)kind;

@@ -768,6 +768,18 @@ void Builder::output_impl(Site destination, Binary *binary) {
 				case LowBinaryOperation::mods16: I(mods2, destination, left, right); break;
 				case LowBinaryOperation::mods32: I(mods4, destination, left, right); break;
 				case LowBinaryOperation::mods64: I(mods8, destination, left, right); break;
+				case LowBinaryOperation::bxor8:  I(xor1, destination, left, right); break;
+				case LowBinaryOperation::bxor16: I(xor2, destination, left, right); break;
+				case LowBinaryOperation::bxor32: I(xor4, destination, left, right); break;
+				case LowBinaryOperation::bxor64: I(xor8, destination, left, right); break;
+				case LowBinaryOperation::band8:  I(and1, destination, left, right); break;
+				case LowBinaryOperation::band16: I(and2, destination, left, right); break;
+				case LowBinaryOperation::band32: I(and4, destination, left, right); break;
+				case LowBinaryOperation::band64: I(and8, destination, left, right); break;
+				case LowBinaryOperation::bor8:  I(or1, destination, left, right); break;
+				case LowBinaryOperation::bor16: I(or2, destination, left, right); break;
+				case LowBinaryOperation::bor32: I(or4, destination, left, right); break;
+				case LowBinaryOperation::bor64: I(or8, destination, left, right); break;
 				case LowBinaryOperation::equ8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
 				case LowBinaryOperation::equ16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
 				case LowBinaryOperation::equ32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;

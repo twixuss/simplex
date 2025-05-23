@@ -33,7 +33,7 @@ fn next(l: *var Lexer): Bool => {
     while true {
         match *l.c {
             ' ' or '\t' or '\n' or '\r' or '\v' or '\f' => l.c += 1
-            else => { break } // TODO: don't want braces
+            else => break
         }
     }
 
@@ -41,7 +41,7 @@ fn next(l: *var Lexer): Bool => {
 
     match *l.c {
         '\0' => {
-            l.kind = TokenKind.eof
+            l.kind = .eof
         }
         '`' or '~' or '!' or '@' or
         '#' or '$' or '%' or '^' or
@@ -55,7 +55,7 @@ fn next(l: *var Lexer): Bool => {
             l.c += 1
         }
         '\'' => {
-			l.kind = TokenKind.character
+			l.kind = .character
 			l.c += 1
 			while true {
 				if *l.c == '\'' && l.c[-1] != '\\'
@@ -63,7 +63,7 @@ fn next(l: *var Lexer): Bool => {
 				l.c += 1
 				if l.c > end {
                     println("Unclosed character literal")
-                    l.kind = TokenKind.eof
+                    l.kind = .eof
                     break
                 }
 			}
@@ -71,7 +71,7 @@ fn next(l: *var Lexer): Bool => {
 			l.c += 1
         }
         '"' => {
-			l.kind = TokenKind.string
+			l.kind = .string
 			l.c += 1
 			while true {
 				if *l.c == '"' && l.c[-1] != '\\'
@@ -79,7 +79,7 @@ fn next(l: *var Lexer): Bool => {
 				l.c += 1
 				if l.c > end {
                     println("Unclosed string literal")
-                    l.kind = TokenKind.eof
+                    l.kind = .eof
                     break
                 }
 			}
@@ -87,7 +87,7 @@ fn next(l: *var Lexer): Bool => {
 			l.c += 1
         }
         else => {
-            l.kind = TokenKind.name
+            l.kind = .name
             l.c += 1
             while true {
                 if (0x00 <= *l.c && *l.c <= 0x2f) ||
@@ -102,8 +102,8 @@ fn next(l: *var Lexer): Bool => {
         }
     }
 
-    l.location.count = l.c as U64 - l.location.data as U64 // TODO: pointer sub
-    return l.kind != TokenKind.eof
+    l.location.count = @(l.c - l.location.data)
+    return l.kind != .eof
 }
 
 fn main() {

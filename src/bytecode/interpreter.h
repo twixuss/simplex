@@ -41,6 +41,7 @@ struct Interpreter {
 		static constexpr char next_expression  = '.';
 		static constexpr char next_instruction = 'n';
 		static constexpr char next_line        = 'l';
+		static constexpr char continuee        = 'c';
 		static constexpr char redraw_window    = 'r';
 		static constexpr char toggle_hex       = 'x';
 	};
@@ -56,8 +57,14 @@ struct Interpreter {
 		}
 	}
 	
+	enum PrintIntBase {
+		decimal,
+		hex,
+		binary,
+	};
+
 	struct PrintValueOptions {
-		bool hex = false;
+		PrintIntBase base = PrintIntBase::decimal;
 	};
 
 	inline static PrintValueOptions current_print_options = {};
@@ -72,9 +79,12 @@ struct Interpreter {
 		};
 
 		auto v = (T)val(address);
-		if (options.hex) {
+		if (options.base == PrintIntBase::hex) {
 			print("0x");
 			return (int)print(format_hex(v));
+		} else if (options.base == PrintIntBase::binary) {
+			print("0b");
+			return (int)print(FormatInt{.value = v, .radix = 2});
 		} else {
 			return (int)print(v);
 		}
@@ -82,6 +92,8 @@ struct Interpreter {
 
 	StringBuilder output_builder;
 
+	struct RunNever {};
+	struct RunAlways {};
 	struct RunWhileLocationIs {
 		String location;
 	};
@@ -94,7 +106,7 @@ struct Interpreter {
 	struct RunWhileInstructionIndexIsNot {
 		u64 i;
 	};
-	Variant<Empty, RunWhileLocationIs, RunToLineAfter, RunWhileInstructionIndexIsNot> run_strategy;
+	Variant<RunNever, RunAlways, RunWhileLocationIs, RunToLineAfter, RunWhileInstructionIndexIsNot> run_strategy;
 
 	ContiguousHashMap<s8 *, Empty> printed_value_addresses;
 

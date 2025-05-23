@@ -96,7 +96,10 @@ void Interpreter::run_one_instruction() {
 	};
 
 	run_strategy.visit(Combine{
-		[](Empty) {},
+		[](RunNever) {},
+		[&](RunAlways) {
+			skip = true;
+		},
 		[&](RunWhileLocationIs r) {
 			if (r.location.data == i.source_location.data && r.location.count == i.source_location.count) {
 				skip = true;
@@ -134,10 +137,10 @@ void Interpreter::run_one_instruction() {
 	if (skip) {
 		if (GetAsyncKeyState('S')) {
 			skip = false;
-			run_strategy = Empty{};
+			run_strategy = RunNever{};
 		}
 	} else {
-		run_strategy = Empty{};
+		run_strategy = RunNever{};
 	}
 
 	if (interactive && !skip) {
@@ -226,7 +229,7 @@ void Interpreter::run_one_instruction() {
 					for (s64 i = lambda->stack_frame_size - 8; i >= 0; i -= 8) {
 						s64 addr = reg(Register::stack) + i;
 						print("0x{}: ", format_hex(addr));
-						print_value(Address{.offset = addr}, get_builtin_type(BuiltinType::U64), {.hex = true});
+						print_value(Address{.offset = addr}, get_builtin_type(BuiltinType::U64), {.base = PrintIntBase::hex});
 						if (i == 0)
 							print(" <- stack");
 						if (i == lambda->space_for_call_arguments && lambda->temporary_size)
@@ -336,11 +339,15 @@ void Interpreter::run_one_instruction() {
 				}
 				break;
 			}
+			case Commands::continuee: {
+				run_strategy = RunAlways{};
+				break;
+			}
 			case Commands::redraw_window: {
 				goto redraw;
 			}
 			case Commands::toggle_hex: {
-				current_print_options.hex ^= 1;
+				current_print_options.base = (PrintIntBase)(((int)current_print_options.base + 1) % 3);
 				goto redraw;
 			}
 			default: {
@@ -364,7 +371,7 @@ void Interpreter::run_one_instruction() {
 			println("EXCEPTION: {}", ep->ExceptionRecord->ExceptionCode);
 			println("ADDRESS: {}", ep->ExceptionRecord->ExceptionAddress);
 			current_instruction_index -= 1;
-			run_strategy = Empty{};
+			run_strategy = RunNever{};
 			return EXCEPTION_EXECUTE_HANDLER;
 		} else {
 			return EXCEPTION_EXECUTE_FAULT;
@@ -413,7 +420,7 @@ int Interpreter::print_value_inner(Address address, Type type, PrintValueOptions
 		if (auto pointer = as_pointer(directed)) {
 			auto ptr = val8(address);
 			if (ptr) {
-				print_int<u64>(address, {.hex = true});
+				print_int<u64>(address, {.base = PrintIntBase::hex});
 				print(" ");
 				if (printed_value_addresses.find(&val1(address))) {
 					print("<recursive>");
@@ -578,11 +585,11 @@ void Interpreter::execute(Instruction::sll1_t i) { val1(i.d) = val1(i.a) << val1
 void Interpreter::execute(Instruction::sll2_t i) { val2(i.d) = val2(i.a) << val2(i.b); }
 void Interpreter::execute(Instruction::sll4_t i) { val4(i.d) = val4(i.a) << val4(i.b); }
 void Interpreter::execute(Instruction::sll8_t i) { val8(i.d) = val8(i.a) << val8(i.b); }
-void Interpreter::execute(Instruction::srl1_t i) { val1(i.d) = (u8)val1(i.a) >> (u8)val1(i.b); }
+void Interpreter::execute(Instruction::srl1_t i) { val1(i.d) = (u8 )val1(i.a) >> (u8 )val1(i.b); }
 void Interpreter::execute(Instruction::srl2_t i) { val2(i.d) = (u16)val2(i.a) >> (u16)val2(i.b); }
 void Interpreter::execute(Instruction::srl4_t i) { val4(i.d) = (u32)val4(i.a) >> (u32)val4(i.b); }
 void Interpreter::execute(Instruction::srl8_t i) { val8(i.d) = (u64)val8(i.a) >> (u64)val8(i.b); }
-void Interpreter::execute(Instruction::sra1_t i) { val1(i.d) = (s8)val1(i.a) >> (s8)val1(i.b); }
+void Interpreter::execute(Instruction::sra1_t i) { val1(i.d) = (s8 )val1(i.a) >> (s8 )val1(i.b); }
 void Interpreter::execute(Instruction::sra2_t i) { val2(i.d) = (s16)val2(i.a) >> (s16)val2(i.b); }
 void Interpreter::execute(Instruction::sra4_t i) { val4(i.d) = (s32)val4(i.a) >> (s32)val4(i.b); }
 void Interpreter::execute(Instruction::sra8_t i) { val8(i.d) = (s64)val8(i.a) >> (s64)val8(i.b); }
@@ -642,10 +649,10 @@ void Interpreter::execute(Instruction::cmp8_t i) {
 		case Comparison::unsigned_greater_equals: val1(i.d) = (u64)val8(i.a) >= (u64)val8(i.b); break;
 	}
 }
-void Interpreter::execute(Instruction::sex21_t i) { val8(i.d) = (s16)(s8)val1(i.a); }
-void Interpreter::execute(Instruction::sex41_t i) { val8(i.d) = (s32)(s8)val1(i.a); }
+void Interpreter::execute(Instruction::sex21_t i) { val8(i.d) = (s16)(s8 )val1(i.a); }
+void Interpreter::execute(Instruction::sex41_t i) { val8(i.d) = (s32)(s8 )val1(i.a); }
 void Interpreter::execute(Instruction::sex42_t i) { val8(i.d) = (s32)(s16)val2(i.a); }
-void Interpreter::execute(Instruction::sex81_t i) { val8(i.d) = (s64)(s8)val1(i.a); }
+void Interpreter::execute(Instruction::sex81_t i) { val8(i.d) = (s64)(s8 )val1(i.a); }
 void Interpreter::execute(Instruction::sex82_t i) { val8(i.d) = (s64)(s16)val2(i.a); }
 void Interpreter::execute(Instruction::sex84_t i) { val8(i.d) = (s64)(s32)val4(i.a); }
 void Interpreter::execute(Instruction::call_t i) {
@@ -928,16 +935,28 @@ void Interpreter::execute_intrinsic_print_String(Instruction::intrinsic_t i) {
 	print(String((utf8 *)data, count));
 }
 void Interpreter::execute_intrinsic_panic(Instruction::intrinsic_t i) {
-	immediate_reporter.error("PANIC: {}", i.message);
-	invalid_code_path();
+	if (context_base->run_interactive) {
+		run_strategy = RunNever{};
+	} else {
+		immediate_reporter.error("PANIC: {}", i.message);
+		invalid_code_path();
+	}
 }
 void Interpreter::execute_intrinsic_debug_break(Instruction::intrinsic_t i) {
-	debug_break();
+	if (context_base->run_interactive) {
+		run_strategy = RunNever{};
+	} else {
+		debug_break();
+	}
 }
 void Interpreter::execute_intrinsic_assert(Instruction::intrinsic_t i) {
 	if (!val1(Address{.base = Register::stack})) {
-		immediate_reporter.error(i.message, "Assertion failed: {}", i.message);
-		longjmp(stop_interpering_jmp_buf, 1);
+		if (context_base->run_interactive) {
+			run_strategy = RunNever{};
+		} else {
+			immediate_reporter.error(i.message, "Assertion failed: {}", i.message);
+			longjmp(stop_interpering_jmp_buf, 1);
+		}
 	}
 }
 

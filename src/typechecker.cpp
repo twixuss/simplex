@@ -2020,6 +2020,9 @@ typecheck_dot_succeeded:
 	return 0;
 }
 Node             *Typechecker::typecheck_impl(IfStatement *If, bool can_substitute) {
+	If->condition = make_cast(If->condition, get_builtin_type(BuiltinType::Bool));
+	If->condition->type = 0;
+
 	typecheck(&If->condition);
 
 	typecheck(&If->true_branch);
@@ -2053,6 +2056,9 @@ Node             *Typechecker::typecheck_impl(IfStatement *If, bool can_substitu
 	return If;
 }
 Expression       *Typechecker::typecheck_impl(IfExpression *If, bool can_substitute) {
+	If->condition = make_cast(If->condition, get_builtin_type(BuiltinType::Bool));
+	If->condition->type = 0;
+
 	typecheck(&If->condition);
 
 	typecheck(&If->true_branch);
@@ -2146,6 +2152,11 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 					fail();
 				}
 
+				if (types_match(source_type, target_type)) {
+					NOTE_LEAK(binary);
+					return binary->left;
+				}
+
 				// From lambda
 				if (auto left_lambda_head = as<LambdaHead>(source_type)) {
 					// To pointer
@@ -2180,6 +2191,13 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 						
 					// To pointer
 					if (auto right_pointer = as_pointer(target_type)) {
+						binary->type = binary->right;
+						return binary;
+					}
+
+					// To boolean
+					if (types_match(target_type, get_builtin_type(BuiltinType::Bool))) {
+						binary->low_operation = LowBinaryOperation::left_to_bool;
 						binary->type = binary->right;
 						return binary;
 					}
@@ -3219,13 +3237,38 @@ void Typechecker::init_binary_typecheckers() {
 		x(type, type, mul) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type * r.type, get_builtin_type(BuiltinType::type)); }>; \
 		x(type, type, div) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type / r.type, get_builtin_type(BuiltinType::type)); }>; \
 		x(type, type, mod) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type % r.type, get_builtin_type(BuiltinType::type)); }>;
+	
+	#define BITWISE(signed, unsigned) \
+		x(unsigned, unsigned, bor) = &bt_take_left; \
+		x(unsigned,   signed, bor) = &bt_take_left; \
+		x(  signed, unsigned, bor) = &bt_take_left; \
+		x(  signed,   signed, bor) = &bt_take_left; \
+		x(unsigned, unsigned, ban) = &bt_take_left; \
+		x(unsigned,   signed, ban) = &bt_take_left; \
+		x(  signed, unsigned, ban) = &bt_take_left; \
+		x(  signed,   signed, ban) = &bt_take_left; \
+		x(unsigned, unsigned, bxo) = &bt_take_left; \
+		x(unsigned,   signed, bxo) = &bt_take_left; \
+		x(  signed, unsigned, bxo) = &bt_take_left; \
+		x(  signed,   signed, bxo) = &bt_take_left; \
 
-	#define BITWISE(type) \
-		x(type, type, bxo) = &bt_take_left; \
-		x(type, type, ban) = &bt_take_left; \
-		x(type, type, bor) = &bt_take_left; \
-		x(type, type, bsl) = &bt_take_left; \
-		x(type, type, bsr) = &bt_take_left; \
+	#define SHIFTS(type) \
+		x(type, U8, bsl) = &bt_take_left; \
+		x(type, U8, bsr) = &bt_take_left; \
+		x(type, U16, bsl) = &bt_take_left; \
+		x(type, U16, bsr) = &bt_take_left; \
+		x(type, U32, bsl) = &bt_take_left; \
+		x(type, U32, bsr) = &bt_take_left; \
+		x(type, U64, bsl) = &bt_take_left; \
+		x(type, U64, bsr) = &bt_take_left; \
+		x(type, S8, bsl) = &bt_take_left; \
+		x(type, S8, bsr) = &bt_take_left; \
+		x(type, S16, bsl) = &bt_take_left; \
+		x(type, S16, bsr) = &bt_take_left; \
+		x(type, S32, bsl) = &bt_take_left; \
+		x(type, S32, bsr) = &bt_take_left; \
+		x(type, S64, bsl) = &bt_take_left; \
+		x(type, S64, bsr) = &bt_take_left; \
 
 	#define SYMMETRIC(a, b, op) x(a, b, op) = x(b, a, op)
 
@@ -3276,14 +3319,19 @@ void Typechecker::init_binary_typecheckers() {
 	MATHABLE_INTEGER(S32);
 	MATHABLE_INTEGER(S64);
 
-	BITWISE(U8);
-	BITWISE(U16);
-	BITWISE(U32);
-	BITWISE(U64);
-	BITWISE(S8);
-	BITWISE(S16);
-	BITWISE(S32);
-	BITWISE(S64);
+	BITWISE(S8,  U8 );
+	BITWISE(S16, U16);
+	BITWISE(S32, U32);
+	BITWISE(S64, U64);
+	
+	SHIFTS(U8);
+	SHIFTS(U16);
+	SHIFTS(U32);
+	SHIFTS(U64);
+	SHIFTS(S8);
+	SHIFTS(S16);
+	SHIFTS(S32);
+	SHIFTS(S64);
 
 	UNSIZED_INT_AND_SIZED_INT(U8);
 	UNSIZED_INT_AND_SIZED_INT(U16);
