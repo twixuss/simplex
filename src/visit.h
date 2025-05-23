@@ -159,6 +159,11 @@ ForEachDirective visit_impl(CallerLocation *cl, auto &&visitor) {
 ForEachDirective visit_impl(CallerArgumentString *cas, auto &&visitor) {
 	return ForEach_continue;
 }
+ForEachDirective visit_impl(For *For, auto &&visitor) {
+	VISIT(&For->range);
+	VISIT(&For->body);
+	return ForEach_continue;
+}
 
 ForEachDirective visit(Node **node, auto &&visitor) {
 

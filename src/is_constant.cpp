@@ -7,11 +7,6 @@
 	if (auto _ = is_constant(node); !_) \
 		return _
 
-#define x(name) Result<Empty, Expression *> is_constant_impl(name *);
-ENUMERATE_EXPRESSION_KIND(x)
-#undef x
-
-Result<Empty, Expression *> is_constant(Expression *expression);
 Result<Empty, Expression *> is_constant_impl(Block *block) {
 	if (block->children.count != 1) {
 		immediate_reporter.error(block->location, "is_constant_impl: not implemented for blocks with more that one expression");

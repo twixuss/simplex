@@ -19,6 +19,7 @@ StringLiteral *make_string(String value, String location = {});
 
 BuiltinTypeName *make_name(BuiltinType type, String location = {});
 Name *make_name(Definition *definition, String location = {});
+Name *make_name(String name, String location = {});
 
 Type make_pointer(Type type, Mutability mutability);
 Expression *make_address(Expression *expression);

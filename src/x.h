@@ -160,6 +160,8 @@ ENUMERATE_KEYWORDS(x)
 	x(defer) \
 	x(enum) \
 	x(or) \
+	x(for) \
+	x(in) \
 
 /*
 #define x(name, token, precedence)
@@ -296,6 +298,7 @@ ENUMERATE_STATEMENT_KIND(x)
 	x(IfStatement) \
 	x(Return) \
 	x(While) \
+	x(For) \
 	x(Continue) \
 	x(Break) \
 	x(Import) \

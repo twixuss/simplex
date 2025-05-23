@@ -2,10 +2,6 @@
 #include "nodes.h"
 #include "x.h"
 
-#define x(name) bool do_all_paths_return_impl(name *);
-ENUMERATE_NODE_KIND(x)
-#undef x
-
 bool do_all_paths_return(Node *node);
 bool do_all_paths_return_impl(Block *block) {
 	for (auto child : block->children) {
@@ -139,7 +135,7 @@ bool do_all_paths_return_impl(Return *node) {
 }
 bool do_all_paths_return_impl(While *node) {
 	// TODO: check constant condition
-	return false;
+	return do_all_paths_return(node->condition);
 }
 bool do_all_paths_return_impl(Continue *node) { return false; }
 bool do_all_paths_return_impl(Break *node) { return false; }
@@ -148,6 +144,9 @@ bool do_all_paths_return_impl(Defer *node) { return false; }
 bool do_all_paths_return_impl(ZeroInitialized *zi) { return false; }
 bool do_all_paths_return_impl(CallerLocation *) { return false; }
 bool do_all_paths_return_impl(CallerArgumentString *) { return false; }
+bool do_all_paths_return_impl(For *For) {
+	return do_all_paths_return(For->range);
+}
 bool do_all_paths_return(Node *node) {
 	switch (node->kind) {
 		#define x(name) case NodeKind::name: return do_all_paths_return_impl((name *)node);

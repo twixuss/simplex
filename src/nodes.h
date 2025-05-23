@@ -366,6 +366,12 @@ DEFINE_STATEMENT(While) {
 	Expression *condition = 0;
 	Node *body = 0;
 };
+DEFINE_STATEMENT(For) {
+	String it_name;
+	Expression *range = 0;
+	Node *body = 0;
+	bool reverse : 1 = false;
+};
 DEFINE_STATEMENT(Continue) {
 	While *loop = 0;
 	// Populated after typechecking. In execution order.

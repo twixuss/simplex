@@ -320,6 +320,7 @@ private:
 	[[nodiscard]] Expression       *typecheck_impl(Unary *unary, bool can_substitute);
 	[[nodiscard]] Return           *typecheck_impl(Return *return_, bool can_substitute);
 	[[nodiscard]] While            *typecheck_impl(While *While, bool can_substitute);
+	[[nodiscard]] Block            *typecheck_impl(For *For, bool can_substitute);
 	[[nodiscard]] Continue         *typecheck_impl(Continue *Continue, bool can_substitute);
 	[[nodiscard]] Break            *typecheck_impl(Break *Break, bool can_substitute);
 	[[nodiscard]] Struct           *typecheck_impl(Struct *Struct, bool can_substitute);

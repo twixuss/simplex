@@ -209,6 +209,11 @@ void Copier::deep_copy_impl(CallerArgumentString *from, CallerArgumentString *to
 	COPY(parameter_name);
 	LOOKUP_COPY(type);
 }
+void Copier::deep_copy_impl(For *from, For *to) {
+	COPY(it_name);
+	DEEP_COPY(range);
+	DEEP_COPY(body);
+}
 
 #undef LOOKUP_COPY
 #undef DEEP_COPY

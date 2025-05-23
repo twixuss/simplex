@@ -1318,6 +1318,7 @@ void Builder::output_impl(While *While) {
 		output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count;
 	}
 } 
+void Builder::output_impl(For *For) { invalid_code_path("Should have been replaced with while"); }
 void Builder::output_impl(Continue *node) {
 	for (auto Defer : node->defers) {
 		output_discard(Defer->body);

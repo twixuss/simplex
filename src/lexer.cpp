@@ -521,6 +521,7 @@ restart:
 						case swp('if'): { token.kind = Token_if; break; }
 						case swp('as'): { token.kind = Token_as; break; }
 						case swp('fn'): { token.kind = Token_fn; break; }
+						case swp('in'): { token.kind = Token_in; break; }
 					}
 					break;
 				}
@@ -535,6 +536,7 @@ restart:
 						case swp('S64'): { token.kind = Token_S64; break; }
 						case swp('let'): { token.kind = Token_let; break; }
 						case swp('var'): { token.kind = Token_var; break; }
+						case swp('for'): { token.kind = Token_for; break; }
 					}
 					break;
 				}

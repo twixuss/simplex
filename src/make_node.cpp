@@ -38,6 +38,12 @@ Name *make_name(Definition *definition, String location) {
 	name->name = definition->name;
 	return name;
 }
+Name *make_name(String str, String location) {
+	auto name = Name::create();
+	name->location = location;
+	name->name = str;
+	return name;
+}
 
 IntegerLiteral *make_integer(UnsizedInteger value, String location, Type type) {
 	auto result = IntegerLiteral::create();

@@ -723,6 +723,7 @@ Expression *Parser::parse_expression_0() {
 					case NodeKind::BuiltinTypeName:
 					case NodeKind::Unary:
 					case NodeKind::ArrayType:
+					case NodeKind::LambdaHead:
 						break;
 					default:
 						reporter.error(definition->parsed_type->location, "{} is not allowed in type context.", definition->parsed_type->kind);
@@ -1116,6 +1117,36 @@ Node *Parser::parse_statement() {
 			While->body = parse_statement();
 
 			return finish_node(While);
+		}
+		case Token_for: {
+			auto For = ::For::create();
+			For->location = token.string;
+			next();
+			
+			expect(Token_name);
+			String name_location;
+			parse_name(&name_location, &For->it_name);
+
+			expect(Token_in);
+			next();
+
+			// NOTE: `reverse` is contextual keyword.
+			if (token.kind == Token_name && token.string == "reverse") {
+				For->reverse = true;
+				next();
+			}
+
+			For->range = parse_expression();
+
+			skip_lines();
+			if (token.kind == Token_then) {
+				next();
+				skip_lines();
+			}
+
+			For->body = parse_statement();
+
+			return finish_node(For);
 		}
 		case Token_continue: {
 			if (!current_loop) {

@@ -267,6 +267,9 @@ void print_ast_impl(Unary *unary) {
 	print('{');
 	{ tabbed;
 		print(unary->operation);
+		if (unary->operation == UnaryOperation::pointer) {
+			print("{} ", unary->mutability);
+		}
 		print_ast(unary->expression);
 	}
 	print('}');
@@ -275,9 +278,12 @@ void print_ast_impl(Struct *Struct) {
 	print("struct {\n");
 	{ tabbed;
 		for (auto member : Struct->members) {
+			print_tabs();
 			print_ast(member);
+			println();
 		}
 	}
+	print_tabs();
 	print("}");
 }
 void print_ast_impl(Enum *Enum) {
@@ -341,6 +347,11 @@ void print_ast_impl(CallerLocation *cl) {
 }
 void print_ast_impl(CallerArgumentString *cas) {
 	print("#argument_string {}", cas->parameter_name);
+}
+void print_ast_impl(For *For) {
+	print("for {} in ", For->it_name);
+	print_ast(For->range);
+	print_ast(For->body);
 }
 void print_ast(Node *node) {
 	if (!node) {

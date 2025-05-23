@@ -2344,7 +2344,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 				call->arguments.add({.expression = binary->left,  .parameter = context->builtin_structs.Range->members[0]});
 				call->arguments.add({.expression = binary->right, .parameter = context->builtin_structs.Range->members[1]});
 				call->location = binary->location;
-				call->type = context->builtin_structs.Range;
+				call->type = call->callable;
 
 				NOTE_LEAK(binary);
 				return call;
@@ -2531,6 +2531,7 @@ c
 			definition->initial_value = address_of_left;
 			definition->type = address_of_left->type;
 			definition->container = current_container;
+			definition->name = u8"c"s;
 
 			auto make_deref = [&] {
 				auto deref = Unary::create();
@@ -2540,6 +2541,7 @@ c
 				name->possible_definitions.set(definition);
 				name->type = definition->type;
 				name->location = binary->left->location;
+				name->name = u8"c"s;
 
 				deref->location = binary->left->location;
 				deref->expression = name;
@@ -2802,6 +2804,116 @@ While            *Typechecker::typecheck_impl(While *While, bool can_substitute)
 	typecheck(&While->body);
 
 	return While;
+}
+Block            *Typechecker::typecheck_impl(For *For, bool can_substitute) {
+	typecheck(&For->range);
+	if (!types_match(For->range->type, context->builtin_structs.Range)) {
+		reporter.error(For->range->location, "This must be a range.");
+		fail();
+	}
+	
+	/*
+	///////////////////////////
+	for it in 0..10 {
+		println(it)
+	}
+	///////////////////////////
+	{
+		let __r = 0..10
+		let __i = __r.begin
+		while __i != __r.end {
+			let it = __i
+			{
+				println(it)
+			}
+			__i += 1
+		}
+	}
+	///////////////////////////
+	*/
+
+	/* REVERSE EXAMPLE
+	///////////////////////////
+	for it in reverse 0..10 {
+		println(it)
+	}
+	///////////////////////////
+	{
+		let __r = 0..10
+		let __i = __r.end
+		while __i != __r.begin {
+			__i -= 1
+			let it = __i
+			{
+				println(it)
+			}
+		}
+	}
+	///////////////////////////
+	*/
+
+	String begin_name = u8"begin"s;
+	String end_name = u8"end"s;
+	if (For->reverse)
+		Swap(begin_name, end_name);
+
+	auto outer_block = Block::create();
+	outer_block->container = current_container;
+	outer_block->parent = current_block;
+	outer_block->location = For->location;
+	
+	auto __r = Definition::create();
+	__r->name = u8"__r"s;
+	__r->mutability = Mutability::readonly;
+	__r->container = current_container;
+	__r->initial_value = For->range;
+	__r->location = For->range->location;
+	outer_block->add(__r);
+
+	auto __i = Definition::create();
+	__i->name = u8"__i"s;
+	__i->mutability = Mutability::readonly;
+	__i->container = current_container;
+	__i->initial_value = make_binary(BinaryOperation::dot, make_name(__r, For->location), make_name(begin_name, For->location), 0, For->location);
+	__i->location = For->location;
+	outer_block->add(__i);
+
+	auto While = While::create();
+	While->condition = make_binary(BinaryOperation::neq, make_name(__i, For->location), make_binary(BinaryOperation::dot, make_name(__r, For->location), make_name(end_name, For->location), 0, For->location), 0, For->location);
+	While->location = For->location;
+	outer_block->add(While);
+
+	auto body = Block::create();
+	body->container = current_container;
+	body->parent = outer_block;
+	body->location = For->location;
+	While->body = body;
+	
+	auto it = Definition::create();
+	it->name = For->it_name;
+	it->mutability = Mutability::readonly;
+	it->container = current_container;
+	it->initial_value = make_name(__i, For->it_name);
+	it->location = For->it_name;
+
+	if (auto block = as<Block>(For->body)) {
+		block->parent = body;
+	}
+
+	if (For->reverse) {
+		body->add(make_binary(BinaryOperation::subass, make_name(__i, For->location), make_integer(1, For->location), 0, For->location));
+		body->add(it);
+		body->add(For->body);
+	} else {
+		body->add(it);
+		body->add(For->body);
+		body->add(make_binary(BinaryOperation::addass, make_name(__i, For->location), make_integer(1, For->location), 0, For->location));
+	}
+
+	typecheck(&outer_block);
+
+	NOTE_LEAK(For);
+	return outer_block;
 }
 Continue         *Typechecker::typecheck_impl(Continue *Continue, bool can_substitute) {
 	assert(current_loop);
