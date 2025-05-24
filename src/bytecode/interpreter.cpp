@@ -5,6 +5,8 @@
 #include "../escape.h"
 #include "../compiler_context.h"
 
+#include <tl/linear_set.h>
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <tl/win32.h>
@@ -12,6 +14,8 @@
 #include <conio.h>
 
 namespace Bytecode {
+
+String exception_info;
 
 Optional<u64> Interpreter::run(Bytecode *bytecode, umm entry_index, bool interactive) {
 	scoped_replace(current_interpreter, this);
@@ -218,10 +222,26 @@ void Interpreter::run_one_instruction() {
 					println();
 				};
 
+				LinearSet<Register, TemporaryAllocator> used_registers;
+
+				auto add_registers = [&](Instruction i) {
+					i.visit_registers([&](Register r) { used_registers.add(r); });
+				};
+				
+				for (smm j = current_instruction_index; j >= 0 && bytecode->instructions[j].kind != InstructionKind::ret; --j)
+					add_registers(bytecode->instructions[j]);
+				for (smm j = current_instruction_index; j < bytecode->instructions.count && bytecode->instructions[j].kind != InstructionKind::ret; ++j)
+					add_registers(bytecode->instructions[j]);
+
+				find_and_erase(used_registers, Register::base);
+				find_and_erase(used_registers, Register::stack);
+
+				quick_sort(used_registers);
+
 				print_register(u8"base"s, Register::base);
 				print_register(u8"stack"s, Register::stack);
-				for (int i = 0; i < 8; ++i) {
-					print_register(tformat(u8"r{}", i), (Register)i);
+				for (auto i : used_registers) {
+					print_register(tformat(u8"{}", i), (Register)i);
 				}
 			}
 			else if (debug_window_index == (int)DebugWindowKind::stack && header("Stack"s, DebugWindowFlag::stack)) {
@@ -300,12 +320,16 @@ void Interpreter::run_one_instruction() {
 			}
 		}
 
-		println();
-		println("{} - next expression", Commands::next_expression);
-		println("{} - next instruction", Commands::next_instruction);
-		println("{} - next line", Commands::next_line);
-		println("{} - redraw window", Commands::redraw_window);
-		println("{} - toggle hex", Commands::toggle_hex);
+		//println();
+		//println("{} - next expression", Commands::next_expression);
+		//println("{} - next instruction", Commands::next_instruction);
+		//println("{} - next line", Commands::next_line);
+		//println("{} - redraw window", Commands::redraw_window);
+		//println("{} - toggle hex", Commands::toggle_hex);
+
+		print(exception_info);
+		exception_info = {};
+
 		CONSOLE_SCREEN_BUFFER_INFO csbi;
 		GetConsoleScreenBufferInfo(std_out, &csbi);
 		for (int i = csbi.dwCursorPosition.Y; i < csbi.dwMaximumWindowSize.Y - 1; ++i) {
@@ -350,12 +374,17 @@ void Interpreter::run_one_instruction() {
 				current_print_options.base = (PrintIntBase)(((int)current_print_options.base + 1) % 3);
 				goto redraw;
 			}
+			case 'v': {
+				verbose ^= 1;
+				goto redraw;
+			}
 			default: {
 				goto retry_char;
 			}
 		}
 
 		print("... RUNNING ...");
+		current_temporary_allocator.clear();
 	}
 
 	previous_registers = registers;
@@ -368,8 +397,7 @@ void Interpreter::run_one_instruction() {
 		}
 	} __except ([&](EXCEPTION_POINTERS *ep){
 		if (context->run_interactive) {
-			println("EXCEPTION: {}", ep->ExceptionRecord->ExceptionCode);
-			println("ADDRESS: {}", ep->ExceptionRecord->ExceptionAddress);
+			exception_info = format(u8"EXCEPTION: {}\nADDRESS: {}", ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress);
 			current_instruction_index -= 1;
 			run_strategy = RunNever{};
 			return EXCEPTION_EXECUTE_HANDLER;
@@ -437,8 +465,11 @@ int Interpreter::print_value_inner(Address address, Type type, PrintValueOptions
 		if (auto array = as<ArrayType>(directed)) {
 			print("[");
 			auto element_size = get_size(array->element_type);
+			bool array_of_arrays = verbose && direct_as<ArrayType>(array->element_type);
 			for (umm i = 0; i < array->count.value(); ++i) {
 				if (i) print(", ");
+				if (array_of_arrays) 
+					print("\n    ");
 				auto element_address = address;
 				element_address.offset += i * element_size;
 				print_value_inner(element_address, array->element_type, options);
@@ -481,7 +512,7 @@ s64 &Interpreter::val8(Site s) {
 		return val8(s.get_address());
 	}
 }
-s64 &Interpreter::val8(InputValue v) {
+s64 Interpreter::val8(InputValue v) {
 	if (v.is_register()) {
 		return reg(v.get_register());
 	} else if (v.is_address()) {
@@ -493,15 +524,15 @@ s64 &Interpreter::val8(InputValue v) {
 s32 &Interpreter::val4(Register   x) { return (s32 &)val8(x); }
 s32 &Interpreter::val4(Address    x) { return (s32 &)val8(x); }
 s32 &Interpreter::val4(Site       x) { return (s32 &)val8(x); }
-s32 &Interpreter::val4(InputValue x) { return (s32 &)val8(x); }
+s32  Interpreter::val4(InputValue x) { return (s32  )val8(x); }
 s16 &Interpreter::val2(Register   x) { return (s16 &)val8(x); }
 s16 &Interpreter::val2(Address    x) { return (s16 &)val8(x); }
 s16 &Interpreter::val2(Site       x) { return (s16 &)val8(x); }
-s16 &Interpreter::val2(InputValue x) { return (s16 &)val8(x); }
+s16  Interpreter::val2(InputValue x) { return (s16  )val8(x); }
 s8  &Interpreter::val1(Register   x) { return (s8  &)val8(x); }
 s8  &Interpreter::val1(Address    x) { return (s8  &)val8(x); }
 s8  &Interpreter::val1(Site       x) { return (s8  &)val8(x); }
-s8  &Interpreter::val1(InputValue x) { return (s8  &)val8(x); }
+s8   Interpreter::val1(InputValue x) { return (s8   )val8(x); }
 
 #define E(name, ...) execute(Instruction{.kind = InstructionKind::name, .v_##name = { __VA_ARGS__ }}.v_##name)
 	
@@ -522,6 +553,115 @@ void *Interpreter::load_extern_function(String libname, String name) {
 	return fn;
 }
 
+template <std::signed_integral Int>
+inline constexpr v2<Int> edivmod(Int x, Int y) {
+	return {
+		(x < 0) ?
+			(x + 1) / y - sign(y) :
+			(x / y),
+
+		(x < 0) ?
+			(x + 1) % y + absolute(y) - 1 :
+			(x % y),
+	};
+}
+
+static void _checks() {
+	static_assert(all(edivmod<int>(-2147483648, -3) == v2s{715827883, 1}));
+	static_assert(all(edivmod<int>(-2147483647, -3) == v2s{715827883, 2}));
+	static_assert(all(edivmod<int>(-2147483646, -3) == v2s{715827882, 0}));
+	static_assert(all(edivmod<int>(-2147483645, -3) == v2s{715827882, 1}));
+	static_assert(all(edivmod<int>(-2147483644, -3) == v2s{715827882, 2}));
+	static_assert(all(edivmod<int>(-2147483643, -3) == v2s{715827881, 0}));
+	static_assert(all(edivmod<int>(-2147483642, -3) == v2s{715827881, 1}));
+	static_assert(all(edivmod<int>(-2147483641, -3) == v2s{715827881, 2}));
+	static_assert(all(edivmod<int>(-2147483640, -3) == v2s{715827880, 0}));
+	static_assert(all(edivmod<int>(-2147483639, -3) == v2s{715827880, 1}));
+	static_assert(all(edivmod<int>(-2147483638, -3) == v2s{715827880, 2}));
+	static_assert(all(edivmod<int>(-2147483637, -3) == v2s{715827879, 0}));
+	static_assert(all(edivmod<int>(-2147483636, -3) == v2s{715827879, 1}));
+	static_assert(all(edivmod<int>(-2147483635, -3) == v2s{715827879, 2}));
+	static_assert(all(edivmod<int>(-2147483634, -3) == v2s{715827878, 0}));
+
+	static_assert(all(edivmod<int>(-6, 3) == v2s{-2, 0}));
+	static_assert(all(edivmod<int>(-5, 3) == v2s{-2, 1}));
+	static_assert(all(edivmod<int>(-4, 3) == v2s{-2, 2}));
+	static_assert(all(edivmod<int>(-3, 3) == v2s{-1, 0}));
+	static_assert(all(edivmod<int>(-2, 3) == v2s{-1, 1}));
+	static_assert(all(edivmod<int>(-1, 3) == v2s{-1, 2}));
+	static_assert(all(edivmod<int>( 0, 3) == v2s{0, 0}));
+	static_assert(all(edivmod<int>( 1, 3) == v2s{0, 1}));
+	static_assert(all(edivmod<int>( 2, 3) == v2s{0, 2}));
+	static_assert(all(edivmod<int>( 3, 3) == v2s{1, 0}));
+	static_assert(all(edivmod<int>( 4, 3) == v2s{1, 1}));
+	static_assert(all(edivmod<int>( 5, 3) == v2s{1, 2}));
+	static_assert(all(edivmod<int>( 6, 3) == v2s{2, 0}));
+	
+	static_assert(all(edivmod<int>(2147483632, -3) == v2s{-715827877, 1}));
+	static_assert(all(edivmod<int>(2147483633, -3) == v2s{-715827877, 2}));
+	static_assert(all(edivmod<int>(2147483634, -3) == v2s{-715827878, 0}));
+	static_assert(all(edivmod<int>(2147483635, -3) == v2s{-715827878, 1}));
+	static_assert(all(edivmod<int>(2147483636, -3) == v2s{-715827878, 2}));
+	static_assert(all(edivmod<int>(2147483637, -3) == v2s{-715827879, 0}));
+	static_assert(all(edivmod<int>(2147483638, -3) == v2s{-715827879, 1}));
+	static_assert(all(edivmod<int>(2147483639, -3) == v2s{-715827879, 2}));
+	static_assert(all(edivmod<int>(2147483640, -3) == v2s{-715827880, 0}));
+	static_assert(all(edivmod<int>(2147483641, -3) == v2s{-715827880, 1}));
+	static_assert(all(edivmod<int>(2147483642, -3) == v2s{-715827880, 2}));
+	static_assert(all(edivmod<int>(2147483643, -3) == v2s{-715827881, 0}));
+	static_assert(all(edivmod<int>(2147483644, -3) == v2s{-715827881, 1}));
+	static_assert(all(edivmod<int>(2147483645, -3) == v2s{-715827881, 2}));
+	static_assert(all(edivmod<int>(2147483646, -3) == v2s{-715827882, 0}));
+	static_assert(all(edivmod<int>(2147483647, -3) == v2s{-715827882, 1}));
+
+	static_assert(all(edivmod<int>(-2147483648, 3) == v2s{-715827883, 1}));
+	static_assert(all(edivmod<int>(-2147483647, 3) == v2s{-715827883, 2}));
+	static_assert(all(edivmod<int>(-2147483646, 3) == v2s{-715827882, 0}));
+	static_assert(all(edivmod<int>(-2147483645, 3) == v2s{-715827882, 1}));
+	static_assert(all(edivmod<int>(-2147483644, 3) == v2s{-715827882, 2}));
+	static_assert(all(edivmod<int>(-2147483643, 3) == v2s{-715827881, 0}));
+	static_assert(all(edivmod<int>(-2147483642, 3) == v2s{-715827881, 1}));
+	static_assert(all(edivmod<int>(-2147483641, 3) == v2s{-715827881, 2}));
+	static_assert(all(edivmod<int>(-2147483640, 3) == v2s{-715827880, 0}));
+	static_assert(all(edivmod<int>(-2147483639, 3) == v2s{-715827880, 1}));
+	static_assert(all(edivmod<int>(-2147483638, 3) == v2s{-715827880, 2}));
+	static_assert(all(edivmod<int>(-2147483637, 3) == v2s{-715827879, 0}));
+	static_assert(all(edivmod<int>(-2147483636, 3) == v2s{-715827879, 1}));
+	static_assert(all(edivmod<int>(-2147483635, 3) == v2s{-715827879, 2}));
+	static_assert(all(edivmod<int>(-2147483634, 3) == v2s{-715827878, 0}));
+
+	static_assert(all(edivmod<int>(-6, -3) == v2s{2, 0}));
+	static_assert(all(edivmod<int>(-5, -3) == v2s{2, 1}));
+	static_assert(all(edivmod<int>(-4, -3) == v2s{2, 2}));
+	static_assert(all(edivmod<int>(-3, -3) == v2s{1, 0}));
+	static_assert(all(edivmod<int>(-2, -3) == v2s{1, 1}));
+	static_assert(all(edivmod<int>(-1, -3) == v2s{1, 2}));
+	static_assert(all(edivmod<int>( 0, -3) == v2s{0, 0}));
+	static_assert(all(edivmod<int>( 1, -3) == v2s{0, 1}));
+	static_assert(all(edivmod<int>( 2, -3) == v2s{0, 2}));
+	static_assert(all(edivmod<int>( 3, -3) == v2s{-1, 0}));
+	static_assert(all(edivmod<int>( 4, -3) == v2s{-1, 1}));
+	static_assert(all(edivmod<int>( 5, -3) == v2s{-1, 2}));
+	static_assert(all(edivmod<int>( 6, -3) == v2s{-2, 0}));
+	
+	static_assert(all(edivmod<int>(2147483632, 3) == v2s{715827877, 1}));
+	static_assert(all(edivmod<int>(2147483633, 3) == v2s{715827877, 2}));
+	static_assert(all(edivmod<int>(2147483634, 3) == v2s{715827878, 0}));
+	static_assert(all(edivmod<int>(2147483635, 3) == v2s{715827878, 1}));
+	static_assert(all(edivmod<int>(2147483636, 3) == v2s{715827878, 2}));
+	static_assert(all(edivmod<int>(2147483637, 3) == v2s{715827879, 0}));
+	static_assert(all(edivmod<int>(2147483638, 3) == v2s{715827879, 1}));
+	static_assert(all(edivmod<int>(2147483639, 3) == v2s{715827879, 2}));
+	static_assert(all(edivmod<int>(2147483640, 3) == v2s{715827880, 0}));
+	static_assert(all(edivmod<int>(2147483641, 3) == v2s{715827880, 1}));
+	static_assert(all(edivmod<int>(2147483642, 3) == v2s{715827880, 2}));
+	static_assert(all(edivmod<int>(2147483643, 3) == v2s{715827881, 0}));
+	static_assert(all(edivmod<int>(2147483644, 3) == v2s{715827881, 1}));
+	static_assert(all(edivmod<int>(2147483645, 3) == v2s{715827881, 2}));
+	static_assert(all(edivmod<int>(2147483646, 3) == v2s{715827882, 0}));
+	static_assert(all(edivmod<int>(2147483647, 3) == v2s{715827882, 1}));
+}
+
 void Interpreter::execute(Instruction::pop_t i) {
 	E(copy, .d = i.d, .s = Address{.base = Register::stack}, .size = 8);
 	E(add8, .d = Register::stack, .a = Register::stack, .b = 8);
@@ -533,7 +673,16 @@ void Interpreter::execute(Instruction::push_t i) {
 }
 void Interpreter::execute(Instruction::copy_t i) {
 	auto d = &val8(i.d);
-	auto s = &val8(i.s);
+	void *s;
+	s64 c;
+	if (i.s.is_register()) {
+		s = &reg(i.s.get_register());
+	} else if (i.s.is_address()) {
+		s = &val8(i.s.get_address());
+	} else {
+		c = i.s.get_constant();
+		s = &c;
+	}
 	memcpy(d, s, i.size);
 }
 void Interpreter::execute(Instruction::set_t i) {
@@ -557,18 +706,18 @@ void Interpreter::execute(Instruction::divu1_t i) { val1(i.d) = (u8 )val1(i.a) /
 void Interpreter::execute(Instruction::divu2_t i) { val2(i.d) = (u16)val2(i.a) / (u16)val2(i.b); }
 void Interpreter::execute(Instruction::divu4_t i) { val4(i.d) = (u32)val4(i.a) / (u32)val4(i.b); }
 void Interpreter::execute(Instruction::divu8_t i) { val8(i.d) = (u64)val8(i.a) / (u64)val8(i.b); }
-void Interpreter::execute(Instruction::divs1_t i) { val1(i.d) = (s8 )val1(i.a) / (s8 )val1(i.b); }
-void Interpreter::execute(Instruction::divs2_t i) { val2(i.d) = (s16)val2(i.a) / (s16)val2(i.b); }
-void Interpreter::execute(Instruction::divs4_t i) { val4(i.d) = (s32)val4(i.a) / (s32)val4(i.b); }
-void Interpreter::execute(Instruction::divs8_t i) { val8(i.d) = (s64)val8(i.a) / (s64)val8(i.b); }
+void Interpreter::execute(Instruction::divs1_t i) { val1(i.d) = edivmod((s8 )val1(i.a), (s8 )val1(i.b)).x; }
+void Interpreter::execute(Instruction::divs2_t i) { val2(i.d) = edivmod((s16)val2(i.a), (s16)val2(i.b)).x; }
+void Interpreter::execute(Instruction::divs4_t i) { val4(i.d) = edivmod((s32)val4(i.a), (s32)val4(i.b)).x; }
+void Interpreter::execute(Instruction::divs8_t i) { val8(i.d) = edivmod((s64)val8(i.a), (s64)val8(i.b)).x; }
 void Interpreter::execute(Instruction::modu1_t i) { val1(i.d) = (u8 )val1(i.a) % (u8 )val1(i.b); }
 void Interpreter::execute(Instruction::modu2_t i) { val2(i.d) = (u16)val2(i.a) % (u16)val2(i.b); }
 void Interpreter::execute(Instruction::modu4_t i) { val4(i.d) = (u32)val4(i.a) % (u32)val4(i.b); }
 void Interpreter::execute(Instruction::modu8_t i) { val8(i.d) = (u64)val8(i.a) % (u64)val8(i.b); }
-void Interpreter::execute(Instruction::mods1_t i) { val1(i.d) = (s8 )val1(i.a) % (s8 )val1(i.b); }
-void Interpreter::execute(Instruction::mods2_t i) { val2(i.d) = (s16)val2(i.a) % (s16)val2(i.b); }
-void Interpreter::execute(Instruction::mods4_t i) { val4(i.d) = (s32)val4(i.a) % (s32)val4(i.b); }
-void Interpreter::execute(Instruction::mods8_t i) { val8(i.d) = (s64)val8(i.a) % (s64)val8(i.b); }
+void Interpreter::execute(Instruction::mods1_t i) { val1(i.d) = edivmod((s8 )val1(i.a), (s8 )val1(i.b)).y; }
+void Interpreter::execute(Instruction::mods2_t i) { val2(i.d) = edivmod((s16)val2(i.a), (s16)val2(i.b)).y; }
+void Interpreter::execute(Instruction::mods4_t i) { val4(i.d) = edivmod((s32)val4(i.a), (s32)val4(i.b)).y; }
+void Interpreter::execute(Instruction::mods8_t i) { val8(i.d) = edivmod((s64)val8(i.a), (s64)val8(i.b)).y; }
 void Interpreter::execute(Instruction::xor1_t i) { val1(i.d) = val1(i.a) ^ val1(i.b); }
 void Interpreter::execute(Instruction::xor2_t i) { val2(i.d) = val2(i.a) ^ val2(i.b); }
 void Interpreter::execute(Instruction::xor4_t i) { val4(i.d) = val4(i.a) ^ val4(i.b); }
@@ -581,22 +730,22 @@ void Interpreter::execute(Instruction::or1_t i)  { val1(i.d) = val1(i.a) | val1(
 void Interpreter::execute(Instruction::or2_t i)  { val2(i.d) = val2(i.a) | val2(i.b); }
 void Interpreter::execute(Instruction::or4_t i)  { val4(i.d) = val4(i.a) | val4(i.b); }
 void Interpreter::execute(Instruction::or8_t i)  { val8(i.d) = val8(i.a) | val8(i.b); }
-void Interpreter::execute(Instruction::sll1_t i) { val1(i.d) = val1(i.a) << val1(i.b); }
-void Interpreter::execute(Instruction::sll2_t i) { val2(i.d) = val2(i.a) << val2(i.b); }
-void Interpreter::execute(Instruction::sll4_t i) { val4(i.d) = val4(i.a) << val4(i.b); }
-void Interpreter::execute(Instruction::sll8_t i) { val8(i.d) = val8(i.a) << val8(i.b); }
-void Interpreter::execute(Instruction::srl1_t i) { val1(i.d) = (u8 )val1(i.a) >> (u8 )val1(i.b); }
-void Interpreter::execute(Instruction::srl2_t i) { val2(i.d) = (u16)val2(i.a) >> (u16)val2(i.b); }
-void Interpreter::execute(Instruction::srl4_t i) { val4(i.d) = (u32)val4(i.a) >> (u32)val4(i.b); }
-void Interpreter::execute(Instruction::srl8_t i) { val8(i.d) = (u64)val8(i.a) >> (u64)val8(i.b); }
-void Interpreter::execute(Instruction::sra1_t i) { val1(i.d) = (s8 )val1(i.a) >> (s8 )val1(i.b); }
-void Interpreter::execute(Instruction::sra2_t i) { val2(i.d) = (s16)val2(i.a) >> (s16)val2(i.b); }
-void Interpreter::execute(Instruction::sra4_t i) { val4(i.d) = (s32)val4(i.a) >> (s32)val4(i.b); }
-void Interpreter::execute(Instruction::sra8_t i) { val8(i.d) = (s64)val8(i.a) >> (s64)val8(i.b); }
+void Interpreter::execute(Instruction::sll1_t i) { val1(i.d) = val1(i.a) << (u8)val1(i.b); }
+void Interpreter::execute(Instruction::sll2_t i) { val2(i.d) = val2(i.a) << (u8)val1(i.b); }
+void Interpreter::execute(Instruction::sll4_t i) { val4(i.d) = val4(i.a) << (u8)val1(i.b); }
+void Interpreter::execute(Instruction::sll8_t i) { val8(i.d) = val8(i.a) << (u8)val1(i.b); }
+void Interpreter::execute(Instruction::srl1_t i) { val1(i.d) = (u8 )val1(i.a) >> (u8)val1(i.b); }
+void Interpreter::execute(Instruction::srl2_t i) { val2(i.d) = (u16)val2(i.a) >> (u8)val1(i.b); }
+void Interpreter::execute(Instruction::srl4_t i) { val4(i.d) = (u32)val4(i.a) >> (u8)val1(i.b); }
+void Interpreter::execute(Instruction::srl8_t i) { val8(i.d) = (u64)val8(i.a) >> (u8)val1(i.b); }
+void Interpreter::execute(Instruction::sra1_t i) { val1(i.d) = (s8 )val1(i.a) >> (u8)val1(i.b); }
+void Interpreter::execute(Instruction::sra2_t i) { val2(i.d) = (s16)val2(i.a) >> (u8)val1(i.b); }
+void Interpreter::execute(Instruction::sra4_t i) { val4(i.d) = (s32)val4(i.a) >> (u8)val1(i.b); }
+void Interpreter::execute(Instruction::sra8_t i) { val8(i.d) = (s64)val8(i.a) >> (u8)val1(i.b); }
 void Interpreter::execute(Instruction::cmp1_t i) {
 	switch (i.cmp) {
-		case Comparison::equals:                  val1(i.d) =     val1(i.a) ==     val1(i.b); break;
-		case Comparison::not_equals:              val1(i.d) =     val1(i.a) !=     val1(i.b); break;
+		case Comparison::equals:                  val1(i.d) = (u8)val1(i.a) == (u8)val1(i.b); break;
+		case Comparison::not_equals:              val1(i.d) = (u8)val1(i.a) != (u8)val1(i.b); break;
 		case Comparison::signed_less:             val1(i.d) = (s8)val1(i.a) <  (s8)val1(i.b); break;
 		case Comparison::signed_greater:          val1(i.d) = (s8)val1(i.a) >  (s8)val1(i.b); break;
 		case Comparison::signed_less_equals:      val1(i.d) = (s8)val1(i.a) <= (s8)val1(i.b); break;
@@ -609,8 +758,8 @@ void Interpreter::execute(Instruction::cmp1_t i) {
 }
 void Interpreter::execute(Instruction::cmp2_t i) {
 	switch (i.cmp) {
-		case Comparison::equals:                  val1(i.d) =      val2(i.a) ==      val2(i.b); break;
-		case Comparison::not_equals:              val1(i.d) =      val2(i.a) !=      val2(i.b); break;
+		case Comparison::equals:                  val1(i.d) = (u16)val2(i.a) == (u16)val2(i.b); break;
+		case Comparison::not_equals:              val1(i.d) = (u16)val2(i.a) != (u16)val2(i.b); break;
 		case Comparison::signed_less:             val1(i.d) = (s16)val2(i.a) <  (s16)val2(i.b); break;
 		case Comparison::signed_greater:          val1(i.d) = (s16)val2(i.a) >  (s16)val2(i.b); break;
 		case Comparison::signed_less_equals:      val1(i.d) = (s16)val2(i.a) <= (s16)val2(i.b); break;
@@ -623,8 +772,8 @@ void Interpreter::execute(Instruction::cmp2_t i) {
 }
 void Interpreter::execute(Instruction::cmp4_t i) {
 	switch (i.cmp) {
-		case Comparison::equals:                  val1(i.d) =      val4(i.a) ==      val4(i.b); break;
-		case Comparison::not_equals:              val1(i.d) =      val4(i.a) !=      val4(i.b); break;
+		case Comparison::equals:                  val1(i.d) = (u16)val4(i.a) == (u16)val4(i.b); break;
+		case Comparison::not_equals:              val1(i.d) = (u16)val4(i.a) != (u16)val4(i.b); break;
 		case Comparison::signed_less:             val1(i.d) = (s32)val4(i.a) <  (s32)val4(i.b); break;
 		case Comparison::signed_greater:          val1(i.d) = (s32)val4(i.a) >  (s32)val4(i.b); break;
 		case Comparison::signed_less_equals:      val1(i.d) = (s32)val4(i.a) <= (s32)val4(i.b); break;
@@ -637,8 +786,8 @@ void Interpreter::execute(Instruction::cmp4_t i) {
 }
 void Interpreter::execute(Instruction::cmp8_t i) {
 	switch (i.cmp) {
-		case Comparison::equals:                  val1(i.d) =      val8(i.a) ==      val8(i.b); break;
-		case Comparison::not_equals:              val1(i.d) =      val8(i.a) !=      val8(i.b); break;
+		case Comparison::equals:                  val1(i.d) = (u64)val8(i.a) == (u64)val8(i.b); break;
+		case Comparison::not_equals:              val1(i.d) = (u64)val8(i.a) != (u64)val8(i.b); break;
 		case Comparison::signed_less:             val1(i.d) = (s64)val8(i.a) <  (s64)val8(i.b); break;
 		case Comparison::signed_greater:          val1(i.d) = (s64)val8(i.a) >  (s64)val8(i.b); break;
 		case Comparison::signed_less_equals:      val1(i.d) = (s64)val8(i.a) <= (s64)val8(i.b); break;
@@ -655,6 +804,10 @@ void Interpreter::execute(Instruction::sex42_t i) { val8(i.d) = (s32)(s16)val2(i
 void Interpreter::execute(Instruction::sex81_t i) { val8(i.d) = (s64)(s8 )val1(i.a); }
 void Interpreter::execute(Instruction::sex82_t i) { val8(i.d) = (s64)(s16)val2(i.a); }
 void Interpreter::execute(Instruction::sex84_t i) { val8(i.d) = (s64)(s32)val4(i.a); }
+void Interpreter::execute(Instruction::neg1_t i) { val1(i.d) = -val1(i.d); }
+void Interpreter::execute(Instruction::neg2_t i) { val2(i.d) = -val2(i.d); }
+void Interpreter::execute(Instruction::neg4_t i) { val4(i.d) = -val4(i.d); }
+void Interpreter::execute(Instruction::neg8_t i) { val8(i.d) = -val8(i.d); }
 void Interpreter::execute(Instruction::call_t i) {
 	E(push, (s64)current_instruction_index);
 

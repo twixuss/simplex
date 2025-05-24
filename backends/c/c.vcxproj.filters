@@ -1,12 +1,18 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <None Include="..\vs\properties\Common.props" />
-    <None Include="..\vs\properties\Debug.props" />
-    <None Include="..\vs\properties\Release.props" />
+    <None Include="..\..\vs\properties\Common.props" />
+    <None Include="..\..\vs\properties\Debug.props" />
+    <None Include="..\..\vs\properties\Release.props" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="x64.cpp" />
-    <ClCompile Include="..\src\reporter.cpp" />
+    <ClCompile Include="..\..\src\binary_operation.cpp" />
+    <ClCompile Include="..\..\src\mutability.cpp" />
+    <ClCompile Include="..\..\src\nameable.cpp" />
+    <ClCompile Include="..\..\src\nodes.cpp" />
+    <ClCompile Include="..\..\src\reporter.cpp" />
+    <ClCompile Include="..\..\src\type.cpp" />
+    <ClCompile Include="..\..\src\unary_operation.cpp" />
+    <ClCompile Include="c.cpp" />
   </ItemGroup>
 </Project>

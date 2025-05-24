@@ -256,7 +256,7 @@ DEFINE_EXPRESSION(Lambda) {
 	String extern_library = {};
 	String link_name = {};
 
-	GList<Definition *> locals = {};
+	GLinearSet<Definition *> locals = {};
 	u64 space_for_call_arguments = 0;
 	u64 temporary_size = 0;
 	u64 locals_size = 0;
@@ -368,6 +368,7 @@ DEFINE_STATEMENT(While) {
 };
 DEFINE_STATEMENT(For) {
 	String it_name;
+	Expression *it_parsed_type = 0;
 	Expression *range = 0;
 	Node *body = 0;
 	bool reverse : 1 = false;
@@ -397,3 +398,4 @@ DEFINE_STATEMENT(Defer) {
 };
 
 bool is_substitutable(Block *block);
+bool is_addressable(Expression *expression);

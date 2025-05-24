@@ -337,8 +337,11 @@ Parser::NamedStruct Parser::parse_struct() {
 		next();
 		definition->parsed_type = parse_expression();
 
-		expect('\n');
 		skip_lines();
+		while (token.kind == ';') {
+			next();
+			skip_lines();
+		}
 
 		definition->container = Struct;
 		definition->mutability = Mutability::variable;
@@ -693,11 +696,6 @@ Expression *Parser::parse_expression_0() {
 			definition->mutability = to_mutability(token.kind).value();
 
 			definition->container = current_container;
-			if (current_container) {
-				if (auto lambda = as<Lambda>(current_container)) {
-					lambda->locals.add(definition);
-				}
-			}
 			
 			next();
 			skip_lines();
@@ -748,6 +746,8 @@ Expression *Parser::parse_expression_0() {
 		}
 		case Token_fn: return parse_lambda().lambda_or_head;
 		case '(': {
+			auto open = token.string;
+
 			next();
 			skip_lines();
 
@@ -756,7 +756,10 @@ Expression *Parser::parse_expression_0() {
 			skip_lines();
 
 			expect(')');
+			auto close = token.string;
 			next();
+
+			expression->location = {open.begin(), close.end()};
 
 			return expression;
 		}
@@ -1126,6 +1129,11 @@ Node *Parser::parse_statement() {
 			expect(Token_name);
 			String name_location;
 			parse_name(&name_location, &For->it_name);
+
+			if (token.kind == ':') {
+				next();
+				For->it_parsed_type = parse_expression();
+			}
 
 			expect(Token_in);
 			next();

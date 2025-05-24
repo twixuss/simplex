@@ -418,6 +418,10 @@ struct Emitter {
 	void emit_instruction_impl(b::Instruction::sex81_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::sex82_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::sex84_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::neg1_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::neg2_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::neg4_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::neg8_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::call_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::callext_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::copyext_t i) { not_implemented(); }

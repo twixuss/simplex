@@ -238,6 +238,10 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(sex81,  (y(Site, d) y(InputValue, a))) \
 	x(sex82,  (y(Site, d) y(InputValue, a))) \
 	x(sex84,  (y(Site, d) y(InputValue, a))) \
+	x(neg1, (y(Site, d))) \
+	x(neg2, (y(Site, d))) \
+	x(neg4, (y(Site, d))) \
+	x(neg8, (y(Site, d))) \
 	x(call, (y(InputValue, d))) \
 	x(callext, (y(Lambda *, lambda) y(String, lib) y(String, name))) \
 	x(copyext, (y(Site, d) y(String, lib) y(String, name))) \
@@ -296,7 +300,22 @@ struct Instruction {
 	String source_location = {};
 
 	~Instruction() {}
-
+	
+	void visit_registers(auto &&visitor) {
+		switch (kind) {
+			#define y(type, name) visit_register(i.name, visitor);
+			#define x(name, fields)           \
+				case InstructionKind::name: { \
+					auto &i = v_##name;       \
+					PASSTHROUGH fields;       \
+					break;                    \
+				}
+			ENUMERATE_BYTECODE_INSTRUCTION_KIND
+			#undef x
+			#undef y
+		}
+	}
+	
 	void visit_addresses(auto &&visitor) {
 		switch (kind) {
 			#define y(type, name) visit_address(i.name, visitor);
@@ -314,7 +333,7 @@ struct Instruction {
 	
 	void visit_operands(auto &&visitor) {
 		switch (kind) {
-			#define y(type, name) visitor(i.name, visitor);
+			#define y(type, name) visitor(i.name);
 			#define x(name, fields)           \
 				case InstructionKind::name: { \
 					auto &i = v_##name;       \
@@ -328,6 +347,10 @@ struct Instruction {
 	}
 
 private:
+	static void visit_register(auto, auto &&visitor) {}
+	static void visit_register(Register &r, auto &&visitor) { visitor(r); }
+	static void visit_register(Site &s, auto &&visitor) { if (s.is_register()) visitor(s.get_register()); }
+	static void visit_register(InputValue &v, auto &&visitor) { if (v.is_register()) visitor(v.get_register()); }
 	static void visit_address(auto, auto &&visitor) {}
 	static void visit_address(Address &a, auto &&visitor) { visitor(a); }
 	static void visit_address(Site &s, auto &&visitor) { if (s.is_address()) visitor(s.get_address()); }

@@ -163,11 +163,11 @@ struct Builder {
 
 	Address get_definition_address(Definition *definition);
 
-	bool is_addressable(Expression *expression);
-
 	u64 string_literal_offset(String string);
 
 	void output_defers_up_until(Node *last_node);
+
+	void output_bounds_check(Register index_reg, umm index_size, umm count);
 	
 	#define x(name) void output_impl(Site destination, name *); 
 	ENUMERATE_EXPRESSION_KIND(x)

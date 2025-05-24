@@ -119,6 +119,7 @@ struct Interpreter {
 	u8 *stack = 0;
 	List<u64> debug_stack;
 	List<s64> debug_call_stack;
+	bool verbose = false;
 
 	struct Library {
 		Dll dll;
@@ -130,19 +131,19 @@ struct Interpreter {
 	s64 &val8(Register r);
 	s64 &val8(Address a);
 	s64 &val8(Site s);
-	s64 &val8(InputValue v);
+	s64  val8(InputValue v);
 	s32 &val4(Register   x);
 	s32 &val4(Address    x);
 	s32 &val4(Site       x);
-	s32 &val4(InputValue x);
+	s32  val4(InputValue x);
 	s16 &val2(Register   x);
 	s16 &val2(Address    x);
 	s16 &val2(Site       x);
-	s16 &val2(InputValue x);
+	s16  val2(InputValue x);
 	s8  &val1(Register   x);
 	s8  &val1(Address    x);
 	s8  &val1(Site       x);
-	s8  &val1(InputValue x);
+	s8   val1(InputValue x);
 
 	void *load_extern_function(String libname, String name);
 	

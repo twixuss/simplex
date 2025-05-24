@@ -1,4 +1,6 @@
 #pragma once
+#undef BUILD_DEBUG
+#define BUILD_DEBUG 1
 
 #include <type_traits>
 #include <concepts>
@@ -50,6 +52,7 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 #include <tl/bits.h>
 #include <tl/block_list.h>
 #include <tl/dynamic_lib.h>
+#include <tl/linear_set.h>
 
 #if OS_LINUX
 #include <sys/mman.h>
@@ -119,6 +122,9 @@ using HashSet = tl::ContiguousHashMap<Value, Empty, Traits, Allocator>;
 
 template <class T>
 using GList = tl::List<T, DefaultAllocator>;
+
+template <class T>
+using GLinearSet = tl::LinearSet<T, DefaultAllocator>;
 
 template <class Key, class Value, class Traits = DefaultHashTraits<Key>>
 using GHashMap = HashMap<Key, Value, Traits, DefaultAllocator>;

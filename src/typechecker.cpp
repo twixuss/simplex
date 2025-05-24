@@ -290,12 +290,30 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 							auto src_sign = get_sign(src_builtin_type->type_kind);
 							auto dst_sign = get_sign(dst_builtin_type->type_kind);
 
+							#define coalesce(a, b) ([&]{ auto _a = a; if (_a) return _a; return b; }())
+
+							auto valid_due_to_masking = [&] {
+								if (auto binary = as<Binary>(expression); binary && binary->operation == BinaryOperation::ban) {
+									if (auto mask = coalesce(get_constant_integer(binary->left), get_constant_integer(binary->right))) {
+										if ((u64)mask.value() <= ((u64)1 << (dst_size * 8)) - 1) {
+											if (apply)
+												expression = make_cast(expression, target_type);
+											return true;
+										}
+									}
+								}
+								return false;
+							};
+
 							if (src_sign == dst_sign) {
 								if (src_size <= dst_size) {
 									if (apply)
 										expression = make_cast(expression, target_type);
 									return true;
 								} else {
+									if (valid_due_to_masking())
+										return true;
+
 									if (reporter)
 										reporter->error(expression->location, "Can't implicitly convert {} to {}, because source is bigger than destination, meaning that there could be information loss.", source_type, target_type);
 									return false;
@@ -1358,6 +1376,14 @@ Expression       *Typechecker::typecheck_impl(Block *block, bool can_substitute)
 	return block;
 }
 Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_substitute) {
+	if (!definition->is_parameter && !definition->is_template_parameter) {
+		if (current_container) {
+			if (auto lambda = as<Lambda>(current_container)) {
+				lambda->locals.add(definition);
+			}
+		}
+	}
+
 	if (definition->uid == 3651) {
 		int x = 41;
 	}
@@ -2136,6 +2162,10 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 
 		switch (binary->operation) {
 			case BinaryOperation::ass: {
+				if (!is_addressable(binary->left)) {
+					reporter.error(binary->left->location, "This expression does not have an address, so it can't be modified");
+					fail();
+				}
 				ensure_mutable(binary->left);
 				if (!implicitly_cast(&binary->right, binary->left->type, true)) {
 					fail();
@@ -2685,7 +2715,8 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			} else if (auto definition = as<Definition>(last_child)) {
 				unary->type = make_pointer(unary->expression->type, definition->mutability);
 			} else {
-				reporter.error(unary->location, "You can only take address of names, blocks that end with a name, or definitions.");
+				reporter.error(unary->location, "This expression is not addressable");
+				reporter.help("You can only take address of definitions, names, dereferences, subscripts or blocks that end with an addressable expression.");
 				fail();
 			}
 			break;
@@ -2814,7 +2845,7 @@ Block            *Typechecker::typecheck_impl(For *For, bool can_substitute) {
 	
 	/*
 	///////////////////////////
-	for it in 0..10 {
+	for it: U64 in 0..10 {
 		println(it)
 	}
 	///////////////////////////
@@ -2822,7 +2853,7 @@ Block            *Typechecker::typecheck_impl(For *For, bool can_substitute) {
 		let __r = 0..10
 		let __i = __r.begin
 		while __i != __r.end {
-			let it = __i
+			let it: U64 = __i
 			{
 				println(it)
 			}
@@ -2894,6 +2925,9 @@ Block            *Typechecker::typecheck_impl(For *For, bool can_substitute) {
 	it->mutability = Mutability::readonly;
 	it->container = current_container;
 	it->initial_value = make_name(__i, For->it_name);
+	if (For->it_parsed_type) {
+		it->initial_value = make_binary(BinaryOperation::as, it->initial_value, For->it_parsed_type, 0, For->location);
+	}
 	it->location = For->it_name;
 
 	if (auto block = as<Block>(For->body)) {

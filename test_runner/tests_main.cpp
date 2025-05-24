@@ -249,10 +249,9 @@ reloop:
 				not_expected_compiler_output.add(u8"Time limit of "s); // time limit exceeded
 				String expected_program_output = find_param(u8"// PROGRAM OUTPUT "s);
 				auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
-				bool no_run = find(test_source, u8"// NO RUN"s);
 
 				auto compile_command = format(u8"{} \"{}\" -limit-time {} {}"s, compiler_path, test.path, extra_options, option_set);
-				if (!no_run) {
+				if (test.run) {
 					compile_command.add(u8" -run"s);
 				}
 			

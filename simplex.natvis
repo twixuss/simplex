@@ -36,4 +36,25 @@
     <Type Name="BuiltinTypeName">
         <DisplayString>{type_kind}</DisplayString>
     </Type>
+    <Intrinsic Name="reg" Expression="1">
+        <Parameter Name="r" Type="Bytecode::Register"/>
+    </Intrinsic>
+    <Type Name="Bytecode::Address">
+        <DisplayString Condition="base._has_value&amp;&amp;element_size&amp;&amp;offset">{base._value} + r{(int)element_index}*{(int)element_size} + {offset}</DisplayString>
+        <DisplayString Condition="element_size&amp;&amp;offset">r{(int)element_index}*{(int)element_size} + {offset}</DisplayString>
+        <DisplayString Condition="base._has_value&amp;&amp;offset">r{(int)base._value} + {offset}</DisplayString>
+        <DisplayString Condition="base._has_value&amp;&amp;element_size">r{(int)base._value} + r{(int)element_index}*{(int)element_size}</DisplayString>
+        <DisplayString Condition="base._has_value">r{(int)base._value}</DisplayString>
+        <DisplayString Condition="element_size">r{(int)element_index}*{(int)element_size}</DisplayString>
+        <DisplayString>{offset}</DisplayString>
+    </Type>
+    <Type Name="Bytecode::Site">
+        <DisplayString Condition="_is_address">{a}</DisplayString>
+        <DisplayString>r{(int)r}</DisplayString>
+    </Type>
+    <Type Name="Bytecode::InputValue">
+        <DisplayString Condition="kind==Kind::Register">r{(int)r}</DisplayString>
+        <DisplayString Condition="kind==Kind::Address">{a}</DisplayString>
+        <DisplayString>{c}</DisplayString>
+    </Type>
 </AutoVisualizer>

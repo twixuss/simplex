@@ -85,6 +85,43 @@ bool is_substitutable(Block *block) {
 	return block->children.count == 1 && block->breaks.count == 0;
 }
 
+bool is_addressable(Expression *expression) {
+	switch (expression->kind) {
+		case NodeKind::Name:
+		case NodeKind::Definition:
+			return true;
+		case NodeKind::Binary: {
+			auto binary = (Binary *)expression;
+			switch (binary->operation) {
+				case BinaryOperation::dot:
+					return true;
+			}
+			break;
+		}
+		case NodeKind::Unary: {
+			auto unary = (Unary *)expression;
+			switch (unary->operation) {
+				case UnaryOperation::dereference:
+					return true;
+			}
+			break;
+		}
+		case NodeKind::Block: {
+			auto block = (Block *)expression;
+			if (auto last = as<Expression>(block->children.back())) {
+				return is_addressable(last);
+			}
+			break;
+		}
+		case NodeKind::Subscript: {
+			auto subscript = (Subscript *)expression;
+			return is_addressable(subscript->subscriptable);
+		}
+	}
+
+	return false;
+}
+
 #if ENABLE_NOTE_LEAK
 
 GList<String> leaks;

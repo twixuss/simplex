@@ -296,6 +296,7 @@ Register Builder::allocate_register() {
 void Builder::deallocate(Register r) {
 	assert(!available_registers.get((umm)r));
 	available_registers.set((umm)r, true);
+	assert(available_registers.get((umm)r));
 }
 
 Address Builder::allocate_temporary(u64 size) {
@@ -454,13 +455,6 @@ Address Builder::get_definition_address(Definition *definition) {
 	}
 }
 
-bool Builder::is_addressable(Expression *expression) {
-	if (expression->kind == NodeKind::Name) {
-		return true;
-	}
-	return false;
-}
-
 u64 Builder::string_literal_offset(String string) {
 	auto found = string_literal_offsets.find(string);
 	if (found) {
@@ -473,6 +467,22 @@ u64 Builder::string_literal_offset(String string) {
 		return offset;
 	}
 }
+
+u64 get_mask_for_size(umm size) {
+	if (size >= 8)
+		return -1;
+	return ((u64)1 << (size * 8)) - 1;
+}
+void Builder::output_bounds_check(Register index_reg, umm index_size, umm count) {
+	I(and8, index_reg, index_reg, (s64)get_mask_for_size(index_size));
+	tmpreg(check);
+	I(cmp8, check, index_reg, (s64)count, Comparison::unsigned_less);
+
+	auto jump_over_panic = output_bytecode.instructions.count;
+	I(jt, check, 0);
+	I(intrinsic, Intrinsic::panic, u8"bounds check failed"s);
+	output_bytecode.instructions[jump_over_panic].jt().d = output_bytecode.instructions.count;
+};
 void Builder::output_impl(Site destination, Block *block) {
 	scoped_replace(current_block, block);
 
@@ -642,6 +652,9 @@ void Builder::output_impl(Site destination, Lambda *lambda) {
 void Builder::output_impl(Site destination, LambdaHead *node) { not_implemented(); } 
 void Builder::output_impl(Site destination, Name *name) {
 	auto definition = name->definition();
+	if (destination.is_register()) {
+		assert(get_size(name->type) <= 8);
+	}
 	I(copy, .d = destination, .s = get_definition_address(definition), .size = get_size(name->type));
 } 
 void Builder::output_impl(Site destination, IfExpression *If) {
@@ -936,7 +949,16 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			auto left_size = get_size(dleft);
 			auto right_size = get_size(dright);
 			assert(result_size == left_size);
-			assert(result_size == right_size);
+			switch (binary->operation) {
+				case BinaryOperation::bsl:
+				case BinaryOperation::bsr: {
+					break;
+				}
+				default: {
+					assert(left_size == right_size);
+					break;
+				}
+			}
 			assert(result_size <= 8);
 
 			tmpreg(left);
@@ -1222,6 +1244,18 @@ void Builder::output_impl(Site destination, Unary *unary) {
 			I(cmp1, destination, 1, destination, Comparison::not_equals);
 			break;
 		}
+		case UnaryOperation::minus: {
+			assert(is_concrete_integer(unary->type));
+			output(destination, unary->expression);
+			switch (get_size(unary->type)) {
+				case 1: I(neg1, destination); break;
+				case 2: I(neg2, destination); break;
+				case 4: I(neg4, destination); break;
+				case 8: I(neg8, destination); break;
+				default: invalid_code_path();
+			}
+			break;
+		}
 		default: not_implemented();
 	}
 } 
@@ -1239,6 +1273,8 @@ void Builder::output_impl(Site destination, Subscript *subscript) {
 			tmpreg(index_reg);
 			output(index_reg, subscript->index);
 
+			output_bounds_check(index_reg, get_size(subscript->index->type), array_type->count.value());
+
 			Address element_address = {};
 			element_address.base = array_address;
 			element_address.element_index = index_reg;
@@ -1247,7 +1283,19 @@ void Builder::output_impl(Site destination, Subscript *subscript) {
 
 			I(copy, destination, element_address, element_size);
 		} else {
-			not_implemented();
+			tmpaddr(array_mem, get_size(subscript->subscriptable->type));
+			output(array_mem, subscript->subscriptable);
+			
+			tmpreg(index_reg);
+			output(index_reg, subscript->index);
+			
+			output_bounds_check(index_reg, get_size(subscript->index->type), array_type->count.value());
+
+			array_mem.element_index = index_reg;
+			assert(element_size < 256);
+			array_mem.element_size = element_size;
+
+			I(copy, destination, array_mem, element_size);
 		}
 	} else if (auto pointer = as_pointer(direct(subscript->subscriptable->type))) {
 		tmpreg(p);
@@ -1432,12 +1480,37 @@ void Builder::load_address_impl(Site destination, Struct *node) { not_implemente
 void Builder::load_address_impl(Site destination, Enum *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, ArrayType *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, Subscript *node) {
-	load_address(destination, node->subscriptable);
-	tmpreg(offset);
-	output(offset, node->index);
 	s64 element_size = get_size(node->type);
-	I(mul8, offset, offset, element_size);
-	I(add8, destination, destination, offset);
+
+	if (auto array_type = direct_as<ArrayType>(node->subscriptable->type)) {
+		load_address(destination, node->subscriptable);
+		tmpreg(index);
+		output(index, node->index);
+	
+		output_bounds_check(index, get_size(node->index->type), array_type->count.value());
+
+		if (destination.is_register()) {
+			assert(element_size < 256);
+			I(lea, destination, Address{.base = destination.get_register(), .element_index = index, .element_size = (u8)element_size});
+		} else {
+			I(mul8, index, index, element_size);
+			I(add8, destination, destination, index);
+		}
+	} else if (auto pointer = as_pointer(direct(node->subscriptable->type))) {
+		output(destination, node->subscriptable);
+		tmpreg(index);
+		output(index, node->index);
+
+		if (destination.is_register()) {
+			assert(element_size < 256);
+			I(lea, destination, Address{.base = destination.get_register(), .element_index = index, .element_size = (u8)element_size});
+		} else {
+			I(mul8, index, index, element_size);
+			I(add8, destination, destination, index);
+		}
+	} else {
+		invalid_code_path();
+	}
 }
 void Builder::load_address_impl(Site destination, ArrayConstructor *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, ZeroInitialized *zi) { not_implemented(); }

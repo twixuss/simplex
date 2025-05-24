@@ -734,6 +734,7 @@ void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_de
 			}
 		},
 		[&] (ArrayType *array) {
+			add_dependencies(array->element_type, types_to_declare);
 			types_to_declare.add(array);
 		},
 		[&] (Struct *s) {

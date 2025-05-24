@@ -239,7 +239,7 @@ probably just stick with first one. idk.
 
 ---
 #### Unary
-##### 🚧 Autocast
+##### Autocast
 ```simplex
 @expression
 ```
@@ -288,28 +288,98 @@ match thing {
 ```
 Match statements are not required to be complete: if a case is missing, nothing will happen.
 
-## Types
-### `Type`
+---
+### While loop
+```simplex
+while condition then body
+
+while true {
+    stuff()
+}
+```
+
+---
+### For loop
+```simplex
+for i in 0..10 {
+    println(i)
+}
+```
+For only accepts ranges currently. 🚧 There will be a way to iterate custom types later.
+
+Iterate in reverse by putting contextual keyword `reverse` before the range:
+```simplex
+for j in reverse 0..10
+```
+
+For is desugared into a while loop. Enable `-print-ast` to see that:
+```simplex
+for i in 0..10 {
+    println(i)
+}
+/////////////////
+{
+    let __range = 0..10
+    let __i = __range.begin
+    while __i < __range.end {
+        let i = __i
+        {
+            println(i)
+        }
+        __i += 1
+    }
+}
+```
+
+# Types
+## `Type`
 The type of all types.
 🚧 Values of type `Type` store information about some type, e.g. name, size, alignment, members, arguments etc.
 
 ---
-### `None`
+## `None`
 The type of `none` literal. It is like `void` in C.
 Lambdas that do not return anything have this return type.
 
 ---
-### `Bool`
+## `Bool`
 May have one of two values: `true` or `false`
 
 ---
-### `U8` / `U16` / `U32` / `U64` / `S8` / `S16` / `S32` / `S64`
+## `U8` / `U16` / `U32` / `U64` / `S8` / `S16` / `S32` / `S64`
 Two's complement integer of N bits.
-If there is no way data could be lost, one is implicitly convertible to another.
-Otherwise implicit attempt will result in an error.
+
+Implicit conversions are allowed if data can't be lost.
+
+Addition and subtraction overflow are wrapping for both signed and unsigned.
+
+Multiplication overflow is wrapping as well.
+
+Division is euclidean:
+```
+x / 3    ^
+         |     @@@
+         |  @@@
+---------@@@------>
+      @@@|        x
+   @@@   |
+@@@      |
+```
+```
+x % 3
+         ^
+  @  @  @| @  @  @
+ @  @  @ |@  @  @
+@--@--@--@--@--@-->
+         |        x
+```
+If divisor is negative, remainder stays the same, quotient switches sign.
+`x/3*3 + x%3 == x`
+
+
 
 ---
-### `String`
+## `String`
 A structure like this:
 ```simplex
 const String = struct {
@@ -319,7 +389,25 @@ const String = struct {
 ```
 
 ---
-### 🚧 `Range`
+## `Range`
+Currently `Range` only supports Ints.
+```simplex
+struct Range {
+    begin: Int
+    end: Int
+}
+```
+Construct it using `..`
+```simplex
+var range = 0..10 // 0 inclusive, 10 exclusive
+```
+You can use them in for loops:
+```simplex
+for i in 0..10 {
+    println(i)
+}
+```
+### 🚧 Generic Range
 ```simplex
 const Range = struct [T: Type] {
     begin: T
@@ -347,35 +435,34 @@ const String = Range[*U8]
 ```
 
 ---
-### Arrays
+## Arrays
 ```simplex
 [count]Int
 ```
 `count` must be `const`. Arrays implicitly convert to [ranges](#range)
 
 ---
-### Pointers
+## Pointers
 ```simplex
 *String
 ```
 
 ---
-### Function types
+## Function types
 ```simplex
 fn (a: Arg1, b: Arg2): ReturnType
 ```
 
 ---
-### Aliases
+## Aliases
 `Int` = `S64`
 `UInt` = `U64`
 
-### Internal
-#### `UnsizedInteger`
+## Internal
+### `UnsizedInteger`
 A signed 64-bit number
-
-## Bag of sugar
-### 🚧 Properties
+# Bag of sugar
+## 🚧 Properties
 You can have member-like access for stuff that has to be computed:
 ```simplex
 vector.length *= 2
@@ -386,7 +473,7 @@ set_length(&vector, get_length(vector) * 2)
 ```
 
 Multi property access example:
-Suppose `vector` is 3d an we accessing 2d portion of it:
+Suppose `vector` is 3d an we're accessing 2d portion of it:
 ```simplex
 vector.xz.length *= 2
 
