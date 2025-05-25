@@ -241,15 +241,14 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 			} else {
 				// Try explicit cast
 				auto cast = make_cast(unary->expression, target_type);
-				bool result = with_unwind_strategy([&] {
-					return typecheck(&cast);
-				});
-				if (result && apply) {
-					expression = cast;
-				} else {
-					NOTE_LEAK(cast);
+				WITH_UNWIND_STRATEGY() {
+					typecheck(&cast);
+					if (apply) {
+						expression = cast;
+					}
+					return true;
 				}
-				return result;
+				return false;
 			}
 		}
 	}
@@ -2145,17 +2144,87 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 		int x = 4;
 	}
 	if (binary->operation == BinaryOperation::dot) {
-		Expression *result = binary;
-		if (!with_unwind_strategy([&] {
-			if (auto subst = typecheck_binary_dot(binary)) {
-				result = subst;
-				return true;
+		//
+		// Struct member access
+		//
+		Reporter member_reporter;
+		{
+			scoped_exchange(reporter, member_reporter);
+			#if 1
+			if (auto result = with_unwind_strategy([&] { return typecheck_binary_dot(binary); })) {
+				return result;
 			}
-			return false;
-		})) {
-			fail();
+			#else
+			// Crash in longjmp due to unaligned stack...
+			WITH_UNWIND_STRATEGY() {
+				return typecheck_binary_dot(binary);
+			}
+			#endif
 		}
-		return result;
+
+		//
+		// Get property
+		// 
+		// Replace
+		// 
+		//     x.length
+		//
+		// With
+		// 
+		//     get_length(x)
+
+		auto member_name = as<Name>(binary->right);
+		assert(member_name);
+
+		auto callable = Name::create();
+		callable->name = format(u8"get_{}", member_name->name);
+		callable->location = member_name->location;
+
+		auto call = Call::create();
+		call->location = binary->location;
+		call->callable = callable;
+		if (is_addressable(binary->left)) {
+			call->arguments.add({.expression = make_address(binary->left)});
+		} else {
+			call->arguments.add({.expression = binary->left});
+		}
+
+		Reporter property_reporter;
+		{
+			scoped_exchange(reporter, property_reporter);
+			if (auto result = with_unwind_strategy([&] {
+				typecheck(&call);
+
+				NOTE_LEAK(binary);
+				NOTE_LEAK(member_name);
+				return call;
+			})) {
+				return result;
+			}
+		}
+
+		#if 1
+		reporter.error(binary->location, "No member {} found, nor function get_{}.", member_name->name, member_name->name);
+		#else
+		bool member_useful = member_reporter.reports.count  && !find(member_reporter.reports[0].message, u8"does not contain member named"s);
+		bool property_useful = property_reporter.reports.count  && !find(property_reporter.reports[0].message, tformat(u8"`get_{}` was not declared"s, member_name->name));
+		if (member_useful && !property_useful) {
+			reporter.reports.add(member_reporter.reports);
+		} else if (!member_useful && property_useful) {
+			reporter.reports.add(property_reporter.reports);
+		} else {
+			for (auto &r : member_reporter  .reports) r.indentation += 1; 
+			for (auto &r : property_reporter.reports) r.indentation += 1; 
+
+			reporter.error(binary->location, "Could not typecheck this dot operation.");
+			reporter.info("Attempt to treat as member access:");
+			reporter.reports.add(member_reporter.reports);
+			reporter.info("Attempt to treat as get property:");
+			reporter.reports.add(property_reporter.reports);
+		}
+		#endif
+
+		fail();
 	} else {
 		typecheck(&binary->left);
 		typecheck(&binary->right);

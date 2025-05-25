@@ -181,6 +181,17 @@ private:
 	[[noreturn]]
 	void fail();
 
+	//
+	// Expression with_unwind_strategy
+	//
+	/* Example:
+	
+	auto thing = with_unwind_strategy([&] {
+		return typecheck(expression); // if `typecheck` fails, rest of the lambda is skipped
+		                              // result of `typecheck` is assigned to `thing`, or null on failure.
+	});
+
+	*/
 	auto with_unwind_strategy(auto &&fn) -> decltype(fn()) {
 		scoped_replace(fail_strategy, FailStrategy::unwind);
 		auto saved_unwind_point = current_unwind_point;
@@ -192,6 +203,42 @@ private:
 		}
 		return fn();
 	}
+
+	//
+	// Statement WITH_UNWIND_STRATEGY
+	//
+	/* Example:
+	
+	WITH_UNWIND_STRATEGY {
+		return typecheck(expression); // result of `typecheck` is returned on success.
+		                              // rest of the block is skipped on failure.
+	}
+
+	*/
+	struct PreUnwindStrategyState {
+		FailStrategy strategy = {};
+		CopyableJmpBuf unwind_point = {};
+		bool finished = false;
+	};
+	PreUnwindStrategyState begin_unwind_strategy() {
+		PreUnwindStrategyState pre_state = {
+			fail_strategy,
+			current_unwind_point,
+		};
+		fail_strategy = FailStrategy::unwind;
+		if (setjmp(current_unwind_point.buf) == fail_unwind_tag) {
+			pre_state.finished = true;
+		}
+		return pre_state;
+	}
+	void end_unwind_strategy(PreUnwindStrategyState &pre_state) {
+		pre_state.finished = true;
+		fail_strategy = pre_state.strategy;
+		current_unwind_point = pre_state.unwind_point;
+	}
+	#define WITH_UNWIND_STRATEGY() \
+		for (auto _x = begin_unwind_strategy(); !_x.finished; end_unwind_strategy(_x))
+
 
 	[[nodiscard]]
 	bool yield_while(String location, auto predicate) {
