@@ -164,7 +164,9 @@ void Copier::deep_copy_impl(Unary *from, Unary *to) {
 	LOOKUP_COPY(type);
 } 
 void Copier::deep_copy_impl(Return *from, Return *to) {
-	DEEP_COPY(value);
+	if (from->value) {
+		DEEP_COPY(value);
+	}
 	LOOKUP_COPY(lambda);
 	COPY_LIST(defers, LOOKUP_COPY);
 	to->lambda->returns.add(to);
@@ -185,10 +187,36 @@ void Copier::deep_copy_impl(Break *from, Break *to) {
 	}
 	COPY_LIST(defers, LOOKUP_COPY);
 }
-void Copier::deep_copy_impl(Struct *from, Struct *to) { not_implemented(); }
-void Copier::deep_copy_impl(Enum *from, Enum *to) { not_implemented(); }
-void Copier::deep_copy_impl(ArrayType *from, ArrayType *to) { not_implemented(); }
-void Copier::deep_copy_impl(Subscript *from, Subscript *to) { not_implemented(); }
+void Copier::deep_copy_impl(Struct *from, Struct *to) {
+	DEEP_COPY_INPLACE(template_parameters_block);
+	LOOKUP_COPY(definition);
+	COPY_LIST(members, DEEP_COPY);
+	COPY(size);
+	COPY(must_be_fully_initialized);
+	COPY(is_template);
+	LOOKUP_COPY(type);
+}
+void Copier::deep_copy_impl(Enum *from, Enum *to) {
+	DEEP_COPY_INPLACE(block);
+	LOOKUP_COPY(definition);
+	if (from->parsed_underlying_type)
+		DEEP_COPY(parsed_underlying_type);
+	LOOKUP_COPY(underlying_type);
+	COPY(allow_from_int);
+	COPY(allow_to_int);
+	LOOKUP_COPY(type);
+}
+void Copier::deep_copy_impl(ArrayType *from, ArrayType *to) {
+	DEEP_COPY(element_type.expression);
+	DEEP_COPY(count_expression);
+	COPY(count);
+	LOOKUP_COPY(type);
+}
+void Copier::deep_copy_impl(Subscript *from, Subscript *to) {
+	DEEP_COPY(subscriptable);
+	DEEP_COPY(index);
+	LOOKUP_COPY(type);
+}
 void Copier::deep_copy_impl(ArrayConstructor *from, ArrayConstructor *to) {
 	COPY_LIST(elements, DEEP_COPY);
 	LOOKUP_COPY(type);

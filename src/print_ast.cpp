@@ -1,3 +1,9 @@
+#include "print_ast.h"
+#include "value.h"
+#include "nodes.h"
+#include "compiler_context.h"
+#include "escape.h"
+
 int tabs = 0;
 void print_tabs() {
 	for (int i = 0; i < tabs; ++i)

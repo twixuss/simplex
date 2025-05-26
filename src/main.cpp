@@ -27,6 +27,8 @@
 #include "backend.h"
 #include "compiler_context.h"
 #include "c2simplex.h"
+#include "print_ast.h"
+#include "cmd_args.h"
 
 CompilerContext _context, *context = &_context;
 
@@ -168,8 +170,6 @@ void Block::add(Node *child) {
 	}
 }
 
-#include "print_ast.inl"
-
 bool is_expression(Node *node) {
 	if (auto block = as<Block>(node)) {
 		if (block->children.count == 0)
@@ -215,6 +215,8 @@ std::tuple<Lambda *, Definition *> find_main_lambda() {
 }
 
 String target_string = u8"bytecode"s;
+
+GList<String> arguments_for_backend;
 
 bool find_main_and_run() {
 	auto [lambda, definition] = find_main_lambda();
@@ -297,7 +299,7 @@ fn main() {
 
 
 			ENSURE(init);
-			init(context);
+			init(context, arguments_for_backend);
 
 			if (convert_bytecode) {
 				auto bytecode = generate_bytecode();
@@ -322,15 +324,6 @@ fn main() {
 	}
 	return true;
 }
-
-struct CmdArg {
-	char const *key;
-	Variant<
-		void (*)(),
-		void (*)(u64),
-		void (*)(String)
-	> run;
-};
 
 CmdArg args_handlers[] = {
 	{"-threads",                   +[](u64 number){ context_base->requested_thread_count = (u32)number; }},
@@ -361,6 +354,8 @@ CmdArg args_handlers[] = {
 };
 
 bool parse_arguments(Span<Span<utf8>> args) {
+
+
 	for (umm i = 1; i < args.count; ++i) {
 
 		for (auto handler : args_handlers) {
@@ -393,7 +388,11 @@ bool parse_arguments(Span<Span<utf8>> args) {
 			}
 		}
 		if (args[i][0] == '-') {
-			immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
+			if (starts_with(args[i], u8"-target-"s)) {
+				arguments_for_backend.add(args[i].skip(8));
+			} else {
+				immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
+			}
 		} else {
 			if (context_base->input_source_path.count) {
 				with(ConsoleColor::red, println("No multiple input files allowed"));

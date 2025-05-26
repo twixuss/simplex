@@ -18,7 +18,7 @@ Expression *make_address(Expression *expression) {
 	address->expression = expression;
 	address->operation = UnaryOperation::addr;
 	if (expression->type) {
-		address->type = make_pointer(expression->type, is_mutable(expression) ? Mutability::variable : Mutability::immutable);
+		address->type = make_pointer(expression->type, is_mutable(expression) ? Mutability::variable : Mutability::readonly);
 	}
 	return address;
 }

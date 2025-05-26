@@ -334,8 +334,9 @@ private:
 	bool typecheck(T **node) { 
 		auto new_node = typecheck(*node, true);
 		if (new_node) {
-			*node = as<T>(new_node);
-			assert(*node);
+			auto new_node_as_T = as<T>(new_node);
+			assert(new_node_as_T);
+			*node = new_node_as_T;
 		}
 		return new_node != 0;
 	}

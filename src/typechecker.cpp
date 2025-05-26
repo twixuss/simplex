@@ -15,6 +15,7 @@
 #include "do_all_paths_return.h"
 #include "get_constant_value.h"
 #include "compiler_context.h"
+#include "print_ast.h"
 
 #define ENABLE_TYPECHECKER_REUSE 0
 
@@ -1837,101 +1838,92 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 		if (binary->operation == BinaryOperation::dot) {
 			if (auto lambda_name = as<Name>(binary->right)) {
 				Reporter dot_binop_reporter;
-				bool dot_binop_succeeded = false;
 
 				{
 					scoped_exchange(reporter, dot_binop_reporter);
-					dot_binop_succeeded = with_unwind_strategy([&] {
-						if (auto subst = typecheck_binary_dot(binary)) {
-							call->callable = subst;
-							return true;
-						}
-						return false;
-					});
+					if (with_unwind_strategy([&] { return call->callable = typecheck_binary_dot(binary); })) {
+						reporter.reports.add(dot_binop_reporter.reports);
+						goto typecheck_dot_succeeded;
+					}
 				}
 
-				if (dot_binop_succeeded) {
-					goto typecheck_dot_succeeded;
+
+				call->callable = binary->right;
+						
+				// Attempt passing `this` as follows (return on first successful attempt):
+				//     1. As-is.
+				//     2. By pointer.
+
+				call->arguments.insert_at({.expression = binary->left}, 0);
+
+				Reporter as_is_reporter;
+				{
+					scoped_exchange(reporter, as_is_reporter);
+					if (auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); })) {
+						reporter.reports.add(as_is_reporter.reports);
+						return result;
+					}
+				}
+						
+				Reporter by_pointer_reporter;
+				{
+					scoped_exchange(reporter, by_pointer_reporter);
+
+					auto first_argument_address = Unary::create();
+					first_argument_address->location = binary->left->location;
+					first_argument_address->expression = binary->left;
+					first_argument_address->operation = UnaryOperation::addr;
+					call->arguments[0].expression = first_argument_address;
+
+					if (auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); })) {
+						reporter.reports.add(by_pointer_reporter.reports);
+						return result;
+					}
+				}
+
+				// All three attempts failed. Report stuff.
+					
+				// Hacky ways of hiding useless reports
+				bool member_useful     = dot_binop_reporter.reports.count  && !find(dot_binop_reporter.reports[0].message, u8"does not contain member named"s);
+				bool by_pointer_useful = by_pointer_reporter.reports.count && !find(by_pointer_reporter.reports[0].message, u8"You can only take address of"s);
+				bool by_value_useful = true;
+
+				struct AttemptReport {
+					char const *message;
+					Span<Report> reports;
+				};
+
+				List<AttemptReport> useful_attempt_reports;
+				if (member_useful)     useful_attempt_reports.add({"Attempt to treat as member access:", dot_binop_reporter.reports});
+				if (by_value_useful)   useful_attempt_reports.add({"Attempt to pass `this` as-is:", as_is_reporter.reports});
+				if (by_pointer_useful) useful_attempt_reports.add({"Attempt to pass `this` by pointer:", by_pointer_reporter.reports});
+					
+				// Don't include attempts that have identical reports.
+				for (umm i = 1; i < useful_attempt_reports.count; ++i) {
+					if (useful_attempt_reports[i].reports == useful_attempt_reports[0].reports) {
+						useful_attempt_reports.erase_unordered_at(i);
+						--i;
+					}
+				}
+
+				if (useful_attempt_reports.count > 1) {
+					reporter.error(call->location, "Unable to typecheck this dot call. Here are attempt results:");
+					for (auto &attempt_reports : useful_attempt_reports) {
+						for (auto &r : attempt_reports.reports) {
+							++r.indentation;
+						}
+						reporter.info(attempt_reports.message);
+						reporter.reports.add(dot_binop_reporter.reports);
+					}
 				} else {
-					call->callable = binary->right;
-						
-					// Attempt passing `this` as follows (return on first successful attempt):
-					//     1. As-is.
-					//     2. By pointer.
-
-					call->arguments.insert_at({.expression = binary->left}, 0);
-
-					Reporter as_is_reporter;
-					{
-						scoped_exchange(reporter, as_is_reporter);
-						auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
-						if (result) {
-							as_is_reporter.reports.add(reporter.reports);
-							return result;
-						}
+					if (useful_attempt_reports.count == 0) {
+						immediate_reporter.error(call->location, "INTERNAL ERROR. Didn't produce reports for failed dot call!!!");
 					}
-						
-					Reporter by_pointer_reporter;
-					{
-						scoped_exchange(reporter, by_pointer_reporter);
-
-						auto first_argument_address = Unary::create();
-						first_argument_address->location = binary->left->location;
-						first_argument_address->expression = binary->left;
-						first_argument_address->operation = UnaryOperation::addr;
-						call->arguments[0].expression = first_argument_address;
-
-						auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); });
-						if (result) {
-							by_pointer_reporter.reports.add(reporter.reports);
-							return result;
-						}
+					for (auto &attempt_reports : useful_attempt_reports) {
+						reporter.reports.add(attempt_reports.reports);
 					}
-
-					// All three attempts failed. Report stuff.
-					
-					// Hacky ways of hiding useless reports
-					bool member_useful     = dot_binop_reporter.reports.count  && !find(dot_binop_reporter.reports[0].message, u8"does not contain member named"s);
-					bool by_pointer_useful = by_pointer_reporter.reports.count && !find(by_pointer_reporter.reports[0].message, u8"You can only take address of"s);
-					bool by_value_useful = true;
-
-					struct AttemptReport {
-						char const *message;
-						Span<Report> reports;
-					};
-
-					List<AttemptReport> useful_attempt_reports;
-					if (member_useful)     useful_attempt_reports.add({"Attempt to treat as member access:", dot_binop_reporter.reports});
-					if (by_value_useful)   useful_attempt_reports.add({"Attempt to pass `this` as-is:", as_is_reporter.reports});
-					if (by_pointer_useful) useful_attempt_reports.add({"Attempt to pass `this` by pointer:", by_pointer_reporter.reports});
-					
-					// Don't include attempts that have identical reports.
-					for (umm i = 1; i < useful_attempt_reports.count; ++i) {
-						if (useful_attempt_reports[i].reports == useful_attempt_reports[0].reports) {
-							useful_attempt_reports.erase_unordered_at(i);
-							--i;
-						}
-					}
-
-					if (useful_attempt_reports.count > 1) {
-						reporter.error(call->location, "Unable to typecheck this dot call. Here are attempt results:");
-						for (auto &attempt_reports : useful_attempt_reports) {
-							for (auto &r : attempt_reports.reports) {
-								++r.indentation;
-							}
-							reporter.info(attempt_reports.message);
-							reporter.reports.add(dot_binop_reporter.reports);
-						}
-					} else {
-						if (useful_attempt_reports.count == 0) {
-							immediate_reporter.error(call->location, "INTERNAL ERROR. Didn't produce reports for failed dot call!!!");
-						}
-						for (auto &attempt_reports : useful_attempt_reports) {
-							reporter.reports.add(attempt_reports.reports);
-						}
-					}
-					fail();
 				}
+				fail();
 			}
 		}
 	}
@@ -2226,22 +2218,180 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 
 		fail();
 	} else {
+		if (binary->operation == BinaryOperation::ass) {
+			auto old_left = Copier{}.deep_copy(binary->left);
+			auto old_right = Copier{}.deep_copy(binary->right);
+
+			//
+			// Regular assignment
+			//
+			Reporter regular_reporter;
+			{
+				scoped_exchange(reporter, regular_reporter);
+				if (auto result = with_unwind_strategy([&] {
+					typecheck(&binary->left);
+					typecheck(&binary->right);
+
+					if (!is_addressable(binary->left)) {
+						reporter.error(binary->left->location, "This expression does not have an address, so it can't be modified");
+						fail();
+					}
+					ensure_mutable(binary->left);
+					if (!implicitly_cast(&binary->right, binary->left->type, true)) {
+						fail();
+					}
+					binary->type = get_builtin_type(BuiltinType::None);
+					return binary;
+				})) {
+					reporter.reports.add(regular_reporter.reports);
+					return result;
+				}
+			}
+
+			binary->left = old_left;
+			binary->right = old_right;
+			binary->left->type = 0;
+			binary->right->type = 0;
+			if (auto dot_binop = as<Binary>(binary->left); dot_binop && dot_binop->operation == BinaryOperation::dot) {
+				dot_binop->left->type = 0;
+				dot_binop->right->type = 0;
+				
+				//
+				// Set property
+				//
+
+				#if 0
+				//
+				// Basic implementation that allows only one dot to the left of the assignment
+				//
+				if (auto name = as<Name>(dot_binop->right)) {
+					/*
+				
+					a.b = 1
+
+					////////////////////
+
+					set_b(&a, 1)
+				
+					*/
+					auto callable = Name::create();
+					callable->location = name->location;
+					callable->name = format(u8"set_{}", name->name);
+
+
+					auto call = Call::create();
+					call->location = binary->location;
+					call->callable = callable;
+					call->arguments.add({.expression = make_address(dot_binop->left)});
+					call->arguments.add({.expression = binary->right});
+
+					typecheck(&call);
+
+					return call;
+				}
+				#else
+				//
+				// More complex implementation that allows multiple dots to the left of the assignment.
+				// Expects names only, other stuff will not work.
+				//
+
+				/*
+				
+				a.b.c.d = 1
+
+				////////////////////
+
+				var b = get_b(a)
+				var c = get_c(b)
+				set_d(&c, 1)
+				set_c(&b, c)
+				set_b(&a, b)
+				
+				*/
+
+				// In above example should be [a, b, c, d]
+				List<Name *, TemporaryAllocator> names;
+
+				auto current = dot_binop->left;
+				while (1) {
+					if (auto dot = as<Binary>(current); dot && dot->operation == BinaryOperation::dot) {
+						names.add(as<Name>(dot->right));
+						current = dot->left;
+						continue;
+					} 
+					break;
+				}
+
+				names.add(as<Name>(current)); // First name.
+				reverse_in_place(names);
+				names.add(as<Name>(dot_binop->right)); // Last name.
+
+				if (!all(names)) {
+					reporter.error(binary->left->location, "Only names are allowed between dots to the left of assignment for set property to work");
+					fail();
+				}
+
+				auto block = Block::create();
+				block->location = binary->location;
+				block->parent = current_block;
+				block->container = current_container;
+
+				// Create variables for all names except first and last
+				for (smm i = 1; i < names.count - 1; ++i) {
+					auto &name = names[i];
+					auto &prev_name = names[i - 1];
+
+					auto callable = Name::create();
+					callable->name = format(u8"get_{}", name->name);
+					callable->location = name->location;
+
+					auto get_call = Call::create();
+					get_call->location = name->location;
+					get_call->callable = callable;
+					get_call->arguments.add({.expression = make_address(prev_name)});
+
+					auto definition = Definition::create();
+					definition->location = name->location;
+					definition->container = current_container;
+					definition->initial_value = get_call;
+					definition->mutability = Mutability::variable;
+					definition->name = name->name;
+
+					block->add(definition);
+				}
+
+				// Call setters
+				for (smm i = names.count - 1; i >= 1; --i) {
+					auto &name = names[i];
+					auto &prev_name = names[i - 1];
+					auto value = i == names.count - 1 ? binary->right : name;
+
+					auto callable = Name::create();
+					callable->name = format(u8"set_{}", name->name);
+					callable->location = name->location;
+
+					auto set_call = Call::create();
+					set_call->location = name->location;
+					set_call->callable = callable;
+					set_call->arguments.add({.expression = make_address(Copier{}.deep_copy(prev_name))}); // prev_name was used in the loop above. can't have same node as a child twice!
+					set_call->arguments.add({.expression = value});
+
+					block->add(set_call);
+				}
+
+				// Allow block to be substituted
+				return as<Expression>(typecheck((Node *)block, true));
+				#endif
+			}
+
+			reporter.reports.add(regular_reporter.reports);
+			fail();
+		}
+
 		typecheck(&binary->left);
 		typecheck(&binary->right);
 
 		switch (binary->operation) {
-			case BinaryOperation::ass: {
-				if (!is_addressable(binary->left)) {
-					reporter.error(binary->left->location, "This expression does not have an address, so it can't be modified");
-					fail();
-				}
-				ensure_mutable(binary->left);
-				if (!implicitly_cast(&binary->right, binary->left->type, true)) {
-					fail();
-				}
-				binary->type = get_builtin_type(BuiltinType::None);
-				return binary;
-			}
 			case BinaryOperation::as: {
 				auto source_type = direct(binary->left->type);
 				auto target_type = direct(binary->right);
@@ -2776,6 +2926,13 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 		}
 		case UnaryOperation::addr: {
 			typecheck(&unary->expression);
+
+			if (!is_addressable(unary->expression)) {
+				reporter.error(unary->location, "This expression is not addressable");
+				reporter.help("You can only take address of definitions, names, dereferences, subscripts or blocks that end with an addressable expression.");
+				fail();
+			}
+
 			auto last_child = get_last_child_recursive(unary->expression);
 			if (auto name = as<Name>(last_child)) {
 				auto definition = name->definition();
@@ -2784,10 +2941,9 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			} else if (auto definition = as<Definition>(last_child)) {
 				unary->type = make_pointer(unary->expression->type, definition->mutability);
 			} else {
-				reporter.error(unary->location, "This expression is not addressable");
-				reporter.help("You can only take address of definitions, names, dereferences, subscripts or blocks that end with an addressable expression.");
-				fail();
+				invalid_code_path();
 			}
+
 			break;
 		}
 		case UnaryOperation::plus: {

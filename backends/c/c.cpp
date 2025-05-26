@@ -6,6 +6,7 @@
 #include "../../src/visit.h"
 #include "../../src/type.h"
 #include "../../src/compiler_context.h"
+#include "../../src/cmd_args.h"
 
 #include <tl/process.h>
 #include <tl/linear_set.h>
@@ -260,9 +261,10 @@ struct Tabs {
 		append_line(code, "}"); \
 	}
 
-bool make_debug_info_work = true;
+bool generate_readable_code = false;
+
 void append_line(StringBuilder &builder, auto const &...args) {
-	if (!make_debug_info_work) {
+	if (generate_readable_code) {
 		tabs(builder);
 	}
 	if constexpr (sizeof...(args) == 1) {
@@ -270,7 +272,7 @@ void append_line(StringBuilder &builder, auto const &...args) {
 	} else {
 		append_format(builder, args...);
 	}
-	if (!make_debug_info_work) {
+	if (generate_readable_code) {
 		append(builder, '\n');
 	}
 }
@@ -353,7 +355,7 @@ String debug_info_last_file;
 u32 debug_info_last_line;
 
 void append_debug_info(StringBuilder &builder, String location) {
-	if (!make_debug_info_work)
+	if (generate_readable_code)
 		return;
 
 	if (location) {
@@ -390,7 +392,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 	//	}
 	//};
 
-	if (!make_debug_info_work) {
+	if (generate_readable_code) {
 		append_line(code, "/* {} */", node->location);
 	}
 
@@ -701,12 +703,51 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 	});
 }
 
+CmdArg args_handlers[] = {
+	{"-readable", +[] { generate_readable_code = true; }},
+};
+
 extern "C" __declspec(dllexport)
-void init(CompilerContext *c) {
+void init(CompilerContext *c, Span<String> args) {
 	context = c;
 
 	init_allocator();
 	init_printer();
+	
+	for (umm i = 1; i < args.count; ++i) {
+
+		for (auto handler : args_handlers) {
+			auto cmd = args[i];
+			if (args[i] == handler.key) {
+				handler.run.visit(Combine {
+					[&](void (*run)()) {
+						run();
+					},
+					[&](void (*run)(u64 x)) {
+						if (++i < args.count) {
+							if (auto number = parse_u64(args[i])) {
+								run(number.value());
+							} else {
+								immediate_reporter.error("Could not parse number after {}. Ignoring.", cmd);
+							}
+						} else {
+							immediate_reporter.error("Expected a number after {}.", cmd);
+						}
+					},
+					[&](void (*run)(String x)) {
+						if (++i < args.count) {
+							run(args[i]);
+						} else {
+							immediate_reporter.error("Expected a string after {}.", cmd);
+						}
+					},
+				});
+				goto next_arg;
+			}
+		}
+		immediate_reporter.warning("Unknown command line parameter for c backend: {}", args[i]);
+	next_arg:;
+	}
 }
 
 struct DirectExpression {
