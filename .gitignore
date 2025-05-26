@@ -21,3 +21,5 @@ tests/*
 !tests/*.sp
 examples/*
 !examples/*.sp
+coverage.config
+coverage.cov

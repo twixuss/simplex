@@ -104,7 +104,7 @@ s32 tl_main(Span<String> arguments) {
 	auto executable_directory = parse_path(executable_path).directory;
 	auto compiler_path = format(u8"{}\\simplex.exe", executable_directory);
 
-	auto root_directory = normalize_path(format(u8"{}\\..", executable_directory));
+	auto root_directory = normalize_path(format(u8"{}\\..", executable_directory), '\\');
 
 	auto test_directory = format(u8"{}\\tests", root_directory);
 	auto examples_directory = format(u8"{}\\examples", root_directory);
@@ -182,6 +182,8 @@ s32 tl_main(Span<String> arguments) {
 	defer { thread_pool.deinit(); };
 
 	u32 testloop_index = 0;
+	
+	delete_directory(tformat(u8"{}\\tmp\\tests", root_directory));
 
 reloop:
 	
@@ -196,7 +198,6 @@ reloop:
 
 		n_failed = 0;
 		n_succeeded = 0;
-		test_index = 0;
 
 		for (auto test : tests_to_run) {
 			thread_pool += [=, &n_failed, &n_succeeded, test_index = test_index++] {
@@ -262,7 +263,7 @@ reloop:
 				create_directories(working_dir);
 
 				if (do_coverage) {
-					auto coverage_command = format(u8"opencppcoverage --sources {}\\src\\ --export_type=binary:codecov\\{}.cov -- {}"s, root_directory, test_index, compile_command);
+					auto coverage_command = format(u8"opencppcoverage --sources {}\\src\\ --export_type=binary:coverage.cov -- {}"s, root_directory, compile_command);
 					auto result = run_process(coverage_command, working_dir);
 					defer { free(result); };
 					withs(stdout_lock) {
@@ -367,11 +368,14 @@ reloop:
 	if (do_coverage) {
 		println("Merging coverage results...");
 		StringBuilder builder;
-		append_format(builder, "opencppcoverage --sources {}\\src\\", root_directory);
-		for (u32 i = 0; i < tests_to_run.count; ++i) {
-			append_format(builder, " --input_coverage=codecov\\{}.cov", i);
+		append_format(builder, "sources={}\\src\\\n", root_directory);
+		append_format(builder, "sources={}\\backends\\\n", root_directory);
+		for (u32 i = 0; i < test_index; ++i) {
+			append_format(builder, "input_coverage={}\\tmp\\tests\\{}\\coverage.cov\n", root_directory, i);
 		}
-		auto result = run_process(as_utf8(to_string(builder)));
+		write_entire_file(u8"coverage.config"s, builder);
+
+		auto result = run_process(u8"opencppcoverage --config_file coverage.config"s);
 		println(result.output);
 	}
 
