@@ -308,7 +308,7 @@ void print_ast_impl(Enum *Enum) {
 }
 void print_ast_impl(ArrayType *Array) {
 	print("{[");
-	print(Array->count.value());
+	print(Array->count);
 	print("]");
 	print_ast(Array->element_type);
 	print("}");

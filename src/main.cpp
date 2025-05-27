@@ -389,7 +389,7 @@ bool parse_arguments(Span<Span<utf8>> args) {
 		}
 		if (args[i][0] == '-') {
 			if (starts_with(args[i], u8"-target-"s)) {
-				arguments_for_backend.add(args[i].skip(8));
+				arguments_for_backend.add(args[i].skip(7));
 			} else {
 				immediate_reporter.warning("Unknown command line parameter: {}", args[i]);
 			}
@@ -683,6 +683,12 @@ s32 tl_main(Span<Span<utf8>> args) {
 	defer {
 		if (context_base->should_print_ast) {
 			print_ast(&context->global_block.unprotected);
+			if (debug_node_to_print) {
+				println();
+				println("Debug Node:");
+				println();
+				print_ast(debug_node_to_print);
+			}
 		}
 	};
 

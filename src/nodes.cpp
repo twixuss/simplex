@@ -1,5 +1,7 @@
 #include "nodes.h"
 
+Node *debug_node_to_print = 0;
+
 Node::Node() {
 	if (uid == 3674) {
 		int x = 4;

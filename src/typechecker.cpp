@@ -1842,7 +1842,7 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 				{
 					scoped_exchange(reporter, dot_binop_reporter);
 					if (with_unwind_strategy([&] { return call->callable = typecheck_binary_dot(binary); })) {
-						reporter.reports.add(dot_binop_reporter.reports);
+						dot_binop_reporter.reports.add(reporter.reports);
 						goto typecheck_dot_succeeded;
 					}
 				}
@@ -1860,7 +1860,7 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 				{
 					scoped_exchange(reporter, as_is_reporter);
 					if (auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); })) {
-						reporter.reports.add(as_is_reporter.reports);
+						as_is_reporter.reports.add(reporter.reports);
 						return result;
 					}
 				}
@@ -1876,7 +1876,7 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 					call->arguments[0].expression = first_argument_address;
 
 					if (auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); })) {
-						reporter.reports.add(by_pointer_reporter.reports);
+						by_pointer_reporter.reports.add(reporter.reports);
 						return result;
 					}
 				}
@@ -2144,6 +2144,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 			scoped_exchange(reporter, member_reporter);
 			#if 1
 			if (auto result = with_unwind_strategy([&] { return typecheck_binary_dot(binary); })) {
+				member_reporter.reports.add(reporter.reports);
 				return result;
 			}
 			#else
@@ -2165,38 +2166,39 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 		// 
 		//     get_length(x)
 
-		auto member_name = as<Name>(binary->right);
-		assert(member_name);
-
-		auto callable = Name::create();
-		callable->name = format(u8"get_{}", member_name->name);
-		callable->location = member_name->location;
-
-		auto call = Call::create();
-		call->location = binary->location;
-		call->callable = callable;
-		if (is_addressable(binary->left)) {
-			call->arguments.add({.expression = make_address(binary->left)});
-		} else {
-			call->arguments.add({.expression = binary->left});
-		}
-
 		Reporter property_reporter;
 		{
 			scoped_exchange(reporter, property_reporter);
 			if (auto result = with_unwind_strategy([&] {
+				auto member_name = as<Name>(binary->right);
+				if (!member_name) {
+					reporter.error(binary->right->location, "Expected this to be a name for get property to work");
+					fail();
+				}
+
+				auto callable = Name::create();
+				callable->name = format(u8"get_{}", member_name->name);
+				callable->location = member_name->location;
+
+				auto call = Call::create();
+				call->location = binary->location;
+				call->callable = callable;
+				call->arguments.add({.expression = make_address_if_addressable(binary->left)});
+
 				typecheck(&call);
 
 				NOTE_LEAK(binary);
 				NOTE_LEAK(member_name);
 				return call;
 			})) {
+				property_reporter.reports.add(reporter.reports);
 				return result;
 			}
 		}
 
 		#if 1
-		reporter.error(binary->location, "No member {} found, nor function get_{}.", member_name->name, member_name->name);
+		reporter.reports.add(member_reporter.reports);
+		// reporter.error(binary->location, "No member {} found, nor function get_{}.", member_name->name, member_name->name);
 		#else
 		bool member_useful = member_reporter.reports.count  && !find(member_reporter.reports[0].message, u8"does not contain member named"s);
 		bool property_useful = property_reporter.reports.count  && !find(property_reporter.reports[0].message, tformat(u8"`get_{}` was not declared"s, member_name->name));
@@ -2219,8 +2221,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 		fail();
 	} else {
 		if (binary->operation == BinaryOperation::ass) {
-			auto old_left = Copier{}.deep_copy(binary->left);
-			auto old_right = Copier{}.deep_copy(binary->right);
+			auto old_binary = Copier{}.deep_copy(binary);
 
 			//
 			// Regular assignment
@@ -2248,32 +2249,94 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 				}
 			}
 
-			binary->left = old_left;
-			binary->right = old_right;
-			binary->left->type = 0;
-			binary->right->type = 0;
+			binary = old_binary;
 			if (auto dot_binop = as<Binary>(binary->left); dot_binop && dot_binop->operation == BinaryOperation::dot) {
-				dot_binop->left->type = 0;
-				dot_binop->right->type = 0;
 				
 				//
 				// Set property
 				//
+				
 
-				#if 0
-				//
-				// Basic implementation that allows only one dot to the left of the assignment
-				//
-				if (auto name = as<Name>(dot_binop->right)) {
+
+
+				/*
+				
+				====================================
+				@@@@@@@@ b is property
+				====================================
+						a.b = 42
+					becomes
+						set_b(&a, 42)
+				------------------------------------
+						a[1].b = 42
+					becomes
+						set_b(&a[1], 42)
+				------------------------------------
+						a.b[1] = 42
+					becomes
+						var __tmp = get_b(a)
+						__tmp[1] = 42
+						set_b(a, __tmp)
+				====================================
+				@@@@@@@@ b is property, c is member
+				====================================
+						a.b.c = 42
+					becomes
+						var __tmp = get_b(a)
+						__tmp.c = 42
+						set_b(&a, __tmp)
+				====================================
+				@@@@@@@@ b is property, c is property
+				====================================
+						a.b.c = 42
+					becomes
+						var __tmp = get_b(a)
+						set_c(&__tmp, 42)
+						set_b(&a, __tmp)
+				------------------------------------
+						a[1].b.c = 42
+					becomes
+						var __tmp = get_b(a[1])
+						set_c(&__tmp, 42)
+						set_b(&a[1], __tmp)
+				------------------------------------
+						a.b[1].c = 42
+					becomes
+						var __tmp = get_b(a)
+						set_c(&__tmp[1], 42)
+						set_b(&a, __tmp)
+
+				
+				
+				
+				
+				
+				*/
+
+
+
+				auto is_base_case = [&]() -> bool {
+					switch (dot_binop->left->kind) {
+						case NodeKind::Name:
+						case NodeKind::Subscript:
+							return true;
+					}
+					return false;
+				};
+
+				if (is_base_case()) {
 					/*
 				
-					a.b = 1
+					a.b = 42
 
-					////////////////////
+						Should become:
 
-					set_b(&a, 1)
-				
+					set_b(&a, 42)
+
 					*/
+					auto name = as<Name>(dot_binop->right);
+					assert(name);
+
 					auto callable = Name::create();
 					callable->location = name->location;
 					callable->name = format(u8"set_{}", name->name);
@@ -2282,106 +2345,94 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 					auto call = Call::create();
 					call->location = binary->location;
 					call->callable = callable;
-					call->arguments.add({.expression = make_address(dot_binop->left)});
+					call->arguments.add({.expression = make_address_if_addressable(dot_binop->left)});
 					call->arguments.add({.expression = binary->right});
 
 					typecheck(&call);
 
 					return call;
-				}
-				#else
-				//
-				// More complex implementation that allows multiple dots to the left of the assignment.
-				// Expects names only, other stuff will not work.
-				//
+				} else {
+					/*
+					------------------------------------
+							a.b.c.d = 42
+						becomes
+							var __tmp = a.b
+							__tmp.c.d = 42
+							a.b = __tmp
+					------------------------------------
+							a.b[1].c.d = 42
+						becomes
+							var __tmp = a.b
+							__tmp[1].c.d = 42
+							a.b = __tmp
+					------------------------------------
+					*/
 
-				/*
+					Binary *first_dot = dot_binop;
+					Binary *second_dot = 0;
+					Expression *current = dot_binop->left;
+					while (1) {
+						while (1) {
+							if (auto subscript = as<Subscript>(current)) {
+								current = subscript->subscriptable;
+							} else {
+								break;
+							}
+						}
+
+						if (auto dot = as<Binary>(current); dot && dot->operation == BinaryOperation::dot) {
+							second_dot = first_dot;
+							first_dot = dot;
+							current = dot->left;
+							continue;
+						} 
+
+						break;
+					}
+
+					if (!second_dot) {
+						reporter.error(dot_binop->location, "Could not split this expression into multiple property accesses");
+						reporter.help(binary->location, "Try splitting this into multiple statements");
+						fail();
+					}
+
+
+					auto block = Block::create();
+					block->location = binary->location;
+					block->parent = current_block;
+					block->container = current_container;
 				
-				a.b.c.d = 1
+					// var __tmp = a.b
+					auto tmp = Definition::create();
+					tmp->location = first_dot->location;
+					tmp->container = current_container;
+					tmp->initial_value = first_dot;
+					tmp->mutability = Mutability::variable;
+					tmp->name = format(u8"__tmp_{}", tmp->uid);
+					block->add(tmp);
 
-				////////////////////
-
-				var b = get_b(a)
-				var c = get_c(b)
-				set_d(&c, 1)
-				set_c(&b, c)
-				set_b(&a, b)
+					// __tmp.c.d = 42
+					if (auto subscript = as<Subscript>(second_dot->left)) {
+						subscript->subscriptable = make_name(tmp, tmp->location);
+					} else {
+						second_dot->left = make_name(tmp, tmp->location);
+					}
+					block->add(binary);
 				
-				*/
+					// a.b = __tmp
+					auto ass = make_binary(BinaryOperation::ass, Copier{}.deep_copy(first_dot), make_name(tmp, tmp->location), 0, binary->location);
+					block->add(ass);
+				
+					if (block->uid == 543)
+						debug_node_to_print = block;
 
-				// In above example should be [a, b, c, d]
-				List<Name *, TemporaryAllocator> names;
-
-				auto current = dot_binop->left;
-				while (1) {
-					if (auto dot = as<Binary>(current); dot && dot->operation == BinaryOperation::dot) {
-						names.add(as<Name>(dot->right));
-						current = dot->left;
-						continue;
-					} 
-					break;
+					print_ast(block);
+					println();
+					println();
+				
+					// Allow block to be substituted
+					return as<Expression>(typecheck((Node *)block, true));
 				}
-
-				names.add(as<Name>(current)); // First name.
-				reverse_in_place(names);
-				names.add(as<Name>(dot_binop->right)); // Last name.
-
-				if (!all(names)) {
-					reporter.error(binary->left->location, "Only names are allowed between dots to the left of assignment for set property to work");
-					fail();
-				}
-
-				auto block = Block::create();
-				block->location = binary->location;
-				block->parent = current_block;
-				block->container = current_container;
-
-				// Create variables for all names except first and last
-				for (smm i = 1; i < names.count - 1; ++i) {
-					auto &name = names[i];
-					auto &prev_name = names[i - 1];
-
-					auto callable = Name::create();
-					callable->name = format(u8"get_{}", name->name);
-					callable->location = name->location;
-
-					auto get_call = Call::create();
-					get_call->location = name->location;
-					get_call->callable = callable;
-					get_call->arguments.add({.expression = make_address(prev_name)});
-
-					auto definition = Definition::create();
-					definition->location = name->location;
-					definition->container = current_container;
-					definition->initial_value = get_call;
-					definition->mutability = Mutability::variable;
-					definition->name = name->name;
-
-					block->add(definition);
-				}
-
-				// Call setters
-				for (smm i = names.count - 1; i >= 1; --i) {
-					auto &name = names[i];
-					auto &prev_name = names[i - 1];
-					auto value = i == names.count - 1 ? binary->right : name;
-
-					auto callable = Name::create();
-					callable->name = format(u8"set_{}", name->name);
-					callable->location = name->location;
-
-					auto set_call = Call::create();
-					set_call->location = name->location;
-					set_call->callable = callable;
-					set_call->arguments.add({.expression = make_address(Copier{}.deep_copy(prev_name))}); // prev_name was used in the loop above. can't have same node as a child twice!
-					set_call->arguments.add({.expression = value});
-
-					block->add(set_call);
-				}
-
-				// Allow block to be substituted
-				return as<Expression>(typecheck((Node *)block, true));
-				#endif
 			}
 
 			reporter.reports.add(regular_reporter.reports);
@@ -2933,16 +2984,7 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 				fail();
 			}
 
-			auto last_child = get_last_child_recursive(unary->expression);
-			if (auto name = as<Name>(last_child)) {
-				auto definition = name->definition();
-				assert(definition);
-				unary->type = make_pointer(unary->expression->type, definition->mutability);
-			} else if (auto definition = as<Definition>(last_child)) {
-				unary->type = make_pointer(unary->expression->type, definition->mutability);
-			} else {
-				invalid_code_path();
-			}
+			unary->type = make_pointer(unary->expression->type, is_mutable(unary->expression) ? Mutability::variable : Mutability::readonly);
 
 			break;
 		}
@@ -3315,6 +3357,10 @@ Enum             *Typechecker::typecheck_impl(Enum *Enum, bool can_substitute) {
 	return Enum;
 }
 ArrayType        *Typechecker::typecheck_impl(ArrayType *arr, bool can_substitute) {
+	if (arr->uid == 585) {
+		int x = 5;
+	}
+
 	typecheck(&arr->count_expression);
 	if (auto maybe_count = get_constant_value(arr->count_expression)) {
 		auto count_value = maybe_count.value();

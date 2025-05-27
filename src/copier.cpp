@@ -207,7 +207,10 @@ void Copier::deep_copy_impl(Enum *from, Enum *to) {
 	LOOKUP_COPY(type);
 }
 void Copier::deep_copy_impl(ArrayType *from, ArrayType *to) {
-	DEEP_COPY(element_type.expression);
+	if (from->parsed_element_type) {
+		DEEP_COPY(parsed_element_type);
+	}
+	LOOKUP_COPY(element_type);
 	DEEP_COPY(count_expression);
 	COPY(count);
 	LOOKUP_COPY(type);

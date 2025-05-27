@@ -55,7 +55,7 @@ void Parser::report_last_parsed_node() {
 }
 
 bool Parser::parse_template_parameter_list(Expression *parent, Block *template_parameters_block) {
-	return parse_list('[', ',', ']', [&] {
+	return parse_list('[', ',', ']', {}, [&] {
 		List<Definition *> template_parameter_group;
 
 		auto parse_name_and_add_to_group = [&] {
@@ -124,11 +124,16 @@ Parser::NamedLambda Parser::parse_lambda() {
 
 		skip_lines();
 	}
+	
+	if (lambda_name == "set_sum") {
+		int x = 5;
+	}
 		
+
 	lambda->head.is_template = parse_template_parameter_list(lambda, &lambda->head.template_parameters_block);
 
 	expect('(');
-	parse_list('(', ',', ')', [&] {
+	parse_list('(', ',', ')', {}, [&] {
 		expect({Token_name, Token_var, Token_let, Token_const});
 
 		auto mutability = Mutability::readonly;
@@ -163,7 +168,7 @@ Parser::NamedLambda Parser::parse_lambda() {
 
 		Expression *parsed_type = 0;
 		if (token.kind != '=') {
-			parsed_type = parse_expression_2(); // NOTE: don't parse default value
+			parsed_type = parse_expression_1(); // NOTE: don't parse default value
 			skip_lines();
 		}
 
@@ -526,10 +531,9 @@ void add_definition_to_block(Definition *definition, Block *block) {
 	block->definition_map.get_or_insert(definition->name).add(definition);
 }
 
-// Parses parse_expression_2 with binary operators and definitions.
 Expression *Parser::parse_expression(bool whitespace_is_skippable_before_binary_operator, u32 right_precedence) {
 	//null denotation
-	auto left = parse_expression_2();
+	auto left = parse_expression_1();
 
 	// left binding power
 	Optional<BinaryOperation> operation;
@@ -587,16 +591,32 @@ Expression *Parser::parse_expression(bool whitespace_is_skippable_before_binary_
 
 	return finish_node(left);
 }
-// Parses parse_expression_1 plus parentheses or brackets after, e.g. calls, subscripts.
-Expression *Parser::parse_expression_2() {
-	auto node = parse_expression_1();
 
-	while (token.kind == '(' || token.kind == '[') {
+// Parses parse_expression_0 plus member access, calls and subscripts.
+Expression *Parser::parse_expression_1() {
+	auto expression = parse_expression_0();
+	
+	while (1) {
 		switch (token.kind) {
+			case '.': {
+				auto binary = Binary::create();
+				binary->location = token.string;
+				binary->operation = BinaryOperation::dot;
+				binary->left = expression;
+				next();
+				binary->right = parse_expression_0();
+				if (!as<Name>(binary->right)) {
+					reporter.error(binary->right->location, "Only names can follow a dot.");
+					yield(YieldResult::fail);
+				}
+				binary->location = {binary->left->location.begin(), binary->right->location.end()};
+				expression = binary;
+				break;
+			}
 			case '(': {
 				auto call = Call::create();
-				call->callable = node;
-				call->location = node->location;
+				call->callable = expression;
+				call->location = expression->location;
 
 				next();
 				skip_lines();
@@ -640,13 +660,13 @@ Expression *Parser::parse_expression_2() {
 				call->location = {call->location.begin(), token.string.end()};
 
 				next();
-				node = call;
+				expression = call;
 				break;
 			}
 			case '[': {
 				auto subscript = Subscript::create();
-				subscript->subscriptable = node;
-				subscript->location = node->location;
+				subscript->subscriptable = expression;
+				subscript->location = expression->location;
 
 				next();
 				skip_lines();
@@ -659,32 +679,13 @@ Expression *Parser::parse_expression_2() {
 				subscript->location = {subscript->location.begin(), token.string.end()};
 
 				next();
-				node = subscript;
+				expression = subscript;
 				break;
 			}
-			default: invalid_code_path("unreachable");
+			default:
+				return finish_node(expression);
 		}
 	}
-	return finish_node(node);
-}
-// Parses parse_expression_0 plus member access.
-Expression *Parser::parse_expression_1() {
-	auto expression = parse_expression_0();
-	while (token.kind == '.') {
-		auto binary = Binary::create();
-		binary->location = token.string;
-		binary->operation = BinaryOperation::dot;
-		binary->left = expression;
-		next();
-		binary->right = parse_expression_0();
-		if (!as<Name>(binary->right)) {
-			reporter.error(binary->right->location, "Only names can follow a dot.");
-			yield(YieldResult::fail);
-		}
-		binary->location = {binary->left->location.begin(), binary->right->location.end()};
-		expression = binary;
-	}
-	return finish_node(expression);
 }
 // Parses single-part expressions
 Expression *Parser::parse_expression_0() {
@@ -714,7 +715,7 @@ Expression *Parser::parse_expression_0() {
 				next();
 				skip_lines();
 
-				definition->parsed_type = parse_expression_2(); // NOTE: don't parse '='
+				definition->parsed_type = parse_expression_1(); // NOTE: don't parse '='
 
 				switch (definition->parsed_type->kind) {
 					case NodeKind::Name:
@@ -834,21 +835,14 @@ Expression *Parser::parse_expression_0() {
 				case '[': {
 					auto constructor = ArrayConstructor::create();
 					constructor->location = dot_token;
-					next();
-					while (true) {
-						skip_lines();
+					parse_list('[', ',', ']', {.call_next_after_finishing = false}, [&] {
 						constructor->elements.add(parse_expression());
-						skip_lines();
+					});
 
-						expect({',', ']'});
-
-						if (token.kind == ']') {
-							break;
-						}
-						next();
-					}
 					constructor->location = {constructor->location.begin(), token.string.end()};
+
 					next();
+
 					return finish_node(constructor);
 				}
 				case Token_name: {
@@ -1010,7 +1004,7 @@ Expression *Parser::parse_expression_0() {
 			auto inline_token = token;
 			auto status = token.kind == Token_inline ? InlineStatus::always : InlineStatus::never;
 			next();
-			auto expr = parse_expression_2();
+			auto expr = parse_expression_1();
 			if (auto lambda = as<Lambda>(expr)) {
 				lambda->inline_status = status;
 				return finish_node(lambda);
@@ -1061,7 +1055,7 @@ Expression *Parser::parse_expression_0() {
 					}
 				}
 
-				unop->expression = parse_expression_2();
+				unop->expression = parse_expression_1();
 				unop->location = {unop->location.begin(), unop->expression->location.end()};
 				return finish_node(unop);
 			}

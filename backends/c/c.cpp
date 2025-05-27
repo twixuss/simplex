@@ -713,8 +713,8 @@ void init(CompilerContext *c, Span<String> args) {
 
 	init_allocator();
 	init_printer();
-	
-	for (umm i = 1; i < args.count; ++i) {
+
+	for (umm i = 0; i < args.count; ++i) {
 
 		for (auto handler : args_handlers) {
 			auto cmd = args[i];
@@ -768,9 +768,9 @@ void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_de
 			return ForEach_continue;
 		},
 		[&] (Expression *expression) {
-			if (auto array = as<ArrayType>(expression)) {
+			if (auto array = direct_as<ArrayType>(expression)) {
 				types_to_declare.add(array);
-			} else if (auto array = as<ArrayType>(expression->type)) {
+			} else if (auto array = direct_as<ArrayType>(expression->type)) {
 				types_to_declare.add(array);
 			}
 		},
@@ -788,6 +788,7 @@ void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_de
 		},
 		[&](Name *name) {
 			add_dependencies(name->definition(), types_to_declare);
+			add_dependencies(name->definition()->type, types_to_declare);
 		}
 	});
 }

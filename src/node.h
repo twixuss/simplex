@@ -28,3 +28,5 @@ struct Node {
 
 	Node();
 };
+
+extern Node *debug_node_to_print;

@@ -23,6 +23,7 @@ Name *make_name(String name, String location = {});
 
 Type make_pointer(Type type, Mutability mutability);
 Expression *make_address(Expression *expression);
+Expression *make_address_if_addressable(Expression *expression);
 
 ArrayType *make_array_type(Type element_type, u64 count);
 

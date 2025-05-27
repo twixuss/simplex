@@ -57,8 +57,13 @@ struct Parser {
 
 	void report_last_parsed_node();
 
-	// Returns true if list was present
-	bool parse_list(u64 opening, u64 separator, u64 closing, auto fn) {
+	struct ParseListOptions {
+		bool call_next_after_finishing = true;
+	};
+
+	// Returns true if list was present.
+	// Current token must be the opening token.
+	bool parse_list(u64 opening, u64 separator, u64 closing, ParseListOptions options, auto fn) {
 		if (token.kind != opening)
 			return false;
 		
@@ -85,7 +90,8 @@ struct Parser {
 			}
 		}
 		
-		next();
+		if (options.call_next_after_finishing)
+			next();
 
 		return true;
 	}
@@ -119,10 +125,8 @@ struct Parser {
 
 	void parse_name(String *location, String *name);
 
-	// Parses parse_expression_2 with binary operators and definitions.
+	// Parses parse_expression_1 with binary operators and definitions.
 	Expression *parse_expression(bool whitespace_is_skippable_before_binary_operator = false, u32 right_precedence = 0);
-	// Parses parse_expression_1 plus parentheses or brackets after, e.g. calls, subscripts.
-	Expression *parse_expression_2();
 	// Parses parse_expression_0 plus member access.
 	Expression *parse_expression_1();
 	// Parses single-part expressions

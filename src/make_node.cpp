@@ -23,6 +23,10 @@ Expression *make_address(Expression *expression) {
 	return address;
 }
 
+Expression *make_address_if_addressable(Expression *expression) {
+	return is_addressable(expression) ? make_address(expression) : expression;
+}
+
 BuiltinTypeName *make_name(BuiltinType type, String location) {
 	auto name = BuiltinTypeName::create();
 	name->type_kind = type;
@@ -77,6 +81,7 @@ ArrayType *make_array_type(Type element_type, u64 count) {
 	auto result = ArrayType::create();
 	result->element_type = element_type;
 	result->count = count;
+	result->count_expression = make_integer(count, get_builtin_type(BuiltinType::U64));
 	result->type = get_builtin_type(BuiltinType::Type);
 	return result;
 }
