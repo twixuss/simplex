@@ -499,7 +499,13 @@ void Typechecker::why_is_this_immutable(Expression *expr) {
 		auto definition = name->definition();
 		assert(definition);
 		reporter.help(definition->location, "Because {} is {}.", name->name, Meaning(definition->mutability));
-		why_is_this_immutable(definition->initial_value);
+		if (definition->initial_value) {
+			why_is_this_immutable(definition->initial_value);
+		}
+	} else if (auto dot = as<Binary>(expr); dot && dot->operation == BinaryOperation::dot) {
+		if (auto pointer = as_pointer(dot->left->type)) {
+			reporter.help(dot->left->location, "Because {} is a pointer to {}.", dot->left, Meaning(pointer->mutability));
+		}
 	}
 }
 
@@ -606,7 +612,8 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 			}
 
 			StringBuilder source_builder;
-			append_format(source_builder, "\0const {} = fn ("s, lambda_name);
+			append(source_builder, Repeat{'\0', LEXER_PADDING_SIZE});
+			append_format(source_builder, "const {} = fn ("s, lambda_name);
 			foreach (it, original_lambda->head.parameters_block.definition_list) {
 				auto [i, parameter] = it.key_value();
 				if (i) {
@@ -639,10 +646,10 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 				"	c\n"
 				"}}\n"
 			);
-			append(source_builder, '\0');
+			append(source_builder, Repeat{'\0', LEXER_PADDING_SIZE});
 
 			auto source = (Span<utf8>)to_string(source_builder);
-			source = source.subspan(1, source.count - 2);
+			source = source.skip(LEXER_PADDING_SIZE).skip(-LEXER_PADDING_SIZE);
 				
 			auto path = format(u8"{}\\{}.sp", context_base->generated_source_directory, lambda_name);
 
@@ -1055,7 +1062,7 @@ Expression *Typechecker::typecheck_constructor(Call *call, Struct *Struct) {
 	call->call_kind = CallKind::constructor;
 
 	auto &arguments = call->arguments;
-	auto &members = Struct->members;
+	auto &members = Struct->member_list;
 
 	sort_arguments(arguments, members, call->location, Struct, Struct->definition, {.allow_missing = true});
 
@@ -1182,8 +1189,8 @@ Expression *Typechecker::typecheck_binary_dot(Binary *binary) {
 		fail();
 	}
 
-	if (auto found = find_if(struct_->members, [&](auto member) { return member->name == member_name->name; })) {
-		auto definition = *found;
+	if (auto found = struct_->member_map.find(member_name->name)) {
+		auto definition = *found.value;
 		member_name->possible_definitions.set(definition);
 		member_name->type = definition->type;
 		binary->type = definition->type;
@@ -1727,7 +1734,7 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 	return lambda;
 }
 Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
-	if (name->name == "end") {
+	if (name->name == "test") {
 		int x = 42;
 	}
 
@@ -1739,91 +1746,141 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 		// make_scoped(lock, LockIfBlockIsGlobal{block});
 		scoped_lock_if_block_is_global(block);
 
-		if (auto found_definitions = block->definition_map.find(name->name)) {
-			auto definitions = *found_definitions.value;
-				
-			if (definitions.count == 0) {
-				continue;
+		auto can_reference = [&](Definition *definition) {
+			// Definition order in lambdas or heads matters - you can't refence stuff that is declared later.
+			// Exceptions are constants.
+			// Because lambda content typechecking happens in order, just check if the type is set - if it is,
+			// the definition is declared before, otherwise after.
+
+			if (block->container && block->container == definition->container && (as<Lambda>(block->container) || as<LambdaHead>(block->container))) {
+				if (definition->mutability != Mutability::constant && !definition->type) {
+					return false;
+				}
 			}
 
-			for (auto definition : definitions) {
-				if (block->container && as<Lambda>(block->container) && block->container == definition->container) {
-					// Currently in a lambda.
-					// Make sure definitions that are declared later are not accessible
+			return true;
+		};
 
-					if (definition->mutability != Mutability::constant && !definition->type) {
-						// Can't refer to non-constant definition that is declared after.
-						// If it is declared before it should have it's type already set. 
-						goto next_definition;
-					}
-				}
+		for (auto definition : to_optional(block->definition_map.find(name->name).value).value_or({})) {
+			if (!can_reference(definition)) {
+				continue;
+			}
 					
-				name->possible_definitions.add(definition);
+			name->possible_definitions.add(definition);
 
 
-				if (block == &context->global_block.unprotected) {
-					for (auto &typecheck_entry : typecheck_entries) {
-						if (typecheck_entry.node == definition) {
-							entry->dependency = &typecheck_entry;
-							break;
-						}
+			if (block == &context->global_block.unprotected) {
+				for (auto &typecheck_entry : typecheck_entries) {
+					if (typecheck_entry.node == definition) {
+						entry->dependency = &typecheck_entry;
+						break;
 					}
 				}
-
-				if (!yield_while_null(name->location, &definition->type)) {
-					// Sometimes this error is meaningless and noisy because is is caused by another error.
-					// But other times compiler fails with only this error, which is not printed in case
-					// print_wait_failures is false.
-
-					//if (print_wait_failures) {
-						reporter.error(name->location, "Definition referenced by this name was not properly typechecked.");
-						reporter.info(definition->location, "Here is the bad definition:");
-					//}
-					fail();
-				}
-
-				entry->dependency = 0;
-
-			next_definition:;
+			}
+			
+			if (name->name == "test") {
+				int x = 42;
 			}
 
-			if (name->possible_definitions.count == 0) {
-				continue;
-			} else if (name->possible_definitions.count == 1) {
-				auto definition = name->possible_definitions.data[0];
-				name->type = definition->type;
+			if (!yield_while_null(name->location, &definition->type)) {
+				// Sometimes this error is meaningless and noisy because is is caused by another error.
+				// But other times compiler fails with only this error, which is not printed in case
+				// print_wait_failures is false.
 
-				if (context_base->constant_name_inlining) {
-					if (definition->mutability == Mutability::constant) {
-						// NOTE: Even though definition is constant, definition->initial_value can be null
-						// if it is an unresolved template parameter.
-						if (definition->initial_value) {
-							switch (definition->initial_value->kind) {
-								case NodeKind::Lambda:
-								case NodeKind::Struct:
-								case NodeKind::Enum:
-									break;
-								default:
-									auto result = to_node(definition->constant_value.value());
-									result->location = name->location;
-									if (!types_match(result->type, definition->type)) {
-										immediate_reporter.warning(name->location, "INTERNAL: constant name inlining resulted in a literal with different type, {} instead of {}. TODO FIXME", result->type, definition->type);
-										result->type = definition->type;
-									}
+				//if (print_wait_failures) {
+					reporter.error(name->location, "Definition referenced by this name was not properly typechecked.");
+					reporter.info(definition->location, "Here is the bad definition:");
+				//}
+				fail();
+			}
+
+			entry->dependency = 0;
+		}
+		
+		if (name->possible_definitions.count == 0) {
+			// Reuse for next attempts
+			Name *definition_name = 0;
+			Binary *dot = 0;
+
+			for (auto definition : block->definition_list) {
+				if (definition->use) {
+					if (!can_reference(definition)) {
+						continue;
+					}
+					if (yield_while_null(name->location, &definition->type)) {
+						auto direct_definition_type = direct(definition->type);
+						auto Struct = as<::Struct>(direct_definition_type);
+						if (!Struct) {
+							if (auto pointer = as_pointer(direct_definition_type)) {
+								Struct = direct_as<::Struct>(pointer->expression);
+							}
+						}
+
+						if (Struct) {
+							if (auto found = Struct->member_map.find(name->name)) {
+								auto member = *found.value;
+								
+								if (!definition_name) {
+									definition_name = Name::create();
+									definition_name->location = name->location;
+			
+									dot = make_binary(BinaryOperation::dot, definition_name, name, 0, name->location);
+								}
+
+								definition_name->name = definition->name;
+								definition_name->type = 0;
+
+								name->type = 0;
+
+								if (auto result = with_unwind_strategy([&] {
+									typecheck(&dot);
+									return dot;
+								})) {
 									return result;
+								}
 							}
 						}
 					}
 				}
-			} else {
-				if (!name->allow_overload) {
-					ensure_not_overloaded(name);
-				}
-				name->type = get_builtin_type(BuiltinType::Overload);
 			}
-
-			return name;
 		}
+
+		if (name->possible_definitions.count == 0) {
+			continue;
+		} else if (name->possible_definitions.count == 1) {
+			auto definition = name->possible_definitions.data[0];
+			name->type = definition->type;
+
+			if (context_base->constant_name_inlining) {
+				if (definition->mutability == Mutability::constant) {
+					// NOTE: Even though definition is constant, definition->initial_value can be null
+					// if it is an unresolved template parameter.
+					if (definition->initial_value) {
+						switch (definition->initial_value->kind) {
+							case NodeKind::Lambda:
+							case NodeKind::Struct:
+							case NodeKind::Enum:
+								break;
+							default:
+								auto result = to_node(definition->constant_value.value());
+								result->location = name->location;
+								if (!types_match(result->type, definition->type)) {
+									immediate_reporter.warning(name->location, "INTERNAL: constant name inlining resulted in a literal with different type, {} instead of {}. TODO FIXME", result->type, definition->type);
+									result->type = definition->type;
+								}
+								return result;
+						}
+					}
+				}
+			}
+		} else {
+			if (!name->allow_overload) {
+				ensure_not_overloaded(name);
+			}
+			name->type = get_builtin_type(BuiltinType::Overload);
+		}
+
+		return name;
 	}
 	reporter.error(name->location, "`{}` was not declared.", name->name);
 	fail();
@@ -2641,8 +2698,8 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 				auto call = Call::create();
 				call->callable = make_name(context->builtin_structs.Range->definition);
 				call->call_kind = CallKind::constructor;
-				call->arguments.add({.expression = binary->left,  .parameter = context->builtin_structs.Range->members[0]});
-				call->arguments.add({.expression = binary->right, .parameter = context->builtin_structs.Range->members[1]});
+				call->arguments.add({.expression = binary->left,  .parameter = context->builtin_structs.Range->member_list[0]});
+				call->arguments.add({.expression = binary->right, .parameter = context->builtin_structs.Range->member_list[1]});
 				call->location = binary->location;
 				call->type = call->callable;
 
@@ -2713,7 +2770,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 								vectorized = *found.value;
 							} else {
 								auto lambda_name = format(u8"__v_{}_{}_{}_{}"s, Nameable(binary->operation), element_count, Nameable(dleft_element), Nameable(dright_element));
-								auto source_list = format(u8"\0" R"(
+								auto source_list = format(u8R"({}
 const {} = fn (a: {}, b: {}) => {{
 var i: S64
 var c: {}
@@ -2723,9 +2780,9 @@ while i < {} {{
 }}
 c
 }}
-)" "\0"s, lambda_name, left_array, right_array, left_array, element_count, binary->operation);
+{})"s, Repeat{'\0', LEXER_PADDING_SIZE}, lambda_name, left_array, right_array, left_array, element_count, binary->operation, Repeat{'\0', LEXER_PADDING_SIZE});
 							
-								auto source = source_list.subspan(1, source_list.count - 2);
+								auto source = source_list.skip(LEXER_PADDING_SIZE).skip(-LEXER_PADDING_SIZE);
 									
 								auto path = format(u8"{}\\{}.sp", context_base->generated_source_directory, lambda_name);
 
@@ -3248,7 +3305,7 @@ Struct           *Typechecker::typecheck_impl(Struct *Struct, bool can_substitut
 		scoped_replace(current_container, Struct);
 
 		s64 struct_size = 0;
-		for (auto &member : Struct->members) {
+		for (auto &member : Struct->member_list) {
 			typecheck(&member);
 			if (!is_type(member->type) || !is_concrete(member->type)) {
 				reporter.error(member->location, "Struct members must have concrete type. This type is `{}` which is not concrete.", member->type);

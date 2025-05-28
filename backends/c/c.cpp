@@ -563,7 +563,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 					tabs(code);
 					append_format(code, "_{} = ({}){{", node->uid, ctype(call->type));
 					for (umm i = 0; i < call->arguments.count; ++i) {
-						auto member = s->members[i];
+						auto member = s->member_list[i];
 						append_format(code, "._{} = _{},", member->uid, call->arguments[i].expression->uid);
 					}
 					append(code, "};");
@@ -780,7 +780,7 @@ void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_de
 		},
 		[&] (Struct *s) {
 			int dummy = 443;
-			for (auto member : s->members) {
+			for (auto member : s->member_list) {
 				add_dependencies(member, types_to_declare);
 			}
 			types_to_declare.add(s);
@@ -862,7 +862,7 @@ typedef int64_t S64;
 			[&] (Struct *s) {
 				append_format(builder, "struct _{} {{ // {}\n", s->uid, s->definition ? s->definition->name : to_string(get_source_location(s->location)));
 				++tabs;
-				for (auto member : s->members) {
+				for (auto member : s->member_list) {
 					append_line(builder, "{} _{};", ctype(member->type), member->uid);
 				}
 				--tabs;

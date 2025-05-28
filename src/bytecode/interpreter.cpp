@@ -433,10 +433,10 @@ int Interpreter::print_value_inner(Address address, Type type, PrintValueOptions
 		auto directed = direct(type);
 		if (auto struct_ = as<Struct>(directed)) {
 			print("{}(", struct_->definition ? struct_->definition->name : u8"unnamed_struct"s);
-			for (int i = 0; i < struct_->members.count; ++i) {
+			for (int i = 0; i < struct_->member_list.count; ++i) {
 				if (i) print(", ");
 
-				auto member = struct_->members[i];
+				auto member = struct_->member_list[i];
 
 				print("{} = ", member->name);
 				print_value_inner(address withx { it.offset += member->offset; }, member->type, options);

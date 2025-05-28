@@ -238,9 +238,9 @@ void Builder::write(List<u8> const &section, u8 *dst, Value value, Type type, u6
 		case ValueKind::struct_: {
 			auto struct_ = direct_as<Struct>(type);
 			assert(struct_);
-			assert(value.elements.count == struct_->members.count);
+			assert(value.elements.count == struct_->member_list.count);
 			for (umm i = 0; i < value.elements.count; ++i) {
-				auto member = struct_->members[i];
+				auto member = struct_->member_list[i];
 				write(section, dst + member->offset, value.elements[i], member->type, get_size(member->type));
 			}
 			break;
@@ -426,7 +426,7 @@ void Builder::output_local_definition(Optional<Site> destination, Definition *de
 		output(address, definition->initial_value);
 	} else {
 		if (auto struct_ = direct_as<Struct>(definition->type)) {
-			for (auto member : struct_->members) {
+			for (auto member : struct_->member_list) {
 				if (member->initial_value) {
 					immediate_reporter.warning(definition->location, "default struct values with custom initializers are not implemented. initializing with zero");
 					break;
@@ -607,9 +607,9 @@ void Builder::output_impl(Site destination, Call *call) {
 		}
 		case CallKind::constructor: {
 			assert(Struct);
-			for (umm i = 0; i < Struct->members.count; ++i) {
+			for (umm i = 0; i < Struct->member_list.count; ++i) {
 				auto argument = call->arguments[i];
-				auto member = Struct->members[i];
+				auto member = Struct->member_list[i];
 
 				assert(destination.is_address());
 

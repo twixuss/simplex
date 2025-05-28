@@ -6,12 +6,12 @@
 using namespace tl;
 
 Lexer Lexer::create(String source) {
+	assert(!any(Span(source.begin() - LEXER_PADDING_SIZE, LEXER_PADDING_SIZE)), "Source must be padded with {} zero bytes at the beginning!", LEXER_PADDING_SIZE);
+	assert(!any(Span(source.end(), LEXER_PADDING_SIZE)), "Source must be padded with {} zero bytes at the end!", LEXER_PADDING_SIZE);
+
 	Lexer result;
 	result.source = source;
 	result.cursor = source.data;
-	
-	assert(source.data[-1] == 0, "Source must be terminated with zero at the beginning!");
-	assert(source.data[source.count] == 0, "Source must be terminated with zero at the end!");
 
 	for (umm i = 0; i < source.count; ++i) {
 		auto c = source.data[i];
@@ -537,6 +537,7 @@ restart:
 						case swp('let'): { token.kind = Token_let; break; }
 						case swp('var'): { token.kind = Token_var; break; }
 						case swp('for'): { token.kind = Token_for; break; }
+						case swp('use'): { token.kind = Token_use; break; }
 					}
 					break;
 				}

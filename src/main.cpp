@@ -437,7 +437,7 @@ void init_builtin_types() {
 		data->offset = 0;
 		data->type = make_pointer(get_builtin_type(BuiltinType::U8), Mutability::variable);
 		data->container = s;
-		s->members.add(data);
+		s->add_member(data);
 
 		auto count = Definition::create();
 		count->name = u8"count"s;
@@ -445,7 +445,7 @@ void init_builtin_types() {
 		count->offset = 8;
 		count->type = get_builtin_type(BuiltinType::U64);
 		count->container = s;
-		s->members.add(count);
+		s->add_member(count);
 
 		s->definition = d;
 		s->is_template = false;
@@ -473,7 +473,7 @@ void init_builtin_types() {
 		begin->offset = 0;
 		begin->type = get_builtin_type(BuiltinType::S64);
 		begin->container = s;
-		s->members.add(begin);
+		s->add_member(begin);
 
 		auto end = Definition::create();
 		end->name = u8"end"s;
@@ -481,7 +481,7 @@ void init_builtin_types() {
 		end->offset = 8;
 		end->type = get_builtin_type(BuiltinType::S64);
 		end->container = s;
-		s->members.add(end);
+		s->add_member(end);
 
 		s->definition = d;
 		s->is_template = false;

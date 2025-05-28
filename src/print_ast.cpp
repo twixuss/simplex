@@ -283,7 +283,7 @@ void print_ast_impl(Unary *unary) {
 void print_ast_impl(Struct *Struct) {
 	print("struct {\n");
 	{ tabbed;
-		for (auto member : Struct->members) {
+		for (auto member : Struct->member_list) {
 			print_tabs();
 			print_ast(member);
 			println();

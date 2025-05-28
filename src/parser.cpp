@@ -134,23 +134,28 @@ Parser::NamedLambda Parser::parse_lambda() {
 
 	expect('(');
 	parse_list('(', ',', ')', {}, [&] {
-		expect({Token_name, Token_var, Token_let, Token_const});
+		auto parameter = Definition::create();
 
-		auto mutability = Mutability::readonly;
+		expect({Token_name, Token_var, Token_let, Token_const, Token_use});
 
+		if (token.kind == Token_use) {
+			parameter->use = true;
+
+			next();
+		}
+
+		parameter->mutability = Mutability::readonly;
 		switch (token.kind) {
 			case Token_var:
 			case Token_let:
 			case Token_const:
-				mutability = to_mutability(token.kind).value();
+				parameter->mutability = to_mutability(token.kind).value();
 				next();
 				skip_lines();
 				expect(Token_name);
 				break;
 		}
-
-
-		auto parameter = Definition::create();
+		
 		parameter->name = token.string;
 		parameter->location = token.string;
 
@@ -198,10 +203,9 @@ Parser::NamedLambda Parser::parse_lambda() {
 			}
 		}
 
-		parameter->container = lambda;
+		parameter->container = &lambda->head;
 		parameter->parsed_type = parsed_type;
 		parameter->is_parameter = true;
-		parameter->mutability = mutability;
 
 		if (auto found = lambda->head.parameters_block.definition_map.find(parameter->name); found && found.value->count) {
 			reporter.error(parameter->location, "Redefinition of parameter '{}'", parameter->name);
@@ -350,7 +354,17 @@ Parser::NamedStruct Parser::parse_struct() {
 
 		definition->container = Struct;
 		definition->mutability = Mutability::variable;
-		Struct->members.add(definition);
+
+		auto &entry = Struct->member_map.get_or_insert(definition->name);
+
+		if (entry) {
+			reporter.error(definition->location, "Redefinition of {}", definition->name);
+			reporter.info(entry->location, "First declared here:");
+			yield(YieldResult::fail);
+		} else {
+			entry = definition;
+			Struct->member_list.add(definition);
+		}
 	}
 	next();
 
@@ -689,14 +703,23 @@ Expression *Parser::parse_expression_1() {
 }
 // Parses single-part expressions
 Expression *Parser::parse_expression_0() {
+	bool parsed_use = false;
 	switch (token.kind) {
+		case Token_use: {
+			next();
+			parsed_use = true;
+
+			goto parse_definition;
+		}
 		case Token_var:
 		case Token_let:
 		case Token_const: {
+		parse_definition:
 			auto definition = Definition::create();
 			definition->mutability = to_mutability(token.kind).value();
 
 			definition->container = current_container;
+			definition->use = parsed_use;
 			
 			next();
 			skip_lines();
@@ -1386,6 +1409,32 @@ Node *Parser::parse_statement() {
 
 	return expression;
 }
+Node *Parser::parse_statement_with_attributes() {
+	not_implemented();
+
+	GList<Expression *> attributes;
+	while (1) {
+		if (token.kind == '#') {
+			next();
+			expect('[');
+			next();
+			attributes.add(parse_expression());
+			expect(']');
+			next();
+			skip_lines();
+		} else {
+			break;
+		}
+	}
+
+	auto result = parse_statement();
+
+	if (!as<Statement>(result)) {
+
+	}
+
+	return result;
+}
 
 void Parser::yield(YieldResult result) {
 	last_yield_result = result;
@@ -1573,11 +1622,9 @@ bool read_file_and_parse_into_global_block(String import_location, String path) 
 	}
 
 	// Will be used after function exits, don't free.
-	auto source_buffer = read_entire_file(path, {.extra_space_before = 1, .extra_space_after = 1});
+	auto source_buffer = read_entire_file(path, {.extra_space_before = LEXER_PADDING_SIZE, .extra_space_after = LEXER_PADDING_SIZE});
 
-	// Null-terminate from both sides.
-	// At the end to
-	auto source = (String)source_buffer.subspan(1, source_buffer.count - 2);
+	auto source = (String)source_buffer.skip(LEXER_PADDING_SIZE).skip(-LEXER_PADDING_SIZE);
 	
 	locked_use_expr(content_start_to_file_name, context_base->content_start_to_file_name) {
 		content_start_to_file_name.get_or_insert(source.data) = path;

@@ -118,7 +118,7 @@ struct Parser {
 	};
 
 	NamedEnum parse_enum();
-
+	
 	bool fail_due_to_unseparated_ambiguous_expression(Expression *expression, String separator);
 
 	bool is_valid_name_part(TokenKind kind);
@@ -132,6 +132,7 @@ struct Parser {
 	// Parses single-part expressions
 	Expression *parse_expression_0();
 	Node *parse_statement();
+	Node *parse_statement_with_attributes();
 
 	void yield(YieldResult result);
 	void main();

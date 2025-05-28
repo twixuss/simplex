@@ -112,7 +112,7 @@ ForEachDirective visit_impl(Break *Break, auto &&visitor) {
 	return ForEach_continue;
 }
 ForEachDirective visit_impl(Struct *Struct, auto &&visitor) {
-	for (auto &member : Struct->members) {
+	for (auto &member : Struct->member_list) {
 		VISIT(&member);
 	}
 	return ForEach_continue; 

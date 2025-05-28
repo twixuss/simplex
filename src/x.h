@@ -162,6 +162,7 @@ ENUMERATE_KEYWORDS(x)
 	x(or) \
 	x(for) \
 	x(in) \
+	x(use) \
 
 /*
 #define x(name, token, precedence)
@@ -243,7 +244,7 @@ ENUMERATE_TOKEN_KIND(x, y)
 	y(name, 'a') \
 	y(string, '"') \
 	y(number, '0') \
-	y(directive, '#') \
+	y(directive, '#dir') \
 	ENUMERATE_KEYWORDS(x) \
 
 /*

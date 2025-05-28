@@ -163,6 +163,9 @@ struct NodeBase {
 #define DEFINE_EXPRESSION(name) struct name : Expression, NodeBase<name>
 #define DEFINE_STATEMENT(name) struct name : Statement, NodeBase<name>
 
+// TODO: some Block's in some nodes (Struct, LambdaHead) don't need breaks/defers/etc, only definitions.
+//       create DefinitionBlock?
+
 DEFINE_EXPRESSION(Block) {
 	Block *parent = 0;
 	Expression *container = 0;
@@ -212,6 +215,7 @@ DEFINE_EXPRESSION(Definition) {
 	u64 offset = invalid_offset;
 	bool is_parameter : 1 = false;
 	bool is_template_parameter : 1 = false;
+	bool use : 1 = false;
 };
 DEFINE_EXPRESSION(IntegerLiteral) {
 	UnsizedInteger value = {};
@@ -317,7 +321,18 @@ DEFINE_EXPRESSION(Struct) {
 
 	Block template_parameters_block;
 	Definition *definition = 0;
-	GList<Definition *> members;
+
+	// Could use block here if it hadn't unnecessary stuff
+	GList<Definition *> member_list; // in order of declaration
+	GHashMap<String, Definition *> member_map; // for fast lookup
+
+	void add_member(Definition *member) {
+		member_list.add(member);
+		auto &entry = member_map.get_or_insert(member->name);
+		assert(!entry);
+		entry = member;
+	}
+
 	s64 size = -1;
 	bool must_be_fully_initialized : 1 = false;
 	bool is_template : 1 = false;

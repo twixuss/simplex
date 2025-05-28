@@ -1,6 +1,6 @@
 import "allocator.sp"
 
-const List = struct [T: Type] {
+struct List[T: Type] {
     data: *var T
     count: Int
     capacity: Int

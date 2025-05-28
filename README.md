@@ -462,8 +462,23 @@ fn (a: Arg1, b: Arg2): ReturnType
 ### `UnsizedInteger`
 A signed 64-bit number
 # Bag of sugar
-## 🚧 Properties
+## Properties
 You can have member-like access for stuff that has to be computed:
+1. Define a function with a name that starts with `get_` and accepts wanted type:
+```simplex
+fn get_length(v: Vector3) => sqrt(v.x*v.x + v.y*v.y + v.z*v.z)
+```
+2. Access it like a struct member:
+```simplex
+println(v.length)
+```
+To write to a property, similarly define a `set_` function that takes a mutable pointer and a value to set:
+```simplex
+fn set_length(v: *var Vector3, l: Float) {
+    *v = normalize(*v) * l;
+}
+```
+Then you can assign to `length`:
 ```simplex
 vector.length *= 2
 
@@ -472,8 +487,8 @@ vector.length *= 2
 set_length(&vector, get_length(vector) * 2)
 ```
 
-Multi property access example:
-Suppose `vector` is 3d an we're accessing 2d portion of it:
+### Multi property access
+Suppose `xz` is another property:
 ```simplex
 vector.xz.length *= 2
 
@@ -483,3 +498,11 @@ var xz = get_xz(vector)
 set_length(&xz, get_length(xz) * 2)
 set_xz(&vector, xz)
 ```
+## Importing struct members
+You can implicitly access members of a structure by prefixing a definition with `use`
+```simplex
+fn length(use v: Vector2) {
+    return x*x + y*y
+}
+```
+

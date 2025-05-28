@@ -135,7 +135,7 @@ Value NodeInterpreter::load_address_impl(Binary *binary) {
 		invalid_code_path();
 	}
 
-	return Value(&struct_address.pointer->elements[find_index_of(Struct->members, name->definition())]);
+	return Value(&struct_address.pointer->elements[find_index_of(Struct->member_list, name->definition())]);
 }
 Value NodeInterpreter::load_address_impl(Match *) { invalid_code_path(); }
 Value NodeInterpreter::load_address_impl(Unary *unary) {
@@ -439,7 +439,7 @@ Value NodeInterpreter::execute_impl(Call *call) {
 	} else {
 		assert(struct_);
 
-		auto &members = struct_->members;
+		auto &members = struct_->member_list;
 
 		assert(members.count == arguments.count);
 
@@ -524,7 +524,7 @@ Value NodeInterpreter::execute_impl(Binary *binary) {
 			auto name = as<Name>(binary->right);
 			assert(name);
 
-			return struct_value.elements[find_index_of(struct_->members, name->definition())];
+			return struct_value.elements[find_index_of(struct_->member_list, name->definition())];
 		}
 		case BinaryOperation::as: {
 			EXECUTE_DEFN(val, binary->left);

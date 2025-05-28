@@ -84,8 +84,8 @@ Value zero_of_type(Type type) {
 	Value result = {};
 	auto direct_type = direct(type);
 	if (auto struct_ = as<Struct>(direct_type)) {
-		for (int i = 0; i < struct_->members.count; ++i) {
-			result.elements.add(zero_of_type(struct_->members[i]->type));
+		for (int i = 0; i < struct_->member_list.count; ++i) {
+			result.elements.add(zero_of_type(struct_->member_list[i]->type));
 		}
 	} 
 	else if (types_match(direct_type, BuiltinType::Bool)) { result = Value(false); }
@@ -127,9 +127,9 @@ void default_initialize(Value *value, Type type) {
 			auto struct_ = direct_as<Struct>(type);
 			assert(struct_);
 			value->elements = {};
-			value->elements.resize(struct_->members.count);
-			for (umm i = 0; i < struct_->members.count; ++i) {
-				default_initialize(&value->elements[i], struct_->members[i]->type);
+			value->elements.resize(struct_->member_list.count);
+			for (umm i = 0; i < struct_->member_list.count; ++i) {
+				default_initialize(&value->elements[i], struct_->member_list[i]->type);
 			}
 			return; 
 		}

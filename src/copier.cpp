@@ -80,6 +80,7 @@ void Copier::deep_copy_impl(Definition *from, Definition *to) {
 
 	COPY(is_parameter);
 	COPY(is_template_parameter);
+	COPY(use);
 	COPY(mutability);
 
 	LOOKUP_COPY(container);
@@ -190,7 +191,10 @@ void Copier::deep_copy_impl(Break *from, Break *to) {
 void Copier::deep_copy_impl(Struct *from, Struct *to) {
 	DEEP_COPY_INPLACE(template_parameters_block);
 	LOOKUP_COPY(definition);
-	COPY_LIST(members, DEEP_COPY);
+	COPY_LIST(member_list, DEEP_COPY);
+	for (auto &member : to->member_list) {
+		to->member_map.insert(member->name, member);
+	}
 	COPY(size);
 	COPY(must_be_fully_initialized);
 	COPY(is_template);

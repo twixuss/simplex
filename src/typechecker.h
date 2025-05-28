@@ -244,6 +244,9 @@ private:
 	bool yield_while(String location, auto predicate) {
 		while (true) {
 			if (predicate()) {
+				if (no_more_progress)
+					return false;
+
 				if (context_base->report_yields)
 					immediate_reporter.info(location, "Yield");
 
@@ -251,9 +254,6 @@ private:
 				switch_thread();
 				
 				yield(YieldResult::wait);
-	
-				if (no_more_progress)
-					return false;
 			} else {
 				return true;
 			}
