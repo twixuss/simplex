@@ -411,6 +411,9 @@ DEFINE_STATEMENT(Import) {
 DEFINE_STATEMENT(Defer) {
 	Node *body = 0;
 };
+DEFINE_STATEMENT(Use) {
+	Name name;
+};
 
 bool is_substitutable(Block *block);
 bool is_addressable(Expression *expression);

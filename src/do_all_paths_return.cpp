@@ -147,6 +147,7 @@ bool do_all_paths_return_impl(CallerArgumentString *) { return false; }
 bool do_all_paths_return_impl(For *For) {
 	return do_all_paths_return(For->range);
 }
+bool do_all_paths_return_impl(Use *Use) { return false; }
 bool do_all_paths_return(Node *node) {
 	switch (node->kind) {
 		#define x(name) case NodeKind::name: return do_all_paths_return_impl((name *)node);

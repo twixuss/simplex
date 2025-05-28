@@ -304,6 +304,7 @@ ENUMERATE_STATEMENT_KIND(x)
 	x(Break) \
 	x(Import) \
 	x(Defer) \
+	x(Use) \
 
 /*
 #define x(name)

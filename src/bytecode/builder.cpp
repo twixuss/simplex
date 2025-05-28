@@ -1421,6 +1421,9 @@ void Builder::output_impl(Import *import) { invalid_code_path(); }
 void Builder::output_impl(Defer *defer_) {
 	/* Defers are outputted at end of blocks and at return statements */
 } 
+void Builder::output_impl(Use *Use) {
+	// nothing to do
+}
 
 void Builder::load_address(Site destination, Expression *expression) {
 	scoped_replace(current_location, expression->location);

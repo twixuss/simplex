@@ -58,6 +58,7 @@ void append(StringBuilder &builder, Nameable<Break *> expr) { not_implemented("B
 void append(StringBuilder &builder, Nameable<Import *> expr) { not_implemented("Import"); }
 void append(StringBuilder &builder, Nameable<Defer *> expr) { not_implemented("Defer"); }
 void append(StringBuilder &builder, Nameable<For *> expr) { not_implemented("For"); }
+void append(StringBuilder &builder, Nameable<Use *> expr) { not_implemented("Use"); }
 
 void append(StringBuilder &builder, Nameable<Node *> node) {
 	switch (node.value->kind) {

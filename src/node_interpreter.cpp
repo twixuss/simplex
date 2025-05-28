@@ -696,6 +696,7 @@ Value NodeInterpreter::execute_impl(CallerArgumentString *) {
 	invalid_code_path("Should have been replaced by a string literal when typechecking caller arguments");
 }
 Value NodeInterpreter::execute_impl(For *For) { invalid_code_path("Should have been replaced with while"); }
+Value NodeInterpreter::execute_impl(Use *Use) { return Value(); }
 
 #undef PERFORM_WITH_BREAKS
 #undef EXECUTE_INTO

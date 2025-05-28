@@ -700,6 +700,9 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			}
 			append(code, "};");
 		},
+		[&](Use *Use) {
+			// nothing to do
+		},
 	});
 }
 

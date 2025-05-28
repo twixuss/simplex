@@ -1403,6 +1403,17 @@ Node *Parser::parse_statement() {
 			add_definition_to_block(definition, current_block);
 			return definition;
 		}
+		case Token_use: {
+			auto use = Use::create();
+
+			use->location = token.string;
+			next();
+
+			String dummy;
+			parse_name(&dummy, &use->name.name);
+
+			return use;
+		}
 	}
 
 	auto expression = parse_expression();

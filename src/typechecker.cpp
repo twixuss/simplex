@@ -1545,6 +1545,13 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 	}
 	typecheck(lambda->head);
 
+	scoped_replace(currently_used_definitions, {});
+	for (auto parameter : lambda->head.parameters_block.definition_list) {
+		if (parameter->use) {
+			currently_used_definitions.add(parameter);
+		}
+	}
+
 	scoped_replace(current_block, &lambda->head.template_parameters_block);
 	if (lambda->head.is_template) {
 		lambda->type = get_builtin_type(BuiltinType::Template);
@@ -1802,42 +1809,45 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 			Name *definition_name = 0;
 			Binary *dot = 0;
 
-			for (auto definition : block->definition_list) {
-				if (definition->use) {
-					if (!can_reference(definition)) {
-						continue;
-					}
-					if (yield_while_null(name->location, &definition->type)) {
-						auto direct_definition_type = direct(definition->type);
-						auto Struct = as<::Struct>(direct_definition_type);
-						if (!Struct) {
-							if (auto pointer = as_pointer(direct_definition_type)) {
-								Struct = direct_as<::Struct>(pointer->expression);
-							}
+			for (auto definition : currently_used_definitions) {
+				
+				assert(can_reference(definition), "currently_used_definitions should not contain unreferencable stuff!");
+				// if (!can_reference(definition)) {
+				// 	continue;
+				// }
+
+
+
+				if (yield_while_null(name->location, &definition->type)) {
+					auto direct_definition_type = direct(definition->type);
+					auto Struct = as<::Struct>(direct_definition_type);
+					if (!Struct) {
+						if (auto pointer = as_pointer(direct_definition_type)) {
+							Struct = direct_as<::Struct>(pointer->expression);
 						}
+					}
 
-						if (Struct) {
-							if (auto found = Struct->member_map.find(name->name)) {
-								auto member = *found.value;
+					if (Struct) {
+						if (auto found = Struct->member_map.find(name->name)) {
+							auto member = *found.value;
 								
-								if (!definition_name) {
-									definition_name = Name::create();
-									definition_name->location = name->location;
+							if (!definition_name) {
+								definition_name = Name::create();
+								definition_name->location = name->location;
 			
-									dot = make_binary(BinaryOperation::dot, definition_name, name, 0, name->location);
-								}
+								dot = make_binary(BinaryOperation::dot, definition_name, name, 0, name->location);
+							}
 
-								definition_name->name = definition->name;
-								definition_name->type = 0;
+							definition_name->name = definition->name;
+							definition_name->type = 0;
 
-								name->type = 0;
+							name->type = 0;
 
-								if (auto result = with_unwind_strategy([&] {
-									typecheck(&dot);
-									return dot;
-								})) {
-									return result;
-								}
+							if (auto result = with_unwind_strategy([&] {
+								typecheck(&dot);
+								return dot;
+							})) {
+								return result;
 							}
 						}
 					}
@@ -3547,6 +3557,11 @@ CallerLocation   *Typechecker::typecheck_impl(CallerLocation *cl, bool can_subst
 CallerArgumentString *Typechecker::typecheck_impl(CallerArgumentString *cas, bool can_substitute) {
 	cas->type = make_name(context->builtin_structs.String->definition, cas->location);
 	return cas;
+}
+Use              *Typechecker::typecheck_impl(Use *Use, bool can_substitute) {
+	typecheck(Use->name);
+	currently_used_definitions.add(Use->name.possible_definitions);
+	return Use;
 }
 
 Expression *Typechecker::bt_take_left(Binary *binary) {

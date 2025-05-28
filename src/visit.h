@@ -164,6 +164,9 @@ ForEachDirective visit_impl(For *For, auto &&visitor) {
 	VISIT(&For->body);
 	return ForEach_continue;
 }
+ForEachDirective visit_impl(Use *Use, auto &&visitor) {
+	return ForEach_continue;
+}
 
 ForEachDirective visit(Node **node, auto &&visitor) {
 

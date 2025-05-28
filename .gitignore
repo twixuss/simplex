@@ -18,6 +18,7 @@ fuzzer/fuzz*.sp
 *.obj
 a.c
 tests/*
+!tests/*/
 !tests/*.sp
 examples/*
 !examples/*.sp

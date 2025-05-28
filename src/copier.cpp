@@ -250,6 +250,10 @@ void Copier::deep_copy_impl(For *from, For *to) {
 	DEEP_COPY(body);
 }
 
+void Copier::deep_copy_impl(Use *from, Use *to) {
+	DEEP_COPY_INPLACE(name);
+}
+
 #undef LOOKUP_COPY
 #undef DEEP_COPY
 #undef COPY

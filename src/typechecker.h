@@ -168,6 +168,8 @@ private:
 	List<TemplateInstantiationForReport> template_instantiation_stack_for_reports;
 	FailStrategy fail_strategy = FailStrategy::yield;
 
+	GList<Definition *> currently_used_definitions;
+
 	// Yield may occur while holding a global block lock.
 	// Before yield fully release the lock, aquire it back after.
 	u32 global_block_locks_count;
@@ -381,6 +383,7 @@ private:
 	[[nodiscard]] ZeroInitialized  *typecheck_impl(ZeroInitialized *zi, bool can_substitute);
 	[[nodiscard]] CallerLocation   *typecheck_impl(CallerLocation *cl, bool can_substitute);
 	[[nodiscard]] CallerArgumentString *typecheck_impl(CallerArgumentString *cl, bool can_substitute);
+	[[nodiscard]] Use              *typecheck_impl(Use *Use, bool can_substitute);
 public:
 	/////////////////////////
 	// Binary Typecheckers //

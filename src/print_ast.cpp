@@ -359,6 +359,9 @@ void print_ast_impl(For *For) {
 	print_ast(For->range);
 	print_ast(For->body);
 }
+void print_ast_impl(Use *Use) {
+	print("use {}", Use->name.name);
+}
 void print_ast(Node *node) {
 	if (!node) {
 		print("<NULL>");
