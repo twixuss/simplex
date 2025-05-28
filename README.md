@@ -505,4 +505,12 @@ fn length(use v: Vector2) {
     return x*x + y*y
 }
 ```
-
+Or you can do that later with `use` statement:
+```simplex
+fn length(v: Vector2) {
+    // here you must do v.x and v.y
+    use v
+    // now members are imported
+    return x*x + y*y
+}
+```
