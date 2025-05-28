@@ -276,7 +276,7 @@ Parser::NamedLambda Parser::parse_lambda() {
 			} else if (token.string == u8"#linkname"s) {
 				next();
 				expect(Token_string);
-				lambda->link_name = unescape_string_or_fail(token.string);
+				lambda->link_name = copy(lexer.string_value);
 			} else {
 				reporter.error(token.string, "Unknown lambda directive '{}'.", token.string);
 				yield(YieldResult::fail);
@@ -919,7 +919,7 @@ Expression *Parser::parse_expression_0() {
 		case Token_string: {
 			auto literal = StringLiteral::create();
 			literal->location = token.string;
-			literal->value = unescape_string_or_fail(token.string);
+			literal->value = copy(lexer.string_value);
 			next();
 			return finish_node(literal);
 		}
@@ -1250,7 +1250,7 @@ Node *Parser::parse_statement() {
 				next();
 				expect(Token_string);
 				// Don't free extern_library. Lambdas point to it.
-				extern_library = unescape_string_or_fail(token.string);
+				extern_library = copy(lexer.string_value);
 				next();
 				skip_lines();
 				if (token.kind == Token_eof) {
@@ -1326,7 +1326,7 @@ Node *Parser::parse_statement() {
 			expect(Token_string);
 				
 			auto import = Import::create();
-			import->path = unescape_string_or_fail(token.string);
+			import->path = copy(lexer.string_value);
 				
 			next();
 	
@@ -1605,8 +1605,8 @@ void Parser::skip_lines() {
 
 void Parser::init(String source) {
 	this->parent_fiber = init_or_get_current_fiber();
-	lexer = Lexer::create(source);
 	fiber = get_new_fiber();
+	lexer = Lexer::create(source, &reporter, parent_fiber, fiber);
 	set_start(fiber, [] (void *param) {
 		((Parser *)param)->main();
 	}, this);

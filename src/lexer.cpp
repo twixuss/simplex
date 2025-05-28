@@ -3,55 +3,257 @@
 #include "reporter.h"
 #include "escape.h"
 
-using namespace tl;
+#if ARCH_AVX512
+using VMask = u64;
+#define vload(p) _mm512_loadu_si512((__m512i *)(p))
+#define vcmpeq(a, b) _mm512_cmpeq_epi8_mask(a, b)
+#define vset1(a) _mm512_set1_epi8(a)
+#define vmset1(a) _cvtu64_mask64(a ? ~0 : 0)
+#define vmor(a, b) _kor_mask64(a, b)
+#define vmask(a) (u16)(a)
+#elif ARCH_AVX2
+using VMask = u32;
+#define vload(p) _mm256_loadu_si256((__m256i *)(p))
+#define vcmpeq(a, b) _mm256_cmpeq_epi8(a, b)
+#define vset1(a) _mm256_set1_epi8(a)
+#define vmset1(a) (a ? ~0 : 0)
+#define vmor(a, b) _mm256_or_si256(a, b)
+#define vmask(a) (u16)_mm256_movemask_epi8(a)
+#else
+using VMask = u16;
+#define vload(p) _mm_loadu_si128((__m128i *)(p))
+#define vcmpeq(a, b) _mm_cmpeq_epi8(a, b)
+#define vset1(a) _mm_set1_epi8(a)
+#define vmset1(a) (a ? ~0 : 0)
+#define vmor(a, b) _mm_or_si128(a, b)
+#define vmask(a) (u16)_mm_movemask_epi8(a)
+#endif
 
-Lexer Lexer::create(String source) {
+u64 broadcast_u8_to_u64(u8 x) {
+	u64 r = x;
+	r = (r << 8) | r;
+	r = (r << 16) | r;
+	r = (r << 32) | r;
+	return r;
+}
+
+#define fail() tl::yield_reuse(parent_fiber, current_fiber)
+
+Lexer Lexer::create(String source, Reporter *reporter, Fiber parent_fiber, ReusableFiber current_fiber) {
 	assert(!any(Span(source.begin() - LEXER_PADDING_SIZE, LEXER_PADDING_SIZE)), "Source must be padded with {} zero bytes at the beginning!", LEXER_PADDING_SIZE);
 	assert(!any(Span(source.end(), LEXER_PADDING_SIZE)), "Source must be padded with {} zero bytes at the end!", LEXER_PADDING_SIZE);
 
 	Lexer result;
 	result.source = source;
 	result.cursor = source.data;
+	result.reporter = reporter;
+	result.parent_fiber = parent_fiber;
+	result.current_fiber = current_fiber;
 
 	for (umm i = 0; i < source.count; ++i) {
 		auto c = source.data[i];
 		if (c <= 0x08 || (0x0b <= c && c <= 0x0c) || (0x0e <= c && c <= 0x1f)) {
-			immediate_reporter.error("Invalid character at byte {}: {} (0x{})", i, escape_character(c).span(), FormatInt{.value=(u32)c,.radix=16});
-			return {};
+			reporter->error("Invalid character at byte {}: {} (0x{})", i, escape_character(c).span(), FormatInt{.value=(u32)c,.radix=16});
+			fail();
 		}
 	}
 
 	return result;
 }
 	
+// https://stackoverflow.com/a/68717720/11870423
+u64 vcmpltu8 (u64 a, u64 b) {
+	constexpr u64 sign_bits = 0x8080808080808080U;
+	a = ~a;
+    a = (a & b) + (((a ^ b) >> 1) & ~sign_bits);
+    a = a & sign_bits;
+    a = a + a - (a >> 7);
+    return a;
+}
+
 Token Lexer::next_token() {
 	auto end = source.end();
 
 	Token token;
 	token.kind = Token_eof;
-	token.string = {source.end() - 1, source.end()};
+	token.string = {end - 1, end};
+	
+	auto parse_string = [&]<char closing_char>(auto on_char) {
+		while (1) {
+			switch (*cursor) {
+				case '\0': {
+					reporter->error(token.string.take(1), "Unclosed literal");
+					fail();
+				}
+				case '\\': {
+					++cursor;
+					switch (*cursor) {
+						// unnecessary because of default case
+						// case '\0':
+						// 	reporter->error(token.string.take(1), "Unclosed literal");
+						// 	fail();
+						case 'a':  on_char('\a'); ++cursor; break;
+						case 'b':  on_char('\b'); ++cursor; break;
+						case 'f':  on_char('\f'); ++cursor; break;
+						case 'n':  on_char('\n'); ++cursor; break;
+						case 'r':  on_char('\r'); ++cursor; break;
+						case 't':  on_char('\t'); ++cursor; break;
+						case 'v':  on_char('\v'); ++cursor; break;
+						case '\\': on_char('\\'); ++cursor; break;
+						case '0': {
+							++cursor;
+							switch (*cursor) {
+								case 'b': case 'B': {
+									++cursor;
+
+									u8 digits[] = {
+										(u8)(cursor[0] - '0'),
+										(u8)(cursor[1] - '0'),
+										(u8)(cursor[2] - '0'),
+										(u8)(cursor[3] - '0'),
+										(u8)(cursor[4] - '0'),
+										(u8)(cursor[5] - '0'),
+										(u8)(cursor[6] - '0'),
+										(u8)(cursor[7] - '0'),
+									};
+
+
+
+									vcmpltu8(broadcast_u8_to_u64(2), *(u64 *)digits);
+
+									if (digits[0] >= 2 ||
+										digits[1] >= 2 ||
+										digits[2] >= 2 ||
+										digits[3] >= 2 ||
+										digits[4] >= 2 ||
+										digits[5] >= 2 ||
+										digits[6] >= 2 ||
+										digits[7] >= 2)
+									{
+										reporter->error(Span(cursor, (umm)1), "\\0b must be followed by exactly eight binary digits.");
+										fail();
+									}
+
+									u32 x = 
+										(digits[0] << 7) |
+										(digits[1] << 6) |
+										(digits[2] << 5) |
+										(digits[3] << 4) |
+										(digits[4] << 3) |
+										(digits[5] << 2) |
+										(digits[6] << 1) |
+										(digits[7] << 0);
+
+									on_char(x);
+
+									cursor += 8;
+									break;
+								}
+								case 'o': case 'O': {
+									++cursor;
+									
+									u8 digits[] = {
+										(u8)(cursor[0] - '0'),
+										(u8)(cursor[1] - '0'),
+										(u8)(cursor[2] - '0'),
+									};
+
+									if (digits[0] >= 8 ||
+										digits[1] >= 8 ||
+										digits[2] >= 8)
+									{
+										reporter->error(Span(cursor, (umm)1), "\\0o must be followed by exactly three octal digits.");
+										fail();
+									}
+									
+									u32 x = 
+										(digits[0] << 6) |
+										(digits[1] << 3) |
+										(digits[2] << 0);
+
+									if (x >= 256) {
+										reporter->error(Span(cursor, (umm)1), "Octal value {} (decimal {}) is too big for a character.", FormatInt{.value = x, .radix = 8}, x);
+										fail();
+									}
+
+									on_char(x);
+
+									cursor += 3;
+									break;
+								}
+								case 'x': case 'X': {
+									++cursor;
+
+									if (!is_hex_digit(*cursor) ||
+										!is_hex_digit(cursor[1]))
+									{
+										reporter->error(Span(cursor, (umm)1), "\\0x must be followed by exactly two hexadecimal digits.");
+										fail();
+									}
+
+									u32 x = 0;
+									x = (x << 4) | hex_digit_to_int_unchecked(cursor[0]);
+									x = (x << 4) | hex_digit_to_int_unchecked(cursor[1]);
+
+									on_char(x);
+
+									cursor += 2;
+									break;
+								}
+								default: {
+									reporter->error(Span(cursor, (umm)1), "\\0 must be followed by a base character just like in integer literals - b for binary, o for octal, x for hexadecimal.");
+									fail();
+								}
+							}
+							break;
+						}
+						default: {
+							reporter->error(Span(cursor, (umm)1), "\\ must be followed by a valid escape sequence.");
+							if (*cursor == 'x') {
+								reporter->help("If you wanted a hex literal, use \\0x (backslash zero x), followed by exactly two hex digits. You can also use binary and octal.");
+							}
+							fail();
+						}
+					}
+					break;
+				}
+				case closing_char: {
+					++cursor;
+					return;
+				} 
+				default: {
+					on_char(*cursor++);
+					break;
+				}
+			}
+		}
+	};
+
 
 restart:
 
-	while (cursor < end) {
-		switch (*cursor) {
-			case '\t':
-			case '\v':
-			case '\f':
-			case '\r':
-			case ' ':
-				++cursor;
-				continue;
+	{
+		VMask mask = vmset1(1);
+		while (mask == (VMask)~0) {
+			auto chars = vload(cursor);
+			auto m1 = vcmpeq(chars, vset1('\t'));
+			auto m2 = vcmpeq(chars, vset1('\v'));
+			auto m3 = vcmpeq(chars, vset1('\f'));
+			auto m4 = vcmpeq(chars, vset1('\r'));
+			auto m5 = vcmpeq(chars, vset1(' '));
+			auto masks = vmor(vmor(vmor(m1, m2), vmor(m3, m4)), m5);
+			mask = vmask(masks);
+
+			cursor += count_trailing_ones(mask);
 		}
-		break;
 	}
 
-	if (cursor >= source.end()) {
+	if (cursor >= end) {
 		goto finish;
 	}
 
 	token.string.data = cursor;
-	
+
 	switch (*cursor) {
 		case '\0':
 			goto finish;
@@ -115,9 +317,8 @@ restart:
 			token.kind = (TokenKind)kind;
 
 			if (token.kind == (first | (first << 8))) {
-				immediate_reporter.error(String{token.string.data, cursor}, "This language does not support {}{} operation. Use {}= instead", (char)first, (char)first, (char)first);
-				token = {};
-				goto finish;
+				reporter->error(String{token.string.data, cursor}, "This language does not support {}{} operation. Use {}= instead", (char)first, (char)first, (char)first);
+				fail();
 			}
 
 			goto finish;
@@ -160,7 +361,7 @@ restart:
 			token.kind = (TokenKind)*cursor;
 			++cursor;
 			if (*cursor == '/') {
-				while (*cursor != '\n' && cursor != source.end()) {
+				while (*cursor != '\n' && cursor != end) {
 					++cursor;
 				}
 				goto restart;
@@ -202,10 +403,9 @@ restart:
 							break;
 						}
 					}
-					if (cursor >= source.end()) {
-						immediate_reporter.error(token.string.take(2), "Unclosed comment");
-						token = {};
-						goto finish;
+					if (cursor >= end) {
+						reporter->error(token.string.take(2), "Unclosed comment");
+						fail();
 					}
 				}
 				goto restart;
@@ -218,104 +418,32 @@ restart:
 		case '"': {
 			token.kind = Token_string;
 			++cursor;
-			while (true) {
-				if (*cursor == '"' && cursor[-1] != '\\') {
-					break;
-				}
-				++cursor;
-				if (cursor > source.end()) {
-					immediate_reporter.error(token.string.take(2), "Unclosed string literal");
-					token = {};
-					goto finish;
-				}
-			}
+		
+			string_value.clear();
+			
+			parse_string.operator()<'"'>([&](char c) {
+				string_value.add(c);
+			});
 
-			++cursor;
 			goto finish;
 		}
 		case '\'': {
 			token.kind = Token_number;
 			++cursor;
 		
-			string_value.clear();
+			u64 i = 0;
+			int_value = 0;
+			
+			parse_string.operator()<'\''>([&](char c) {
+				int_value |= (u64)c << (i++ * 8);
+			});
 
-			while (1) {
-				switch (*cursor) {
-					case '\0': {
-						immediate_reporter.error(token.string.take(1), "Unclosed character literal");
-						token = {};
-						goto finish;
-					}
-					case '\\': {
-						++cursor;
-						switch (*cursor) {
-							case '\0':
-								immediate_reporter.error(token.string.take(1), "Unclosed character literal");
-								token = {};
-								goto finish;
-							case 'a': string_value.add('\a'); ++cursor; break;
-							case 'b': string_value.add('\b'); ++cursor; break;
-							case 'f': string_value.add('\f'); ++cursor; break;
-							case 'n': string_value.add('\n'); ++cursor; break;
-							case 'r': string_value.add('\r'); ++cursor; break;
-							case 't': string_value.add('\t'); ++cursor; break;
-							case 'v': string_value.add('\v'); ++cursor; break;
-							case '\\': string_value.add('\\'); ++cursor; break;
-							case 'x': case 'X': {
-								++cursor;
-
-								switch (*cursor) {
-									case '\0': {
-										immediate_reporter.error(token.string.take(1), "Unclosed character literal");
-										token = {};
-										goto finish;
-									}
-									case '0':case '1':case '2':case '3':case '4':case '5':case '6':case '7':case '8':case '9':
-									case 'a':case 'b':case 'c':case 'd':case 'e':case 'f':
-									case 'A':case 'B':case 'C':case 'D':case 'E':case 'F': {
-										break;
-									}
-									default: {
-										immediate_reporter.error(Span(cursor, (umm)1), "Invalid hexadecimal escape sequence");
-										token = {};
-										goto finish;
-									}
-								}
-
-								char x = 0;
-								while (is_hex_digit(*cursor)) {
-									x = (x << 4) | hex_digit_to_int_unchecked(*cursor++);
-								}
-								string_value.add(x);
-								break;
-							}
-							default: {
-								string_value.add(*cursor++);
-								break;
-							}
-						}
-						case '\'': {
-							++cursor;
-							int_value = 0;
-							umm max_length = 8;
-							if (string_value.count > max_length) {
-								immediate_reporter.error(Span(token.string.data, cursor), "Multi-character can't be longer than number of bytes in the biggest integer, in this case {}.", max_length);
-								token = {};
-								goto finish;
-							}
-							for (umm i = 0; i < string_value.count; ++i) {
-								int_value |= (u64)string_value.data[i] << (i * 8);
-							}
-							goto finish;
-						} 
-						default: {
-							string_value.add(*cursor);
-							++cursor;
-							break;
-						}
-					}
-				}
+			umm max_length = 8;
+			if (i > max_length) {
+				reporter->error(Span(token.string.data, cursor), "Multi-character can't be longer than number of bytes in the biggest integer, in this case {}.", max_length);
+				fail();
 			}
+			goto finish;
 		}
 		case '#': {
 			token.kind = Token_directive;
@@ -404,9 +532,8 @@ restart:
 							}
 							break;
 						}
-						immediate_reporter.error(Span(token.string.data, cursor), "C-like octal literals are not supported. Use 0o{}", Span(token.string.data + 1, cursor));
-						token = {};
-						goto finish;
+						reporter->error(Span(token.string.data, cursor), "C-like octal literals are not supported. Use 0o{}", Span(token.string.data + 1, cursor));
+						fail();
 					}
 				}
 			} else {
@@ -442,8 +569,8 @@ restart:
 
 			token.string.set_end(cursor);
 			if (token.string.count == 0) {
-				immediate_reporter.error({token.string.data, 1}, "Invalid character ({}).", (u32)*cursor);
-				return {};
+				reporter->error({token.string.data, 1}, "Invalid character ({}).", (u32)*cursor);
+				fail();
 			}
 
 			static constexpr umm max_keyword_size = []{
@@ -684,6 +811,3 @@ finish:
 	return token;
 }
 
-void Lexer::print_invalid_character_error() {
-	immediate_reporter.error({cursor, 1}, "Invalid uft8 character.");
-}

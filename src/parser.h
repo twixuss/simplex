@@ -42,7 +42,7 @@ struct Parser {
 	Fiber parent_fiber = {};
 	Node *result_node;
 	YieldResult last_yield_result = YieldResult::fail;
-	List<utf8> extern_library = {};
+	GList<utf8> extern_library = {};
 
 	// Debug
 	List<Token> all_tokens;

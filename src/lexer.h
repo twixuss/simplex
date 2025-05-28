@@ -1,7 +1,9 @@
 #pragma once
 #include "token.h"
+#include "reporter.h"
 
 #include <tl/list.h>
+#include <tl/reusable_fiber.h>
 
 #define LEXER_PADDING_SIZE 64
 
@@ -13,12 +15,15 @@ struct Lexer {
 	String source;
 	utf8 *cursor = 0;
 
+	Fiber parent_fiber;
+	ReusableFiber current_fiber;
+
+	Reporter *reporter = 0;
+
 	// NOTE: WARNING:
 	// padded_source must start and end with at least LEXER_PADDING_SIZE zero bytes.
 	// They allow simd code to not do additional checks.
-	static Lexer create(String padded_source);
+	static Lexer create(String source, Reporter *reporter, Fiber parent_fiber, ReusableFiber current_fiber);
 	
 	Token next_token();
-
-	void print_invalid_character_error();
 };
