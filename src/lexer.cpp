@@ -5,25 +5,37 @@
 
 #if ARCH_AVX512
 using VMask = u64;
+#define VSIZE 64
 #define vload(p) _mm512_loadu_si512((__m512i *)(p))
+#define vsub(a, b) _mm512_sub_epi8(a, b)
 #define vcmpeq(a, b) _mm512_cmpeq_epi8_mask(a, b)
+#define vcmplt(a, b) _mm512_cmplt_epi8(a, b)
 #define vset1(a) _mm512_set1_epi8(a)
+#define vat(a, i) (a).m512i_u8[i]
 #define vmset1(a) _cvtu64_mask64(a ? ~0 : 0)
 #define vmor(a, b) _kor_mask64(a, b)
 #define vmask(a) (u16)(a)
 #elif ARCH_AVX2
 using VMask = u32;
+#define VSIZE 32
 #define vload(p) _mm256_loadu_si256((__m256i *)(p))
+#define vsub(a, b) _mm256_sub_epi8(a, b)
 #define vcmpeq(a, b) _mm256_cmpeq_epi8(a, b)
+#define vcmplt(a, b) _mm256_cmplt_epi8(a, b)
 #define vset1(a) _mm256_set1_epi8(a)
+#define vat(a, i) (a).m256i_u8[i]
 #define vmset1(a) (a ? ~0 : 0)
 #define vmor(a, b) _mm256_or_si256(a, b)
 #define vmask(a) (u16)_mm256_movemask_epi8(a)
 #else
 using VMask = u16;
+#define VSIZE 16
 #define vload(p) _mm_loadu_si128((__m128i *)(p))
+#define vsub(a, b) _mm_sub_epi8(a, b)
 #define vcmpeq(a, b) _mm_cmpeq_epi8(a, b)
+#define vcmplt(a, b) _mm_cmplt_epi8(a, b)
 #define vset1(a) _mm_set1_epi8(a)
+#define vat(a, i) (a).m128i_u8[i]
 #define vmset1(a) (a ? ~0 : 0)
 #define vmor(a, b) _mm_or_si128(a, b)
 #define vmask(a) (u16)_mm_movemask_epi8(a)
@@ -231,22 +243,37 @@ Token Lexer::next_token() {
 
 
 restart:
+	
+	#if 1
+	// SIMD
+	VMask mask = vmset1(1);
+	while (mask == (VMask)~0) {
+		auto chars = vload(cursor);
+		auto m1 = vcmpeq(chars, vset1('\t'));
+		auto m2 = vcmpeq(chars, vset1('\v'));
+		auto m3 = vcmpeq(chars, vset1('\f'));
+		auto m4 = vcmpeq(chars, vset1('\r'));
+		auto m5 = vcmpeq(chars, vset1(' '));
+		auto masks = vmor(vmor(vmor(m1, m2), vmor(m3, m4)), m5);
+		mask = vmask(masks);
 
-	{
-		VMask mask = vmset1(1);
-		while (mask == (VMask)~0) {
-			auto chars = vload(cursor);
-			auto m1 = vcmpeq(chars, vset1('\t'));
-			auto m2 = vcmpeq(chars, vset1('\v'));
-			auto m3 = vcmpeq(chars, vset1('\f'));
-			auto m4 = vcmpeq(chars, vset1('\r'));
-			auto m5 = vcmpeq(chars, vset1(' '));
-			auto masks = vmor(vmor(vmor(m1, m2), vmor(m3, m4)), m5);
-			mask = vmask(masks);
-
-			cursor += count_trailing_ones(mask);
-		}
+		cursor += count_trailing_ones(mask);
 	}
+	#else
+	// SCALAR
+	while (cursor < end) {
+		switch (*cursor) {
+			case '\t':
+			case '\v':
+			case '\f':
+			case '\r':
+			case ' ':
+				++cursor;
+				continue;
+		}
+		break;
+	}
+	#endif
 
 	if (cursor >= end) {
 		goto finish;
@@ -473,7 +500,8 @@ restart:
 			if (*cursor == '0') {
 				++cursor;
 				switch (*cursor) {
-					default: goto finish;
+					default:
+						goto finish;
 					case 'b': {
 						++cursor;
 						while (1) {
@@ -481,9 +509,11 @@ restart:
 								default:
 									goto finish;
 								case '0': case '1':
-									int_value = (int_value << 1) | (*cursor++ - '0'); break;
+									int_value = (int_value << 1) | (*cursor++ - '0');
+									break;
 								case '_':
-									*cursor++; break;
+									*cursor++;
+									break;
 							}
 						}
 						break;
@@ -495,9 +525,11 @@ restart:
 								default:
 									goto finish;
 								case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7':
-									int_value = (int_value << 3) | (*cursor++ - '0'); break;
+									int_value = (int_value << 3) | (*cursor++ - '0');
+									break;
 								case '_':
-									*cursor++; break;
+									*cursor++;
+									break;
 							}
 						}
 						break;
@@ -509,13 +541,17 @@ restart:
 								default:
 									goto finish;
 								case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
-									int_value = (int_value << 4) | (*cursor++ - '0'); break;
+									int_value = (int_value << 4) | (*cursor++ - '0');
+									break;
 								case 'a':case 'b':case 'c':case 'd':case 'e':case 'f':
-									int_value = (int_value << 4) | (*cursor++ - ('a' - 10)); break;
+									int_value = (int_value << 4) | (*cursor++ - ('a' - 10));
+									break;
 								case 'A':case 'B':case 'C':case 'D':case 'E':case 'F':
-									int_value = (int_value << 4) | (*cursor++ - ('A' - 10)); break;
+									int_value = (int_value << 4) | (*cursor++ - ('A' - 10));
+									break;
 								case '_':
-									*cursor++; break;
+									*cursor++;
+									break;
 							}
 						}
 						break;
@@ -537,22 +573,76 @@ restart:
 					}
 				}
 			} else {
+				#if 1
+				// SIMD
+				VMask mask = vmset1(1);
+				while (mask == (VMask)~0) {
+					auto chars = vload(cursor);
+					auto underscore_masks = vcmpeq(chars, vset1('_'));
+					auto digit_masks = vcmplt(vsub(chars, vset1('0' ^ 0x80)), vset1(10 ^ 0x80));
+
+					auto advance_masks = vmor(underscore_masks, digit_masks);
+
+					mask = vmask(advance_masks);
+					
+					auto advance = count_trailing_ones(mask);
+
+					// Could compress chars by digit_masks, but only avx512 has that.
+					// Table would be too big.
+					for (umm i = 0; i < advance; ++i) {
+						if (vat(digit_masks, i)) {
+							int_value = int_value * 10 + (cursor[i] - '0');
+						}
+					}
+
+					cursor += advance;
+				}
+				#else
+				// SCALAR
 				while (1) {
 					switch (*cursor) {
 						default:
 							goto finish;
 						case '0':case '1':case '2':case '3':case '4':case '5':case '6':case '7':case '8':case '9':
-							int_value = int_value * 10 + (*cursor++ - '0'); break;
+							int_value = int_value * 10 + (*cursor++ - '0');
+							break;
 						case '_':
-							++cursor; break;
+							++cursor;
+							break;
 					}
 				}
+				#endif
 			}
 			goto finish;
 		}
 		default: {
 			token.kind = Token_name;
 
+			#if 1
+			// SIMD
+			#pragma warning(push)
+			#pragma warning(disable: 4309) // constant value truncation
+
+			VMask mask = vmset1(1);
+			while (mask == (VMask)~0) {
+				auto chars = vload(cursor);
+
+				auto m1 = vcmpeq(chars, vset1(0x60));
+				auto m2 = vcmplt(vsub(chars, vset1(0x00 ^ 0x80)), vset1(0x2f ^ 0x80));
+				auto m3 = vcmplt(vsub(chars, vset1(0x3a ^ 0x80)), vset1(0x07 ^ 0x80));
+				auto m4 = vcmplt(vsub(chars, vset1(0x5b ^ 0x80)), vset1(0x04 ^ 0x80));
+				auto m5 = vcmplt(vsub(chars, vset1(0x7c ^ 0x80)), vset1(0x04 ^ 0x80));
+					
+				auto masks = vmor(vmor(vmor(m1, m2), vmor(m3, m4)), m5);
+					
+				mask = ~vmask(masks);
+
+				cursor += count_trailing_ones(mask);
+			}
+				
+			#pragma warning(pop)
+			#else
+			// SCALAR
 			while (true) {
 				if ((0x00 <= *cursor && *cursor <= 0x2f) ||
 					(0x3a <= *cursor && *cursor <= 0x40) ||
@@ -562,10 +652,11 @@ restart:
 					) {
 					goto name_loop_end;
 				}
-
+					
 				++cursor;
 			}
 		name_loop_end:;
+			#endif
 
 			token.string.set_end(cursor);
 			if (token.string.count == 0) {
