@@ -294,6 +294,11 @@ Parser::NamedLambda Parser::parse_lambda() {
 		}
 
 		lambda->body = parse_expression();
+		
+		if (auto definition = as<Definition>(lambda->body)) {
+			reporter.error(definition->location, "You can't have a definition as a lambda's body");
+			yield(YieldResult::fail);
+		}
 
 		return {finish_node(lambda), lambda_name};
 	}
@@ -832,6 +837,17 @@ Expression *Parser::parse_expression_0() {
 			}
 
 			if (is_substitutable(block)) {
+				//assert(block->children.count == 1);
+
+				//if (auto definition = as<Definition>(block->children[0])) {
+				//	if (definition->initial_value) {
+				//		return finish_node(definition->initial_value);
+				//	} else {
+				//		reporter.error(definition->location, "What the hell is this?");
+				//		yield(YieldResult::fail);
+				//	}
+				//}
+
 				if (auto expression = as<Expression>(block->children[0])) {
 					block->free();
 					return finish_node(expression);

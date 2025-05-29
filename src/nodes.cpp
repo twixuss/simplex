@@ -84,7 +84,13 @@ void append(StringBuilder &builder, Node *node) {
 }
 
 bool is_substitutable(Block *block) {
-	return block->children.count == 1 && block->breaks.count == 0;
+	if (block->children.count == 1 && block->breaks.count == 0) {
+		if (as<Definition>(block->children[0])) {
+			return false;
+		}
+		return true;
+	}
+	return false;
 }
 
 bool is_addressable(Expression *expression) {
