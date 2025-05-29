@@ -1,3 +1,4 @@
+
 import "file"
 
 fn end(s: String) => s.data + s.count
@@ -7,7 +8,6 @@ enum TokenKind #allow_to_int #allow_from_int {
     eol = '\n'
     name = 'a'
     string = '"'
-    character = '\''
     number = '0'
     directive = '#'
 }
@@ -26,22 +26,21 @@ fn create_Lexer(source: String) {
     return Lexer(source = source, c = source.data)
 }
 
-fn next(l: *var Lexer): Bool => {
-    //let end = l.source.end()
-    let end = l.source.data + l.source.count
+fn next(use l: *var Lexer): Bool => {
+    let e = source.end()
 
     while true {
-        match *l.c {
-            ' ' or '\t' or '\n' or '\r' or '\v' or '\f' => l.c += 1
-            else => break
+        match *c {
+            ' ' or '\t' or '\n' or '\r' or '\v' or '\f' => c += 1
+            else => { break } // TODO: don't want braces
         }
     }
 
-    l.location.data = l.c;
+    location.data = c;
 
-    match *l.c {
-        '\0' => {
-            l.kind = .eof
+    match *c {
+        0 => {
+            kind = TokenKind.eof
         }
         '`' or '~' or '!' or '@' or
         '#' or '$' or '%' or '^' or
@@ -49,61 +48,74 @@ fn next(l: *var Lexer): Bool => {
         '-' or '=' or '+' or '\\' or
         '|' or '[' or ']' or '{' or
         '}' or ';' or ':' or ',' or
-        '<' or '.' or '>' or '/' or
-        '?' => {
-            l.kind = *l.c
-            l.c += 1
-        }
-        '\'' => {
-			l.kind = .character
-			l.c += 1
-			while true {
-				if *l.c == '\'' && l.c[-1] != '\\'
-					break
-				l.c += 1
-				if l.c > end {
-                    println("Unclosed character literal")
-                    l.kind = .eof
-                    break
-                }
-			}
-
-			l.c += 1
+        '<' or '.' or '>' or '?' => {
+            kind = *c
+            c += 1
         }
         '"' => {
-			l.kind = .string
-			l.c += 1
-			while true {
-				if *l.c == '"' && l.c[-1] != '\\'
+			kind = TokenKind.string
+			c += 1
+			while (true) {
+				if *c == '"' && c[-1] != '\\' {
 					break
-				l.c += 1
-				if l.c > end {
-                    println("Unclosed string literal")
-                    l.kind = .eof
-                    break
-                }
+				}
+				c += 1
+				if (c > e) {
+					println("Unclosed string literal")
+				}
 			}
 
-			l.c += 1
+			c += 1
+        }
+        '\'' => {
+			kind = TokenKind.string
+			c += 1
+			while (true) {
+				if *c == '\\' {
+                    c += 1
+				} else if *c == '\'' {
+    				c += 1
+                    break
+                }
+                c += 1
+				if (c > e) {
+					println("Unclosed character literal")
+				}
+			}
+
+			c += 1
+        }
+        '/' => {
+            kind = *c
+			c += 1
+            if *c == '/' {
+                while *c != '\n' {
+                    c += 1
+                }
+                c += 1
+                
+                // goto retry
+                return next(l)
+            }
         }
         else => {
-            l.kind = .name
-            l.c += 1
+            kind = TokenKind.name
+            c += 1
             while true {
-                if (0x00 <= *l.c && *l.c <= 0x2f) ||
-                    (0x3a <= *l.c && *l.c <= 0x40) ||
-                    (0x5b <= *l.c && *l.c <= 0x5e) ||
-                    (0x7c <= *l.c && *l.c <= 0x7f) ||
-                    (*l.c == 0x60)
+                if (0x00 <= *c && *c <= 0x2f) ||
+                    (0x3a <= *c && *c <= 0x40) ||
+                    (0x5b <= *c && *c <= 0x5e) ||
+                    (0x7c <= *c && *c <= 0x7f) ||
+                    (*c == 0x60)
                     break
 
-                l.c += 1
+                c += 1
             }
         }
     }
 
-    l.location.count = @(l.c - l.location.data)
-    return l.kind != .eof
+    location.count = c as U64 - location.data as U64 // TODO: pointer sub
+    return kind != TokenKind.eof
 }
 
 fn main() {
@@ -123,13 +135,11 @@ fn main() {
     }
 
     var source = String(source_buffer.span.data + 1, source_buffer.span.count - 2)
-    //println(source)
+    println(source)
 
     var l = create_Lexer(source)
 
     while l.next() {
-        print(l.kind as S64)
-        print(" ")
         println(l.location)
     }
 

@@ -448,7 +448,7 @@ restart:
 		
 			string_value.clear();
 			
-			parse_string.operator()<'"'>([&](char c) {
+			parse_string.operator()<'"'>([&](utf8 c) {
 				string_value.add(c);
 			});
 
@@ -457,18 +457,26 @@ restart:
 		case '\'': {
 			token.kind = Token_number;
 			++cursor;
-		
-			u64 i = 0;
-			int_value = 0;
 			
-			parse_string.operator()<'\''>([&](char c) {
-				int_value |= (u64)c << (i++ * 8);
-			});
+			if (auto decoded = decode_and_advance(&cursor)) {
+				int_value = decoded.value();
+				if (*cursor != '\'') {
+					reporter->error(Span(token.string.data, cursor), "Multi-character only work with ASCII characters. Keep single utf8 character or multiple ascii chars.");
+					fail();
+				}
+				++cursor;
+			} else {
+				int_value = 0;
+				u64 i = 0;
+				parse_string.operator()<'\''>([&](utf8 c) {
+					int_value |= (u64)c << (i++ * 8);
+				});
 
-			umm max_length = 8;
-			if (i > max_length) {
-				reporter->error(Span(token.string.data, cursor), "Multi-character can't be longer than number of bytes in the biggest integer, in this case {}.", max_length);
-				fail();
+				umm max_length = 8;
+				if (i > max_length) {
+					reporter->error(Span(token.string.data, cursor), "Multi-character can't be longer than number of bytes in the biggest integer, in this case {}.", max_length);
+					fail();
+				}
 			}
 			goto finish;
 		}

@@ -2028,7 +2028,8 @@ typecheck_dot_succeeded:
 		if (auto lambda_head = direct_as<LambdaHead>(definition->type)) {
 			return typecheck_lambda_call(call, 0, lambda_head);
 		} else {
-			reporter.error(directed_callable->location, "This is not a lambda nor a struct.");
+			reporter.error(call->callable->location, "Expression of type {} is not callable.", call->callable->type);
+			reporter.info(definition->location, "See definition");
 			fail();
 			return 0;
 		}
