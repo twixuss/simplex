@@ -484,7 +484,7 @@ restart:
 
 			umm max_length = 8;
 			if (i > max_length) {
-				reporter->error(Span(token.string.data, cursor), "Multi-character can't be longer than number of bytes in the biggest integer, in this case {}.", max_length);
+				reporter->error(Span(token.string.data, cursor), "Multi-character can't be longer than {} bytes. You provided {}.", max_length, i);
 				fail();
 			}
 
@@ -593,6 +593,8 @@ restart:
 			} else {
 				#if 1
 				// SIMD
+				#pragma warning(push)
+				#pragma warning(disable: 4309) // constant value truncation
 				VMask mask = vmset1(1);
 				while (mask == (VMask)~0) {
 					auto chars = vload(cursor);
@@ -615,6 +617,7 @@ restart:
 
 					cursor += advance;
 				}
+				#pragma warning(pop)
 				#else
 				// SCALAR
 				while (1) {

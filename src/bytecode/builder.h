@@ -102,12 +102,6 @@ struct Builder {
 	BucketHashMap<Block *, BlockInfo> block_infos;
 	BucketHashMap<While *, List<umm>> continue_jump_indices;
 	BucketHashMap<While *, List<umm>> loop_break_indices;
-	struct LambdaRelocation {
-		List<u8> *section;
-		u64 offset = 0;
-		Lambda *lambda = 0;
-	};
-	List<LambdaRelocation> lambda_relocations;
 
 	ContiguousHashMap<String, umm> string_literal_offsets;
 

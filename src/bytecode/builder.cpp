@@ -46,12 +46,6 @@ Bytecode Builder::build(Expression *expression) {
 	for (auto [index, lambda] : calls_to_patch) {
 		auto &i = output_bytecode.instructions[index];
 
-		if (lambda->is_extern) {
-			immediate_reporter.error(lambda->location, "External calls not implemented yet");
-			// TODO: better failing
-			invalid_code_path();
-		}
-
 		switch (i.kind) {
 			case InstructionKind::call: {
 				i.call().d = lambda->first_instruction_index;
@@ -67,10 +61,6 @@ Bytecode Builder::build(Expression *expression) {
 		}
 	}
 		
-	for (auto relocation : lambda_relocations) {
-		*(u64 *)&(*relocation.section)[relocation.offset] = relocation.lambda->first_instruction_index;
-	}
-
 	for (auto patch : pointers_to_patch) {
 		patch.to.visit(Combine{
 			[&](Lambda *lambda) {
@@ -232,7 +222,11 @@ void Builder::write(List<u8> const &section, u8 *dst, Value value, Type type, u6
 			break;
 		}
 		case ValueKind::lambda: {
-			lambda_relocations.add({autocast &section, dst_offset, value.lambda});
+			pointers_to_patch.add(PointerInSection{
+				.in_section = autocast &section,
+				.in_section_offset = dst_offset,
+				.to = value.lambda,
+			});
 			break;
 		}
 		case ValueKind::struct_: {
