@@ -214,11 +214,6 @@ void Report::print() {
 
 	bool verbose = indentation < context_base->nested_reports_verbosity;
 		
-	if (verbose) {
-		print_report_indentation(indentation);
-		println();
-	}
-
 	if (location.data) {
 		auto source_location = get_source_location(location);
 
@@ -232,6 +227,8 @@ void Report::print() {
 			println(": {}",  message);
 
 			print_source_chunk(source_location, indentation, get_color(kind));
+
+			println();
 		} else {
 			print_report_kind(kind);
 			println(": {}",  message);

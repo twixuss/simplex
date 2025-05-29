@@ -1805,9 +1805,8 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 		}
 		
 		if (name->possible_definitions.count == 0) {
-			// Reuse for next attempts
-			Name *definition_name = 0;
-			Binary *dot = 0;
+			Definition *previous_successful_definition = 0;
+			Binary *previous_successful_dot = 0;
 
 			for (auto definition : currently_used_definitions) {
 				
@@ -1831,12 +1830,10 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 						if (auto found = Struct->member_map.find(name->name)) {
 							auto member = *found.value;
 								
-							if (!definition_name) {
-								definition_name = Name::create();
-								definition_name->location = name->location;
+							auto definition_name = Name::create();
+							definition_name->location = name->location;
 			
-								dot = make_binary(BinaryOperation::dot, definition_name, name, 0, name->location);
-							}
+							auto dot = make_binary(BinaryOperation::dot, definition_name, name, 0, name->location);
 
 							definition_name->name = definition->name;
 							definition_name->type = 0;
@@ -1847,11 +1844,25 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 								typecheck(&dot);
 								return dot;
 							})) {
-								return result;
+								if (previous_successful_dot) {
+									reporter.error(name->location, "Multiple `use`d definitions contain member {}.", name->name);
+									reporter.indentation += 1;
+									reporter.info(previous_successful_definition->location, "First:");
+									reporter.info(definition->location, "Second:");
+									reporter.help("Do {}.{} or {}.{} to disambiguate.", previous_successful_definition->name, name->name, definition->name, name->name);
+									reporter.indentation -= 1;
+									fail();
+								}
+								previous_successful_dot = result;
+								previous_successful_definition = definition;
 							}
 						}
 					}
 				}
+			}
+
+			if (previous_successful_dot) {
+				return previous_successful_dot;
 			}
 		}
 
