@@ -90,46 +90,59 @@ Token Lexer::next_token() {
 	token.kind = Token_eof;
 	token.string = {end - 1, end};
 	
-	auto parse_string = [&]<char closing_char>(auto on_char) {
+	auto parse_string = [&]<char closing_char, bool decode = false>(auto on_char) {
+		using Char = std::conditional_t<decode, utf32, utf8>;
+		Char c;
+
+		auto next = [&] {
+			if constexpr (decode) {
+				if (auto decoded = decode_and_advance(&cursor)) {
+					c = decoded.value();
+				} else {
+					c = (utf32)*cursor++;
+				}
+			} else {
+				c = *cursor++;
+			}
+		};
+
+		next();
+
 		while (1) {
-			switch (*cursor) {
+			switch (c) {
 				case '\0': {
 					reporter->error(token.string.take(1), "Unclosed literal");
 					fail();
 				}
 				case '\\': {
-					++cursor;
-					switch (*cursor) {
+					next();
+					switch (c) {
 						// unnecessary because of default case
 						// case '\0':
 						// 	reporter->error(token.string.take(1), "Unclosed literal");
 						// 	fail();
-						case 'a':  on_char('\a'); ++cursor; break;
-						case 'b':  on_char('\b'); ++cursor; break;
-						case 'f':  on_char('\f'); ++cursor; break;
-						case 'n':  on_char('\n'); ++cursor; break;
-						case 'r':  on_char('\r'); ++cursor; break;
-						case 't':  on_char('\t'); ++cursor; break;
-						case 'v':  on_char('\v'); ++cursor; break;
-						case '\\': on_char('\\'); ++cursor; break;
+						case 'a':  on_char('\a'); next(); break;
+						case 'b':  on_char('\b'); next(); break;
+						case 'f':  on_char('\f'); next(); break;
+						case 'n':  on_char('\n'); next(); break;
+						case 'r':  on_char('\r'); next(); break;
+						case 't':  on_char('\t'); next(); break;
+						case 'v':  on_char('\v'); next(); break;
+						case '\\': on_char('\\'); next(); break;
 						case '0': {
-							++cursor;
-							switch (*cursor) {
+							next();
+							switch (c) {
 								case 'b': case 'B': {
-									++cursor;
-
-									u8 digits[] = {
-										(u8)(cursor[0] - '0'),
-										(u8)(cursor[1] - '0'),
-										(u8)(cursor[2] - '0'),
-										(u8)(cursor[3] - '0'),
-										(u8)(cursor[4] - '0'),
-										(u8)(cursor[5] - '0'),
-										(u8)(cursor[6] - '0'),
-										(u8)(cursor[7] - '0'),
+									Char digits[] = {
+										(Char)((next(), c) - '0'),
+										(Char)((next(), c) - '0'),
+										(Char)((next(), c) - '0'),
+										(Char)((next(), c) - '0'),
+										(Char)((next(), c) - '0'),
+										(Char)((next(), c) - '0'),
+										(Char)((next(), c) - '0'),
+										(Char)((next(), c) - '0'),
 									};
-
-
 
 									vcmpltu8(broadcast_u8_to_u64(2), *(u64 *)digits);
 
@@ -157,17 +170,13 @@ Token Lexer::next_token() {
 										(digits[7] << 0);
 
 									on_char(x);
-
-									cursor += 8;
 									break;
 								}
 								case 'o': case 'O': {
-									++cursor;
-									
-									u8 digits[] = {
-										(u8)(cursor[0] - '0'),
-										(u8)(cursor[1] - '0'),
-										(u8)(cursor[2] - '0'),
+									Char digits[] = {
+										(Char)((next(), c) - '0'),
+										(Char)((next(), c) - '0'),
+										(Char)((next(), c) - '0'),
 									};
 
 									if (digits[0] >= 8 ||
@@ -189,27 +198,27 @@ Token Lexer::next_token() {
 									}
 
 									on_char(x);
-
-									cursor += 3;
 									break;
 								}
 								case 'x': case 'X': {
-									++cursor;
+									auto read_hex_digit = [&] {
+										return tl::hex_digit_to_int((next(), c)).value_or([&]() {
+											reporter->error(Span(cursor, (umm)1), "\\0x must be followed by exactly two hexadecimal digits.");
+											fail();
+											return 0;
+										});
+									};
 
-									if (!is_hex_digit(*cursor) ||
-										!is_hex_digit(cursor[1]))
-									{
-										reporter->error(Span(cursor, (umm)1), "\\0x must be followed by exactly two hexadecimal digits.");
-										fail();
-									}
+									Char digits[] = {
+										read_hex_digit(),
+										read_hex_digit(),
+									};
 
 									u32 x = 0;
 									x = (x << 4) | hex_digit_to_int_unchecked(cursor[0]);
 									x = (x << 4) | hex_digit_to_int_unchecked(cursor[1]);
 
 									on_char(x);
-
-									cursor += 2;
 									break;
 								}
 								default: {
@@ -221,7 +230,7 @@ Token Lexer::next_token() {
 						}
 						default: {
 							reporter->error(Span(cursor, (umm)1), "\\ must be followed by a valid escape sequence.");
-							if (*cursor == 'x') {
+							if (c == 'x') {
 								reporter->help("If you wanted a hex literal, use \\0x (backslash zero x), followed by exactly two hex digits. You can also use binary and octal.");
 							}
 							fail();
@@ -230,11 +239,11 @@ Token Lexer::next_token() {
 					break;
 				}
 				case closing_char: {
-					++cursor;
 					return;
 				} 
 				default: {
-					on_char(*cursor++);
+					on_char(c);
+					next();
 					break;
 				}
 			}
@@ -458,26 +467,27 @@ restart:
 			token.kind = Token_number;
 			++cursor;
 			
-			if (auto decoded = decode_and_advance(&cursor)) {
-				int_value = decoded.value();
-				if (*cursor != '\'') {
-					reporter->error(Span(token.string.data, cursor), "Multi-character only work with ASCII characters. Keep single utf8 character or multiple ascii chars.");
-					fail();
+			int_value = 0;
+			u64 i = 0;
+			parse_string.operator()<'\'', true>([&](utf32 c) {
+				int_value |= (u64)c << (i * 8);
+				if (c <= 0xff) {
+					i += 1;
+				} else if (c <= 0xffff) {
+					i += 2;
+				} else if (c <= 0xffffff) {
+					i += 3;
+				} else {
+					i += 4;
 				}
-				++cursor;
-			} else {
-				int_value = 0;
-				u64 i = 0;
-				parse_string.operator()<'\''>([&](utf8 c) {
-					int_value |= (u64)c << (i++ * 8);
-				});
+			});
 
-				umm max_length = 8;
-				if (i > max_length) {
-					reporter->error(Span(token.string.data, cursor), "Multi-character can't be longer than number of bytes in the biggest integer, in this case {}.", max_length);
-					fail();
-				}
+			umm max_length = 8;
+			if (i > max_length) {
+				reporter->error(Span(token.string.data, cursor), "Multi-character can't be longer than number of bytes in the biggest integer, in this case {}.", max_length);
+				fail();
 			}
+
 			goto finish;
 		}
 		case '#': {
