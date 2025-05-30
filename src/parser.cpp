@@ -277,6 +277,8 @@ Parser::NamedLambda Parser::parse_lambda() {
 				next();
 				expect(Token_string);
 				lambda->link_name = copy(lexer.string_value);
+			} else if (token.string == u8"#print_bytecode"s) {
+				lambda->print_bytecode = true;
 			} else {
 				reporter.error(token.string, "Unknown lambda directive '{}'.", token.string);
 				yield(YieldResult::fail);

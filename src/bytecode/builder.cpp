@@ -1,4 +1,5 @@
 #include "builder.h"
+#include "optimizer.h"
 #include "../nodes.h"
 #include "../reporter.h"
 #include "../builtin_structs.h"
@@ -7,6 +8,8 @@
 #include "../compiler_context.h"
 
 namespace Bytecode {
+
+bool debug_print;
 
 #define MI(name, ...)                  \
 	Instruction {                      \
@@ -116,6 +119,8 @@ void Builder::append_lambda(Lambda *lambda) {
 
 	auto first_instruction_index = output_bytecode.instructions.count;
 
+	auto first_call_to_patch_index = calls_to_patch.count;
+
 	auto head = &lambda->head;
 
 	I(push, Register::base);
@@ -149,18 +154,6 @@ void Builder::append_lambda(Lambda *lambda) {
 
 	for (auto i : jumps_to_ret) {
 		output_bytecode.instructions[i].jmp().d = ret_destination - i;
-	}
-
-	if (lambda->definition) {
-		dbgln(lambda->definition->name);
-	} else {
-		dbgln(get_source_location(lambda->location));
-	}
-	if (context_base->is_debugging) {
-		println("    locals_size: {}, temporary_size: {}, total_parameters_size: {}, return_value_size: {}", locals_size, max_temporary_size, head->total_parameters_size, return_value_size);
-	}
-	if (context_base->is_debugging) {
-		print_instructions(lambda_instructions);
 	}
 
 	lambda->locals_size = locals_size;
@@ -202,6 +195,28 @@ void Builder::append_lambda(Lambda *lambda) {
 			}
 		}
 	}
+	
+	if (context_base->optimize) {
+		debug_print = context_base->is_debugging || lambda->print_bytecode;
+		auto optimized = optimize(lambda_instructions);
+		output_bytecode.instructions.count = first_instruction_index;
+		output_bytecode.instructions.add(optimized.instructions);
+		lambda_instructions = output_bytecode.instructions.skip(first_instruction_index);
+		for (auto &[index, lambda] : calls_to_patch.skip(first_call_to_patch_index)) {
+			index = first_instruction_index + optimized.old_to_new[index - first_instruction_index];
+		}
+	}
+
+	if (lambda->definition) {
+		dbgln(lambda->definition->name);
+	} else {
+		dbgln(get_source_location(lambda->location));
+	}
+	if (context_base->is_debugging || lambda->print_bytecode) {
+		println("    locals_size: {}, temporary_size: {}, total_parameters_size: {}, return_value_size: {}", locals_size, max_temporary_size, head->total_parameters_size, return_value_size);
+		print_instructions(lambda_instructions);
+	}
+
 }
 
 void Builder::write(List<u8> const &section, u8 *dst, Value value, Type type, u64 size) {
@@ -1239,10 +1254,10 @@ void Builder::output_impl(Site destination, Unary *unary) {
 			assert(is_concrete_integer(unary->type));
 			output(destination, unary->expression);
 			switch (get_size(unary->type)) {
-				case 1: I(neg1, destination); break;
-				case 2: I(neg2, destination); break;
-				case 4: I(neg4, destination); break;
-				case 8: I(neg8, destination); break;
+				case 1: I(neg1, destination, destination); break;
+				case 2: I(neg2, destination, destination); break;
+				case 4: I(neg4, destination, destination); break;
+				case 8: I(neg8, destination, destination); break;
 				default: invalid_code_path();
 			}
 			break;

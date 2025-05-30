@@ -804,10 +804,10 @@ void Interpreter::execute(Instruction::sex42_t i) { val8(i.d) = (s32)(s16)val2(i
 void Interpreter::execute(Instruction::sex81_t i) { val8(i.d) = (s64)(s8 )val1(i.a); }
 void Interpreter::execute(Instruction::sex82_t i) { val8(i.d) = (s64)(s16)val2(i.a); }
 void Interpreter::execute(Instruction::sex84_t i) { val8(i.d) = (s64)(s32)val4(i.a); }
-void Interpreter::execute(Instruction::neg1_t i) { val1(i.d) = -val1(i.d); }
-void Interpreter::execute(Instruction::neg2_t i) { val2(i.d) = -val2(i.d); }
-void Interpreter::execute(Instruction::neg4_t i) { val4(i.d) = -val4(i.d); }
-void Interpreter::execute(Instruction::neg8_t i) { val8(i.d) = -val8(i.d); }
+void Interpreter::execute(Instruction::neg1_t i) { val1(i.d) = -val1(i.a); }
+void Interpreter::execute(Instruction::neg2_t i) { val2(i.d) = -val2(i.a); }
+void Interpreter::execute(Instruction::neg4_t i) { val4(i.d) = -val4(i.a); }
+void Interpreter::execute(Instruction::neg8_t i) { val8(i.d) = -val8(i.a); }
 void Interpreter::execute(Instruction::call_t i) {
 	E(push, (s64)current_instruction_index);
 

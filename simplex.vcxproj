@@ -86,6 +86,7 @@
   <ItemGroup>
     <ClCompile Include="src\binary_operation.cpp" />
     <ClCompile Include="src\bytecode\builder.cpp" />
+    <ClCompile Include="src\bytecode\optimizer.cpp" />
     <ClCompile Include="src\c2simplex.cpp" />
     <ClCompile Include="src\copier.cpp" />
     <ClCompile Include="src\debug.cpp" />
@@ -119,6 +120,7 @@
     <ClInclude Include="src\bytecode\builder.h" />
     <ClInclude Include="src\bytecode\bytecode.h" />
     <ClInclude Include="src\bytecode\interpreter.h" />
+    <ClInclude Include="src\bytecode\optimizer.h" />
     <ClInclude Include="src\c2simplex.h" />
     <ClInclude Include="src\capitalized.h" />
     <ClInclude Include="src\cmd_args.h" />

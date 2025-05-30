@@ -28,6 +28,7 @@
     <ClCompile Include="src\do_all_paths_return.cpp" />
     <ClCompile Include="src\c2simplex.cpp" />
     <ClCompile Include="src\print_ast.cpp" />
+    <ClCompile Include="src\bytecode\optimizer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="x.h" />
@@ -72,5 +73,6 @@
     <ClInclude Include="src\compiler_context.h" />
     <ClInclude Include="src\c2simplex.h" />
     <ClInclude Include="src\cmd_args.h" />
+    <ClInclude Include="src\bytecode\optimizer.h" />
   </ItemGroup>
 </Project>

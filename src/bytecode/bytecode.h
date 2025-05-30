@@ -43,6 +43,8 @@ struct Address {
 	Register element_index = {};
 	u8 element_size = {};
 	s64 offset = {};
+
+	constexpr auto operator<=>(Address const &) const = default;
 };
 
 inline void append(StringBuilder &builder, Address a) {
@@ -71,6 +73,17 @@ struct Site {
 
 	Register &get_register() { assert(!_is_address); return r; }
 	Address &get_address() { assert(_is_address); return a; }
+	
+	bool operator==(Site const &that) const {
+		if (_is_address != that._is_address) {
+			return false;
+		}
+		switch (_is_address) {
+			case false: return r == that.r;
+			case true:  return a == that.a;
+		}
+		return false;
+	}
 
 private:
 	bool _is_address;
@@ -103,10 +116,26 @@ struct InputValue {
 	bool is_register() { return kind == Kind::Register; }
 	bool is_address() { return kind == Kind::Address; }
 	bool is_constant() { return kind == Kind::Constant; }
-
+	
 	Register &get_register() { assert(is_register()); return r; }
 	Address &get_address() { assert(is_address()); return a; }
 	s64 &get_constant() { assert(is_constant()); return c; }
+
+	Optional<Register> as_register() { if (is_register()) return r; return {}; }
+	Optional<Address> as_address() { if (is_address()) return a; return {}; }
+	Optional<s64> as_constant() { if (is_constant()) return c; return {}; }
+
+	bool operator==(InputValue const &that) const {
+		if (kind != that.kind) {
+			return false;
+		}
+		switch (kind) {
+			case Kind::Register: return r == that.r;
+			case Kind::Address:  return a == that.a;
+			case Kind::Constant: return c == that.c;
+		}
+		return false;
+	}
 
 private:
 	enum class Kind {
@@ -238,17 +267,17 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(sex81,  (y(Site, d) y(InputValue, a))) \
 	x(sex82,  (y(Site, d) y(InputValue, a))) \
 	x(sex84,  (y(Site, d) y(InputValue, a))) \
-	x(neg1, (y(Site, d))) \
-	x(neg2, (y(Site, d))) \
-	x(neg4, (y(Site, d))) \
-	x(neg8, (y(Site, d))) \
+	x(neg1, (y(Site, d) y(InputValue, a))) \
+	x(neg2, (y(Site, d) y(InputValue, a))) \
+	x(neg4, (y(Site, d) y(InputValue, a))) \
+	x(neg8, (y(Site, d) y(InputValue, a))) \
 	x(call, (y(InputValue, d))) \
 	x(callext, (y(Lambda *, lambda) y(String, lib) y(String, name))) \
 	x(copyext, (y(Site, d) y(String, lib) y(String, name))) \
 	x(ret,  ()) \
 	x(jmp,  (y(s64, d) /* relative */)) \
-	x(jf,   (y(Site, s) y(s64, d) /* relative */)) \
-	x(jt,   (y(Site, s) y(s64, d) /* relative */)) \
+	x(jf,   (y(InputValue, s) y(s64, d) /* relative */)) \
+	x(jt,   (y(InputValue, s) y(s64, d) /* relative */)) \
 	x(intrinsic, (y(Intrinsic, i) y(String, message))) \
 
 enum class InstructionKind : u8 {
@@ -331,12 +360,12 @@ struct Instruction {
 		}
 	}
 	
-	void visit_operands(auto &&visitor) {
-		switch (kind) {
+	void visit_operands(this auto &&self, auto &&visitor) {
+		switch (self.kind) {
 			#define y(type, name) visitor(i.name);
 			#define x(name, fields)           \
 				case InstructionKind::name: { \
-					auto &i = v_##name;       \
+					auto &i = self.v_##name;  \
 					PASSTHROUGH fields;       \
 					break;                    \
 				}
@@ -344,6 +373,27 @@ struct Instruction {
 			#undef x
 			#undef y
 		}
+	}
+
+	bool operator==(Instruction const &that) const {
+		if (kind != that.kind)
+			return false;
+		
+		switch (kind) {
+			#define y(type, name) if (i.name != j.name) return false;
+			#define x(name, fields)           \
+				case InstructionKind::name: { \
+					auto &i = v_##name;       \
+					auto &j = that.v_##name;  \
+					PASSTHROUGH fields;       \
+					break;                    \
+				}
+			ENUMERATE_BYTECODE_INSTRUCTION_KIND
+			#undef x
+			#undef y
+		}
+
+		return true;
 	}
 
 private:

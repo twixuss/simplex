@@ -201,9 +201,6 @@ reloop:
 
 		for (auto test : tests_to_run) {
 			thread_pool += [=, &n_failed, &n_succeeded, test_index = test_index++] {
-				scoped(current_temporary_allocator);
-				defer { current_temporary_allocator.clear(); };
-
 				bool fail = false;
 				defer {
 					atomic_add(&n_failed, fail);

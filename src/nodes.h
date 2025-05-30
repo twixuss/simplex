@@ -268,6 +268,7 @@ DEFINE_EXPRESSION(Lambda) {
 
 	bool is_intrinsic : 1 = false;
 	bool is_extern    : 1 = false;
+	bool print_bytecode : 1 = false;
 };
 DEFINE_EXPRESSION(Name) {
 	String name;

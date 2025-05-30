@@ -97,7 +97,13 @@ struct Builder {
 	u64 max_temporary_size = 0;
 	u64 max_size_reserved_for_arguments = 0;
 	umm locals_size = 0;
-	List<std::tuple<umm, Lambda *>> calls_to_patch;
+
+	struct CallToPatch {
+		umm global_instruction_index = 0;
+		Lambda *lambda = 0;
+	};
+	List<CallToPatch> calls_to_patch;
+
 	List<umm> jumps_to_ret;
 	BucketHashMap<Block *, BlockInfo> block_infos;
 	BucketHashMap<While *, List<umm>> continue_jump_indices;

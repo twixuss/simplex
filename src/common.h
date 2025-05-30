@@ -48,7 +48,6 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 #include <tl/reusable_fiber.h>
 #include <tl/time.h>
 #include <tl/debug.h>
-#include <tl/macros.h>
 #include <tl/bits.h>
 #include <tl/block_list.h>
 #include <tl/dynamic_lib.h>
@@ -210,6 +209,7 @@ struct CompilerContextBase {
 	bool should_inline_unspecified_lambdas : 1 = false;
 	bool check_that_types_are_types        : 1 = true;
 	bool keep_build_artifacts              : 1 = false;
+	bool optimize                          : 1 = false;
 	
 	u32 requested_thread_count = 0;
 	u32 nested_reports_verbosity = 1;
