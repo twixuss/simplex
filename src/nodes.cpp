@@ -76,21 +76,24 @@ void append(StringBuilder &builder, Node *node) {
 
 			break;
 		}
+		case NodeKind::StringLiteral: {
+			auto str = (StringLiteral *)node;
+			
+			append(builder, '"');
+			append(builder, EscapedCString(str->value)); // TODO simplex escaping
+			append(builder, '"');
+
+			break;
+		}
 		default: {
-			append(builder, "(unknown)");
+			append(builder, node->location);
 			break;
 		}
 	}
 }
 
 bool is_substitutable(Block *block) {
-	if (block->children.count == 1 && block->breaks.count == 0) {
-		if (as<Definition>(block->children[0])) {
-			return false;
-		}
-		return true;
-	}
-	return false;
+	return block->children.count == 1 && block->breaks.count == 0 && block->definition_list.count == 0;
 }
 
 bool is_addressable(Expression *expression) {

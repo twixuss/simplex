@@ -1961,20 +1961,20 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 
 				// All three attempts failed. Report stuff.
 					
-				// Hacky ways of hiding useless reports
+				// Hacky ways of finding useless reports
 				bool member_useful     = dot_binop_reporter.reports.count  && !find(dot_binop_reporter.reports[0].message, u8"does not contain member named"s);
-				bool by_pointer_useful = by_pointer_reporter.reports.count && !find(by_pointer_reporter.reports[0].message, u8"You can only take address of"s);
+				bool by_pointer_useful = by_pointer_reporter.reports.count && !find(by_pointer_reporter.reports[0].message, u8"is not addressable"s);
 				bool by_value_useful = true;
 
 				struct AttemptReport {
-					char const *message;
+					String message;
 					Span<Report> reports;
 				};
 
 				List<AttemptReport> useful_attempt_reports;
-				if (member_useful)     useful_attempt_reports.add({"Attempt to treat as member access:", dot_binop_reporter.reports});
-				if (by_value_useful)   useful_attempt_reports.add({"Attempt to pass `this` as-is:", as_is_reporter.reports});
-				if (by_pointer_useful) useful_attempt_reports.add({"Attempt to pass `this` by pointer:", by_pointer_reporter.reports});
+				if (member_useful)     useful_attempt_reports.add({tformat(u8"Attempt to find member {} in {}:", binary->right, binary->left),                       dot_binop_reporter.reports});
+				if (by_value_useful)   useful_attempt_reports.add({tformat(u8"Attempt to pass {} as first argument to {} by value:", binary->left, binary->right),   as_is_reporter.reports});
+				if (by_pointer_useful) useful_attempt_reports.add({tformat(u8"Attempt to pass {} as first argument to {} by pointer:", binary->left, binary->right), by_pointer_reporter.reports});
 					
 				// Don't include attempts that have identical reports.
 				for (umm i = 1; i < useful_attempt_reports.count; ++i) {
@@ -1990,7 +1990,7 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 						for (auto &r : attempt_reports.reports) {
 							++r.indentation;
 						}
-						reporter.info(attempt_reports.message);
+						reporter.info(String{}, attempt_reports.message);
 						reporter.reports.add(attempt_reports.reports);
 					}
 				} else {
@@ -2558,6 +2558,13 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 						binary->type = binary->right;
 						return binary;
 					}
+
+					// To boolean
+					if (types_match(target_type, get_builtin_type(BuiltinType::Bool))) {
+						binary->low_operation = LowBinaryOperation::left_to_bool;
+						binary->type = binary->right;
+						return binary;
+					}
 				}
 
 				// From concrete integer
@@ -2757,7 +2764,53 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 							binary->type = get_builtin_type(BuiltinType::Bool);
 							return binary;
 						}
-						break;
+					}
+				}
+				break;
+			}
+		}
+		
+		// 
+		// Pointer coalescing
+		//
+		if (binary->operation == BinaryOperation::lor) {
+			if (auto left_pointer = as_pointer(dleft)) {
+				if (auto right_pointer = as_pointer(dright)) {
+					if (types_match(left_pointer->expression, right_pointer->expression)) {
+						/*
+							a || b
+
+						converts to
+							
+							{ if let _a = a then _a else b }
+						*/
+						
+						auto block = Block::create();
+						block->location = binary->location;
+						block->parent = current_block;
+						block->container = current_container;
+
+						auto definition = Definition::create();
+						definition->location = binary->location;
+						definition->name = u8"__left"s;
+						definition->initial_value = binary->left;
+						definition->mutability = Mutability::readonly;
+						definition->container = current_container;
+						block->definition_list.add(definition);
+						block->definition_map.get_or_insert(definition->name).add(definition);
+
+						auto name = Name::create();
+						name->location = binary->location;
+						name->name = u8"__left"s;
+						
+						auto If = IfExpression::create();
+						If->location = binary->location;
+						If->condition = definition;
+						If->true_branch = name;
+						If->false_branch = binary->right;
+						block->add(If);
+
+						return as<Expression>(typecheck((Node *)block, true));
 					}
 				}
 			}

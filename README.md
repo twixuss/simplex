@@ -93,12 +93,22 @@ Type: [`UnsizedInteger`](#unsizedinteger), which is implicitly convertible to an
 "Hello, world!\n"
 ```
 Type: [`String`](#string).
-Enclosed in double quotes `"`. Escaped with backslash `\`. Supports hex bytes using `\xFF`. Terminates only when encoutering unescaped double quote `"`, meaning that multiline literals just work. Line endings are not changed, so they are whatever is in your source file.
+Enclosed in double quotes `"`. Escaped with backslash `\`. Supports inline bytes using hex `\0xFF`, octal `\0o377` or binary `\0b11111111`. Terminates only when encoutering unescaped double quote `"`, meaning that multiline literals just work. Line endings are not changed, so they are whatever is in your source file.
 <i>
 * 🚧 should they always be \n?
 * 🚧 user-defined line endings might be useful?
 * 🚧 custom begin/end tokens
 </i>
+
+---
+#### Character literal
+Character literal is a utf8 string decoded into a sequence of utf32 code points that is then compressed into a single integer.
+For example:
+```simplex
+'a'  == 97
+'z'  == 122
+'az' == 31329 == 122 * 256 + 97
+```
 
 ---
 #### Definition
@@ -513,4 +523,21 @@ fn length(v: Vector2) {
     // now members are imported
     return x*x + y*y
 }
+```
+# Unsorted stuff
+## Pointer coalescion
+When using logical or operator || on pointers, the resulting value is the first one that is not null. The rest is not executed, just like in logical operations on booleans. If all of the pointers are null, the result is null.
+```simplex
+let a = 1
+let b = 2
+
+let x = &a
+let y = &b
+let z: *Int = 0
+
+x || y  // x
+y || x  // y
+x || z  // x
+z || x  // x
+z || z  // 0
 ```

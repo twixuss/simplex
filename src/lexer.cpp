@@ -208,7 +208,7 @@ Token Lexer::next_token() {
 											return 0;
 										});
 									};
-
+									
 									Char digits[] = {
 										read_hex_digit(),
 										read_hex_digit(),

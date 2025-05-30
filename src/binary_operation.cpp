@@ -100,5 +100,11 @@ Optional<BinaryOperation> as_binary_operation(TokenKind kind) {
 }
 
 bool is_right_associative(BinaryOperation operation) {
+	switch (operation) {
+		case BinaryOperation::lor:
+		case BinaryOperation::lan: {
+			return true;
+		}
+	}
 	return false;
 }
