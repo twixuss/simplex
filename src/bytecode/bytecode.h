@@ -246,9 +246,9 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(callext, (y(Lambda *, lambda) y(String, lib) y(String, name))) \
 	x(copyext, (y(Site, d) y(String, lib) y(String, name))) \
 	x(ret,  ()) \
-	x(jmp,  (y(InputValue, d))) \
-	x(jf,   (y(Site, s) y(InputValue, d))) \
-	x(jt,   (y(Site, s) y(InputValue, d))) \
+	x(jmp,  (y(s64, d) /* relative */)) \
+	x(jf,   (y(Site, s) y(s64, d) /* relative */)) \
+	x(jt,   (y(Site, s) y(s64, d) /* relative */)) \
 	x(intrinsic, (y(Intrinsic, i) y(String, message))) \
 
 enum class InstructionKind : u8 {

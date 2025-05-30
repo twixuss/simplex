@@ -148,8 +148,7 @@ void Builder::append_lambda(Lambda *lambda) {
 	auto lambda_instructions = output_bytecode.instructions.skip(first_instruction_index);
 
 	for (auto i : jumps_to_ret) {
-		auto &jmp = output_bytecode.instructions[i].jmp();
-		jmp.d = ret_destination;
+		output_bytecode.instructions[i].jmp().d = ret_destination - i;
 	}
 
 	if (lambda->definition) {
@@ -472,10 +471,8 @@ void Builder::output_bounds_check(Register index_reg, umm index_size, umm count)
 	tmpreg(check);
 	I(cmp8, check, index_reg, (s64)count, Comparison::unsigned_less);
 
-	auto jump_over_panic = output_bytecode.instructions.count;
-	I(jt, check, 0);
+	I(jt, check, 2);
 	I(intrinsic, Intrinsic::panic, u8"bounds check failed"s);
-	output_bytecode.instructions[jump_over_panic].jt().d = output_bytecode.instructions.count;
 };
 void Builder::output_impl(Site destination, Block *block) {
 	scoped_replace(current_block, block);
@@ -488,7 +485,7 @@ void Builder::output_impl(Site destination, Block *block) {
 
 	defer {
 		for (auto i : info.break_jump_indices) {
-			output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count;
+			output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count - i;
 		}
 	};
 
@@ -662,9 +659,9 @@ void Builder::output_impl(Site destination, IfExpression *If) {
 	output(destination, If->true_branch);
 	auto jmp_index = output_bytecode.instructions.count;
 	I(jmp, 0);
-	output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
+	output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count - jf_index;
 	output(destination, If->false_branch);
-	output_bytecode.instructions[jmp_index].jmp().d = output_bytecode.instructions.count;
+	output_bytecode.instructions[jmp_index].jmp().d = output_bytecode.instructions.count - jmp_index;
 } 
 void Builder::output_impl(Site destination, BuiltinTypeName *node) {
 	I(copy, destination, (s64)node->type_kind, 8);
@@ -1058,7 +1055,7 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			auto jf_index = output_bytecode.instructions.count;
 			I(jf, destination, 0);
 			output(destination, binary->right);
-			output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
+			output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count - jf_index;
 			return;
 		}
 		case BinaryOperation::lor: {
@@ -1066,7 +1063,7 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			auto jt_index = output_bytecode.instructions.count;
 			I(jt, destination, 0);
 			output(destination, binary->right);
-			output_bytecode.instructions[jt_index].jt().d = output_bytecode.instructions.count;
+			output_bytecode.instructions[jt_index].jt().d = output_bytecode.instructions.count - jt_index;
 			return;
 		}
 		case BinaryOperation::as: {
@@ -1191,14 +1188,14 @@ void Builder::output_impl(Site destination, Match *match) {
 		I(jmp, 0);
 
 		for (auto i : jumps_to_case) {
-			output_bytecode.instructions[i].jt().d = output_bytecode.instructions.count;
+			output_bytecode.instructions[i].jt().d = output_bytecode.instructions.count - i;
 		}
 		output_case(Case);
 		
 		jumps_out_of_match.add(output_bytecode.instructions.count);
 		I(jmp, 0);
 
-		output_bytecode.instructions[jump_over_case].jmp().d = output_bytecode.instructions.count;
+		output_bytecode.instructions[jump_over_case].jmp().d = output_bytecode.instructions.count - jump_over_case;
 	}
 		
 	if (match->default_case) {
@@ -1218,7 +1215,7 @@ void Builder::output_impl(Site destination, Match *match) {
 	}
 
 	for (auto i : jumps_out_of_match) {
-		output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count;
+		output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count - i;
 	}
 }
 void Builder::output_impl(Site destination, Unary *unary) {
@@ -1351,13 +1348,13 @@ void Builder::output_impl(While *While) {
 	}
 	output_discard(While->body);
 	scoped_replace(current_location, While->body->location.take(-1));
-	I(jmp, (s64)condition_index);
-	output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
+	I(jmp, (s64)(condition_index - output_bytecode.instructions.count));
+	output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count - jf_index;
 	for (auto i : continue_jump_indices.get_or_insert(While)) {
-		output_bytecode.instructions[i].jmp().d = condition_index;
+		output_bytecode.instructions[i].jmp().d = condition_index - i;
 	}
 	for (auto i : loop_break_indices.get_or_insert(While)) {
-		output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count;
+		output_bytecode.instructions[i].jmp().d = output_bytecode.instructions.count - i;
 	}
 } 
 void Builder::output_impl(For *For) { invalid_code_path("Should have been replaced with while"); }
@@ -1404,11 +1401,11 @@ void Builder::output_impl(IfStatement *If) {
 	if (If->false_branch) {
 		auto jmp_index = output_bytecode.instructions.count;
 		I(jmp, 0);
-		output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
+		output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count - jf_index;
 		output_discard(If->false_branch);
-		output_bytecode.instructions[jmp_index].jmp().d = output_bytecode.instructions.count;
+		output_bytecode.instructions[jmp_index].jmp().d = output_bytecode.instructions.count - jmp_index;
 	} else {
-		output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count;
+		output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count - jf_index;
 	}
 } 
 void Builder::output_impl(Import *import) { invalid_code_path(); } 

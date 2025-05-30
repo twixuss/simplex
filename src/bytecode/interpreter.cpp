@@ -1058,9 +1058,9 @@ void Interpreter::execute(Instruction::ret_t i) {
 	current_instruction_index = val8(Address{.base = Register::stack});
 	E(add8, .d = Register::stack, .a = Register::stack, .b = 8);
 }
-void Interpreter::execute(Instruction::jmp_t i) { current_instruction_index = val8(i.d) - 1; }
-void Interpreter::execute(Instruction::jf_t i) { if (val1(i.s) == 0) current_instruction_index = val8(i.d) - 1; }
-void Interpreter::execute(Instruction::jt_t i) { if (val1(i.s) != 0) current_instruction_index = val8(i.d) - 1; }
+void Interpreter::execute(Instruction::jmp_t i) { current_instruction_index += i.d - 1; }
+void Interpreter::execute(Instruction::jf_t i) { if (val1(i.s) == 0) current_instruction_index += i.d - 1; }
+void Interpreter::execute(Instruction::jt_t i) { if (val1(i.s) != 0) current_instruction_index += i.d - 1; }
 void Interpreter::execute(Instruction::intrinsic_t i) {
 	switch (i.i) {
 		#define x(name) case Intrinsic::name: execute_intrinsic_##name(i); break;

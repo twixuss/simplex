@@ -129,6 +129,8 @@ Token Lexer::next_token() {
 						case 't':  on_char('\t'); next(); break;
 						case 'v':  on_char('\v'); next(); break;
 						case '\\': on_char('\\'); next(); break;
+						case '\'': on_char('\''); next(); break;
+						case '"':  on_char('"');  next(); break;
 						case '0': {
 							next();
 							switch (c) {
