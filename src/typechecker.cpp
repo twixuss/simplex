@@ -1991,7 +1991,7 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 							++r.indentation;
 						}
 						reporter.info(attempt_reports.message);
-						reporter.reports.add(dot_binop_reporter.reports);
+						reporter.reports.add(attempt_reports.reports);
 					}
 				} else {
 					if (useful_attempt_reports.count == 0) {
