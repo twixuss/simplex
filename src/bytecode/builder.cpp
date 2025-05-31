@@ -920,12 +920,18 @@ void Builder::output_impl(Site destination, Binary *binary) {
 		auto member_size = get_size(binary->type);
 		auto member = as<Name>(binary->right)->definition();
 		if (Struct) {
-			tmpaddr(struct_addr, Struct->size);
-			output(struct_addr, binary->left);
+			if (is_addressable(binary->left)) {
+				tmpreg(struct_addr_reg);
+				load_address(struct_addr_reg, binary->left);
+				I(copy, destination, Address { .base = struct_addr_reg, .offset = (s64)member->offset }, member_size);
+			} else {
+				tmpaddr(struct_addr, Struct->size);
+				output(struct_addr, binary->left);
 			
-			auto member_address = struct_addr;
-			member_address.offset += member->offset;
-			I(copy, destination, member_address, member_size);
+				auto member_address = struct_addr;
+				member_address.offset += member->offset;
+				I(copy, destination, member_address, member_size);
+			}
 		} else {
 			assert(as_pointer(dleft));
 			tmpreg(struct_addr_reg);
