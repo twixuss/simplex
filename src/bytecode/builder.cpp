@@ -433,15 +433,16 @@ void Builder::output_local_definition(Optional<Site> destination, Definition *de
 	if (definition->initial_value) {
 		output(address, definition->initial_value);
 	} else {
+		I(set, .d = address, .value = 0, .size = definition_size);
 		if (auto struct_ = direct_as<Struct>(definition->type)) {
 			for (auto member : struct_->member_list) {
 				if (member->initial_value) {
-					immediate_reporter.warning(definition->location, "default struct values with custom initializers are not implemented. initializing with zero");
-					break;
+					auto member_address = address;
+					member_address.offset += member->offset;
+					output(member_address, member->initial_value);
 				}
 			}
 		}
-		I(set, .d = address, .value = 0, .size = definition_size);
 	}
 	if (destination) {
 		I(copy, .d = destination.value(), .s = address, .size = definition_size);
@@ -881,16 +882,20 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			return;
 		}
 		case LowBinaryOperation::left_to_bool:
-		case LowBinaryOperation::right_to_bool: {
-			auto selected = binary->low_operation == LowBinaryOperation::left_to_bool ? binary->left : binary->right;
+		case LowBinaryOperation::right_to_bool:
+		case LowBinaryOperation::left_to_bool_not:
+		case LowBinaryOperation::right_to_bool_not: {
+			bool is_left = binary->low_operation == LowBinaryOperation::left_to_bool || binary->low_operation == LowBinaryOperation::left_to_bool_not;
+			bool is_not = binary->low_operation == LowBinaryOperation::right_to_bool_not || binary->low_operation == LowBinaryOperation::left_to_bool_not;
+			auto selected = is_left ? binary->left : binary->right;
 			tmpreg(value);
 			output(value, selected);
 			auto size = get_size(selected->type);
 			switch (size) {
-				case 1: I(cmp1, .d = destination, .a = value, .b = 0, .cmp = Comparison::not_equals); break;
-				case 2: I(cmp2, .d = destination, .a = value, .b = 0, .cmp = Comparison::not_equals); break;
-				case 4: I(cmp4, .d = destination, .a = value, .b = 0, .cmp = Comparison::not_equals); break;
-				case 8: I(cmp8, .d = destination, .a = value, .b = 0, .cmp = Comparison::not_equals); break;
+				case 1: I(cmp1, .d = destination, .a = value, .b = 0, .cmp = is_not ? Comparison::equals : Comparison::not_equals); break;
+				case 2: I(cmp2, .d = destination, .a = value, .b = 0, .cmp = is_not ? Comparison::equals : Comparison::not_equals); break;
+				case 4: I(cmp4, .d = destination, .a = value, .b = 0, .cmp = is_not ? Comparison::equals : Comparison::not_equals); break;
+				case 8: I(cmp8, .d = destination, .a = value, .b = 0, .cmp = is_not ? Comparison::equals : Comparison::not_equals); break;
 			}
 			return;
 		}
@@ -1264,6 +1269,18 @@ void Builder::output_impl(Site destination, Unary *unary) {
 				case 2: I(neg2, destination, destination); break;
 				case 4: I(neg4, destination, destination); break;
 				case 8: I(neg8, destination, destination); break;
+				default: invalid_code_path();
+			}
+			break;
+		}
+		case UnaryOperation::bnot: {
+			assert(is_concrete_integer(unary->type));
+			output(destination, unary->expression);
+			switch (get_size(unary->type)) {
+				case 1: I(xor1, destination, destination, ~0); break;
+				case 2: I(xor2, destination, destination, ~0); break;
+				case 4: I(xor4, destination, destination, ~0); break;
+				case 8: I(xor8, destination, destination, ~0); break;
 				default: invalid_code_path();
 			}
 			break;

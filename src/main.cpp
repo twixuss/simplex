@@ -7,6 +7,7 @@
 #include <tl/contiguous_hash_map.h>
 #include <tl/bucket_hash_map.h>
 #include <tl/dynamic_lib.h>
+#include <tl/opengl.h>
 
 #include "x.h"
 #include "reporter.h"
@@ -340,6 +341,7 @@ CmdArg args_handlers[] = {
 	{"-run",                       +[] { context_base->run_compiled_code = true; }},
 	{"-stats",                     +[] { context_base->print_stats = true; }},
 	{"-interactive",               +[] { context_base->run_interactive = true; }},
+	{"-gui",                       +[] { context_base->enable_gui = true; }},
 	{"-auto-inline",               +[] { context_base->should_inline_unspecified_lambdas = true; }},
 	{"-keep-build-artifacts",      +[] { context_base->keep_build_artifacts = true; }},
 	{"-optimize",                  +[] { context_base->optimize = true; }},
@@ -606,7 +608,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 		}
 
 		if (context_base->print_stats) {
-			println("Fiber allocations: {}", get_allocated_fiber_count());
+			println("Fiber allocations: {}", context_base->allocated_fiber_count);
+			println("Failed custom implicit casts: {}", context_base->stats.failed_custom_implicit_casts);
 		}
 
 #if ENABLE_STRING_HASH_COUNT

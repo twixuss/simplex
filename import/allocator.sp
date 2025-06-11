@@ -54,13 +54,13 @@ fn reallocate(allocator: PageAllocator, old: Allocation, new: Allocation): Alloc
     assert(is_power_of_2(new.alignment))
     var result = old
 
-    let first_page = floor(old.data as U64, PAGE_SIZE)
-    let last_page  = floor(old.data as U64 + new.size - 1, PAGE_SIZE)
-    if first_page != last_page {
-        result = allocate(allocator, new)
-        memcpy(result.data, old.data, old.size)
-        free(allocator, old)
-    }
+    if old.size / PAGE_SIZE <= new.size / PAGE_SIZE
+        return result
+
+    result = allocate(allocator, new)
+    memcpy(result.data, old.data, old.size)
+    free(allocator, old)
+
     result
 }
 
@@ -68,8 +68,9 @@ fn free(allocator: PageAllocator, old: Allocation): None => {
     VirtualFree(old.data, 0, MEM_RELEASE)
 }
 
-// TODO: add implicit conversion from PageAllocator to Allocator
-let dyn_page_allocator = Allocator(
+// Omitting return type breaks typechecking
+fn as_implicit(page_allocator: PageAllocator): Allocator => Allocator(
+//let dyn_page_allocator = Allocator(
     func = fn (state: *None, action: AllocatorAction, old: Allocation, new: Allocation): Allocation => {
         match (action) {
             AllocatorAction.allocate => page_allocator.allocate(new)

@@ -215,7 +215,7 @@ LowBinaryOperation integer_extension_low_op(umm source_size, bool source_signed,
 	invalid_code_path("can't produce LowBinaryOperation for integer extension: {} {} to {}", source_signed ? "signed" : "unsigned", source_size, destination_size);
 }
 
-bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_type, Reporter *reporter, bool apply) {
+Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expression, Expression *target_type, bool apply) {
 	auto expression = *_expression;
 	defer {
 		*_expression = expression;
@@ -227,18 +227,19 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 
 	// Equal types do not need implicit cast
 	if (types_match(direct_source_type, direct_target_type)) {
-		return true;
+		return {.did_cast = false, .success = true};
 	}
 	
 	// Autocast
 	if (auto unary = as<Unary>(expression)) {
 		if (unary->operation == UnaryOperation::atcast) {
-			if (implicitly_cast(&unary->expression, target_type, 0, apply)) {
+			Reporter temp_reporter;
+			if (implicitly_cast(&unary->expression, target_type, &temp_reporter, apply)) {
 				// Implicit cast available, just throw atcast out.
 				if (apply) {
 					expression = unary->expression;
 				}
-				return true;
+				return {.success = true};
 			} else {
 				// Try explicit cast
 				auto cast = make_cast(unary->expression, target_type);
@@ -247,9 +248,9 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 					if (apply) {
 						expression = cast;
 					}
-					return true;
+					return {.success = true};
 				}
-				return false;
+				return {.success = false};
 			}
 		}
 	}
@@ -260,7 +261,7 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 			if (apply) {
 				propagate_concrete_type(expression, target_type);
 			}
-			return true;
+			return {.success = true};
 		}
 	}
 
@@ -309,24 +310,21 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 								if (src_size <= dst_size) {
 									if (apply)
 										expression = make_cast(expression, target_type);
-									return true;
+									return {.success = true};
 								} else {
 									if (valid_due_to_masking())
-										return true;
+										return {.success = true};
 
-									if (reporter)
-										reporter->error(expression->location, "Can't implicitly convert {} to {}, because source is bigger than destination, meaning that there could be information loss.", source_type, target_type);
-									return false;
+									reporter.error(expression->location, "Can't implicitly convert {} to {}, because source is bigger than destination, meaning that there could be information loss.", source_type, target_type);
+									return {.success = false};
 								}
 							} else {
 								if (src_size <= dst_size) {
-									if (reporter)
-										reporter->error(expression->location, "Can't implicitly convert {} to {}, because the signs don't match.", source_type, target_type);
-									return false;
+									reporter.error(expression->location, "Can't implicitly convert {} to {}, because the signs don't match.", source_type, target_type);
+									return {.success = false};
 								} else {
-									if (reporter)
-										reporter->error(expression->location, "Can't implicitly convert {} to {}, because source is bigger than destination, meaning that there could be information loss, and the signs don't match.", source_type, target_type);
-									return false;
+									reporter.error(expression->location, "Can't implicitly convert {} to {}, because source is bigger than destination, meaning that there could be information loss, and the signs don't match.", source_type, target_type);
+									return {.success = false};
 								}
 							}
 
@@ -350,7 +348,7 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 				dereference->type = target_type;
 				expression = dereference;
 			}
-			return true;
+			return {.success = true};
 		}
 	}
 
@@ -360,7 +358,7 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 			if (apply) {
 				expression = make_cast(expression, target_type);
 			}
-			return true;
+			return {.success = true};
 		}
 	}
 
@@ -369,7 +367,7 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 		if (apply) {
 			expression = make_cast(expression, target_type);
 		}
-		return true;
+		return {.success = true};
 	}
 
 	// Pointer -> Pointer
@@ -386,14 +384,14 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 					if (apply) {
 						expression = make_cast(expression, target_type);
 					}
-					return true;
+					return {.success = true};
 				} else {
 					if (types_match(target_pointer->expression, BuiltinType::None)) {
 						// *T => *None
 						if (apply) {
 							expression = make_cast(expression, target_type);
 						}
-						return true;
+						return {.success = true};
 					}
 				}
 			}
@@ -408,7 +406,7 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 					literal->type = get_builtin_type(BuiltinType::U64);
 					expression = make_cast(expression, target_type);
 				}
-				return true;
+				return {.success = true};
 			}
 		}
 	}
@@ -422,7 +420,7 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 					cast->low_operation = integer_extension_low_op(get_size(direct_source_type), is_signed_integer(direct_source_type), get_size(Enum));
 					expression = cast;
 				}
-				return true;
+				return {.success = true};
 			}
 		}
 	}
@@ -436,7 +434,7 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 					cast->low_operation = integer_extension_low_op(get_size(direct_source_type), is_signed_integer(direct_source_type), get_size(Enum));
 					expression = cast;
 				}
-				return true;
+				return {.success = true};
 			}
 		}
 	}
@@ -446,7 +444,7 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 		if (auto some_enum = as_some_enum(expression)) {
 			auto name = as<Name>(some_enum->expression);
 			assert(name);
-			auto definition = try_find_enum_value(Enum, name, reporter);
+			auto definition = try_find_enum_value(Enum, name, &reporter);
 			if (definition) {
 				if (apply) {
 					auto literal = IntegerLiteral::create();
@@ -455,26 +453,90 @@ bool Typechecker::implicitly_cast(Expression **_expression, Expression *target_t
 					literal->value = definition->constant_value.value().U64;
 					expression = literal;
 				}
-				return true;
+				return {.success = true};
 			} else {
-				if (reporter) {
-					reporter->error(expression->location, "Enum {} does not contain {}", Enum->definition ? Enum->definition->name : u8"unnamed"s, name->name);
-					reporter->info(Enum->location, "Enum defined here");
-				}
-				return false;
+				reporter.error(expression->location, "Enum {} does not contain {}", Enum->definition ? Enum->definition->name : u8"unnamed"s, name->name);
+				reporter.info(Enum->location, "Enum defined here");
+				return {.success = false};
 			}
 		}
 	}
 
-	if (reporter) {
-		reporter->error(expression->location, "Expression of type `{}` is not implicitly convertible to `{}`.", source_type, target_type);
-		if (auto match = as<Match>(expression)) {
-			if (!match->default_case) {
-				reporter->help(expression->location, "This match has type None because there is no default case.");
+	// Custom cast
+	{
+		auto old_reporter = reporter;
+		reporter = {};
+
+		auto result = with_unwind_strategy([&]() -> Expression * {
+			GList<Definition *> possible_definitions;
+			resolve_name(possible_definitions, expression->location, definition_name_for_implicit_as);
+
+			Definition *selected_definition = 0;
+			Lambda *selected_lambda = 0;
+
+			for (auto definition : possible_definitions) {
+				assert(definition->mutability == Mutability::constant);
+				assert(definition->initial_value);
+
+				auto lambda = as<Lambda>(definition->initial_value);
+				assert(lambda);
+
+				if (types_match(lambda->head.parameters_block.definition_list[0]->type, expression->type) &&
+					types_match(lambda->head.return_type, direct_target_type)
+				) {
+					// TODO: should detect redefinition of cast operators earlier maybe?
+					//       probably in typecheck(Lambda) ?
+					if (selected_definition) {
+						reporter.error(definition->location, "Redefinition of a cast operator.");
+						reporter.error(selected_definition->location, "Previously declared here:");
+						fail();
+					}
+
+					selected_definition = definition;
+					selected_lambda = lambda;
+				}
 			}
+
+			if (!selected_definition)
+				return 0;
+
+			auto callable = Name::create();
+			callable->name = definition_name_for_implicit_as;
+			callable->location = expression->location;
+			callable->possible_definitions.set(selected_definition);
+			callable->type = selected_definition->type;
+
+			auto call = Call::create();
+			call->location = expression->location;
+			call->callable = callable;
+			call->arguments.add({.expression = expression, .parameter = selected_lambda->head.parameters_block.definition_list[0]});
+			call->type = selected_lambda->head.return_type;
+			call->call_kind = CallKind::lambda;
+
+			return call;
+		});
+		
+		old_reporter.reports.add(reporter.reports);
+		this->reporter = old_reporter;
+
+		if (result) {
+			if (apply) {
+				expression = result;
+			}
+			return {.success = true};
+		}
+	
+		atomic_increment(&context_base->stats.failed_custom_implicit_casts);
+	}
+
+	reporter.error(expression->location, "Expression of type `{}` is not implicitly convertible to `{}`.", source_type, target_type);
+	if (auto match = as<Match>(expression)) {
+		if (!match->default_case) {
+			reporter.help(expression->location, "This match has type None because there is no default case.");
 		}
 	}
-	return false;
+
+	return {.success = false};
 }
 
 void Typechecker::why_is_this_immutable(Expression *expr) {
@@ -504,7 +566,11 @@ void Typechecker::why_is_this_immutable(Expression *expr) {
 		}
 	} else if (auto dot = as<Binary>(expr); dot && dot->operation == BinaryOperation::dot) {
 		if (auto pointer = as_pointer(dot->left->type)) {
-			reporter.help(dot->left->location, "Because {} is a pointer to {}.", dot->left, Meaning(pointer->mutability));
+			String location = dot->left->location;
+			if (auto definition = direct_as<Definition>(dot->left)) {
+				location = definition->location;
+			}
+			reporter.help(location, "Because {} is a pointer to {}.", dot->left, Meaning(pointer->mutability));
 		}
 	}
 }
@@ -959,7 +1025,7 @@ Expression *Typechecker::instantiate_lambda_template(Call *original_call, Lambda
 	new_callable_name->type = instantiated_lambda_definition->type;
 	call->callable = new_callable_name;
 
-	return typecheck_lambda_call(call, instantiated_lambda, &instantiated_lambda->head, true);
+	return typecheck_lambda_call(call, instantiated_lambda, &instantiated_lambda->head, true).expression;
 }
 
 bool Typechecker::should_inline(Call *call, Lambda *lambda) {
@@ -989,14 +1055,14 @@ Struct *Typechecker::get_struct_template_instantiation(Struct *template_struct, 
 	return instantiated_struct;
 }
 
-Expression *Typechecker::typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply) {
+Typechecker::TypecheckLambdaCallResult Typechecker::typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply) {
 
 	auto &arguments = call->arguments;
 	auto &callable = call->callable;
 
 	if (lambda && lambda->head.is_template) {
 		immediate_reporter.warning(lambda->location, "TODO: implement template instantiation caching");
-		return instantiate_lambda_template(call, lambda);
+		return {.expression = instantiate_lambda_template(call, lambda)};
 	}
 
 	if (!yield_while_null(call->location, &head->return_type)) {
@@ -1006,7 +1072,7 @@ Expression *Typechecker::typecheck_lambda_call(Call *call, Lambda *lambda, Lambd
 	}
 
 	auto &parameters = head->parameters_block.definition_list;
-
+	
 	sort_arguments(arguments, parameters, call->location, head, lambda ? lambda->definition : 0);
 
 	if (can_generate_vectorized_lambdas) {
@@ -1031,6 +1097,9 @@ Expression *Typechecker::typecheck_lambda_call(Call *call, Lambda *lambda, Lambd
 		}
 	}
 
+	TypecheckLambdaCallResult result = {};
+
+	result.expression = call;
 
 	for (umm i = 0; i < arguments.count; ++i) {
 		auto &argument = arguments[i];
@@ -1038,10 +1107,14 @@ Expression *Typechecker::typecheck_lambda_call(Call *call, Lambda *lambda, Lambd
 
 		argument.parameter = parameter;
 
-		if (!implicitly_cast(&argument.expression, parameter->type, &reporter, apply)) {
+		auto cast_result = implicitly_cast(&argument.expression, parameter->type, apply);
+
+		if (!cast_result) {
 			reporter.info(parameter->location, "Parameter declared here:");
 			fail();
 		}
+
+		result.number_of_implicit_casts += cast_result.did_cast;
 	}
 
 	if (apply) {
@@ -1051,19 +1124,17 @@ Expression *Typechecker::typecheck_lambda_call(Call *call, Lambda *lambda, Lambd
 
 	if (lambda) {
 		if (apply && should_inline(call, lambda)) {
-			return inline_body(call, lambda);
-		} else {
-			return call;
+			result.expression = inline_body(call, lambda);
 		}
 	}
-	return call;
+	return result;
 };
 Expression *Typechecker::typecheck_constructor(Call *call, Struct *Struct) {
 	call->call_kind = CallKind::constructor;
 
 	auto &arguments = call->arguments;
 	auto &members = Struct->member_list;
-
+	
 	sort_arguments(arguments, members, call->location, Struct, Struct->definition, {.allow_missing = true});
 
 	for (umm i = 0; i < arguments.count; ++i) {
@@ -1241,6 +1312,98 @@ void Typechecker::ensure_mutable(Expression *expression) {
 	}
 }
 
+bool Typechecker::can_reference(Block *block, Definition *definition) {
+	// Definition order in lambdas or heads matters - you can't refence stuff that is declared later.
+	// Exceptions are constants.
+	// Because lambda content typechecking happens in order, just check if the type is set - if it is,
+	// the definition is declared before, otherwise after.
+
+	if (block->container && block->container == definition->container && (as<Lambda>(block->container) || as<LambdaHead>(block->container))) {
+		if (definition->mutability != Mutability::constant && !definition->type) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+LambdaHead *container_as_lambda_head(Expression *container) {
+	if (!container)
+		return 0;
+	switch (container->kind) {
+		case NodeKind::Lambda: return &((Lambda *)container)->head;
+		case NodeKind::LambdaHead: return (LambdaHead *)container;
+		default: return 0;
+	}
+}
+
+void Typechecker::resolve_name_in_block(GList<Definition *> &possible_definitions, Block *block, String location, String name) {
+	// TODO: should take the lock if block is global, but
+	// 
+	// make_scoped(lock, LockIfBlockIsGlobal{block});
+	scoped_lock_if_block_is_global(block);
+
+	for (auto definition : to_optional(block->definition_map.find(name).value).value_or({})) {
+		if (!can_reference(block, definition)) {
+			continue;
+		}
+					
+		possible_definitions.add(definition);
+
+
+		if (block == &context->global_block.unprotected) {
+			for (auto &typecheck_entry : typecheck_entries) {
+				if (typecheck_entry.node == definition) {
+					entry->dependency = &typecheck_entry;
+					break;
+				}
+			}
+		}
+			
+		if (name == "test") {
+			int x = 42;
+		}
+
+		if (!yield_while_null(location, &definition->type)) {
+			// Sometimes this error is meaningless and noisy because is is caused by another error.
+			// But other times compiler fails with only this error, which is not printed in case
+			// print_wait_failures is false.
+
+			//if (print_wait_failures) {
+				reporter.error(location, "Definition referenced by this name was not properly typechecked.");
+				reporter.info(definition->location, "Here is the bad definition:");
+			//}
+			fail();
+		}
+
+		entry->dependency = 0;
+	}
+}
+void Typechecker::resolve_name(GList<Definition *> &possible_definitions, String location, String name) {
+	if (name == "bar") {
+		int x = 5;
+	}
+
+	possible_definitions.clear();
+
+	// FIXME: Duplicated :REACHABLE_BLOCK_NAMES:
+	auto previous_head = container_as_lambda_head(current_block->container);
+
+	for (auto block = current_block; block; block = block->parent) {
+		if (container_as_lambda_head(block->container) != previous_head) {
+			// Skip outer container, so nested lambda can't access stuff in outer lambda.
+			block = &context->global_block.unprotected;
+			previous_head = 0;
+		}
+
+		resolve_name_in_block(possible_definitions, block, location, name);
+
+		if (possible_definitions.count) {
+			return;
+		}
+	}
+}
+
 Node             *Typechecker::typecheck(Node *node, bool can_substitute) {
 	++progress;
 	defer { ++progress; };
@@ -1394,7 +1557,7 @@ Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_s
 	if (definition->uid == 3651) {
 		int x = 41;
 	}
-	if (definition->name == "TokenKind") {
+	if (definition->name == "as_implicit") {
 		int x = 41;
 	}
 
@@ -1430,8 +1593,8 @@ Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_s
 				make_concrete(definition->initial_value);
 			}
 		}
-			
-		if (current_block == &context->global_block.unprotected || definition->mutability == Mutability::constant) {
+		
+		if (!current_container && current_block == &context->global_block.unprotected || definition->mutability == Mutability::constant) {
 			auto constant_check = is_constant(definition->initial_value);
 			if (!constant_check) {
 				if (definition->mutability == Mutability::constant) {
@@ -1741,76 +1904,31 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 	return lambda;
 }
 Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
-	if (name->name == "test") {
+	if (name->name == "t") {
 		int x = 42;
 	}
 
 	name->possible_definitions.clear();
+	
+	// FIXME: Duplicated :REACHABLE_BLOCK_NAMES:
+	auto previous_head = container_as_lambda_head(current_block->container);
 
 	for (auto block = current_block; block; block = block->parent) {
-		// TODO: should take the lock if block is global, but
-		// 
-		// make_scoped(lock, LockIfBlockIsGlobal{block});
-		scoped_lock_if_block_is_global(block);
-
-		auto can_reference = [&](Definition *definition) {
-			// Definition order in lambdas or heads matters - you can't refence stuff that is declared later.
-			// Exceptions are constants.
-			// Because lambda content typechecking happens in order, just check if the type is set - if it is,
-			// the definition is declared before, otherwise after.
-
-			if (block->container && block->container == definition->container && (as<Lambda>(block->container) || as<LambdaHead>(block->container))) {
-				if (definition->mutability != Mutability::constant && !definition->type) {
-					return false;
-				}
-			}
-
-			return true;
-		};
-
-		for (auto definition : to_optional(block->definition_map.find(name->name).value).value_or({})) {
-			if (!can_reference(definition)) {
-				continue;
-			}
-					
-			name->possible_definitions.add(definition);
-
-
-			if (block == &context->global_block.unprotected) {
-				for (auto &typecheck_entry : typecheck_entries) {
-					if (typecheck_entry.node == definition) {
-						entry->dependency = &typecheck_entry;
-						break;
-					}
-				}
-			}
-			
-			if (name->name == "test") {
-				int x = 42;
-			}
-
-			if (!yield_while_null(name->location, &definition->type)) {
-				// Sometimes this error is meaningless and noisy because is is caused by another error.
-				// But other times compiler fails with only this error, which is not printed in case
-				// print_wait_failures is false.
-
-				//if (print_wait_failures) {
-					reporter.error(name->location, "Definition referenced by this name was not properly typechecked.");
-					reporter.info(definition->location, "Here is the bad definition:");
-				//}
-				fail();
-			}
-
-			entry->dependency = 0;
+		if (container_as_lambda_head(block->container) != previous_head) {
+			// Skip outer container, so nested lambda can't access stuff in outer lambda.
+			block = &context->global_block.unprotected;
+			previous_head = 0;
 		}
-		
+
+		resolve_name_in_block(name->possible_definitions, block, name->location, name->name);
+
 		if (name->possible_definitions.count == 0) {
 			Definition *previous_successful_definition = 0;
 			Binary *previous_successful_dot = 0;
 
 			for (auto definition : currently_used_definitions) {
 				
-				assert(can_reference(definition), "currently_used_definitions should not contain unreferencable stuff!");
+				assert(can_reference(block, definition), "currently_used_definitions should not contain unreferencable stuff!");
 				// if (!can_reference(definition)) {
 				// 	continue;
 				// }
@@ -1909,7 +2027,10 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 }
 Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 	defer { assert(call->callable->type != 0); };
-	if (call->location == u8"l.source.end()"s) {
+	if (call->location == u8"Bar(b = 10)"s) {
+		int x = 4;
+	}
+	if (call->uid == 356) {
 		int x = 4;
 	}
 	if (auto binary = as<Binary>(call->callable)) {
@@ -1934,6 +2055,11 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 
 				call->arguments.insert_at({.expression = binary->left}, 0);
 
+				// :PERFORMANCE:
+				// Deep copy on each dot call seems bad.
+				// TODO: Could syntactically disambiguate dot member calls and dot lambda calls by parenthesizing.
+				auto call_copy = Copier{}.deep_copy(call);
+
 				Reporter as_is_reporter;
 				{
 					scoped_exchange(reporter, as_is_reporter);
@@ -1942,7 +2068,9 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 						return result;
 					}
 				}
-						
+				
+				call = call_copy;
+
 				Reporter by_pointer_reporter;
 				{
 					scoped_exchange(reporter, by_pointer_reporter);
@@ -2023,10 +2151,10 @@ typecheck_dot_succeeded:
 	if (auto struct_ = as<Struct>(directed_callable)) {
 		return typecheck_constructor(call, struct_);
 	} else if (auto lambda = as<Lambda>(directed_callable)) {
-		return typecheck_lambda_call(call, lambda, &lambda->head);
+		return typecheck_lambda_call(call, lambda, &lambda->head).expression;
 	} else if (auto definition = as<Definition>(directed_callable)) {
 		if (auto lambda_head = direct_as<LambdaHead>(definition->type)) {
-			return typecheck_lambda_call(call, 0, lambda_head);
+			return typecheck_lambda_call(call, 0, lambda_head).expression;
 		} else {
 			reporter.error(call->callable->location, "Expression of type {} is not callable.", call->callable->type);
 			reporter.info(definition->location, "See definition");
@@ -2041,6 +2169,7 @@ typecheck_dot_succeeded:
 			Definition *definition = 0;
 			Lambda *lambda = 0;
 			LambdaHead *lambda_head = 0;
+			umm number_of_implicit_casts = 0;
 			Struct *struct_ = 0;
 			Reporter reporter;
 		};
@@ -2075,18 +2204,13 @@ typecheck_dot_succeeded:
 		for (auto &overload : overloads) {
 			scoped_exchange(reporter, overload.reporter);
 			with_unwind_strategy([&] {
-				if (typecheck_lambda_call(call, overload.lambda, overload.lambda_head, false)) {
-					matching_overloads.add(&overload);
-				}
+				auto result = typecheck_lambda_call(call, overload.lambda, overload.lambda_head, false);
+				assert(result.expression);
+				overload.number_of_implicit_casts = result.number_of_implicit_casts;
+				matching_overloads.add(&overload);
 			});
 		}
 
-		if (matching_overloads.count == 1) {
-			auto matching_overload = matching_overloads[0];
-			name->possible_definitions.set(matching_overload->definition);
-			name->type = name->definition()->type;
-			return typecheck_lambda_call(call, matching_overload->lambda, matching_overload->lambda_head);
-		}
 		if (matching_overloads.count == 0) {
 			reporter.error(call->location, "No matching overload was found.");
 			foreach (it, overloads) {
@@ -2101,6 +2225,15 @@ typecheck_dot_succeeded:
 			fail();
 		}
 
+		quick_sort(matching_overloads, [&](Overload *o) { return o->number_of_implicit_casts; });
+
+		if (matching_overloads.count == 1 || matching_overloads[0]->number_of_implicit_casts < matching_overloads[1]->number_of_implicit_casts) {
+			auto matching_overload = matching_overloads[0];
+			name->possible_definitions.set(matching_overload->definition);
+			name->type = name->definition()->type;
+			return typecheck_lambda_call(call, matching_overload->lambda, matching_overload->lambda_head).expression;
+		}
+
 		reporter.error(call->location, "Multiple matching overload were found:");
 		foreach (it, matching_overloads) {
 			auto [i, overload] = it.key_value();
@@ -2108,7 +2241,7 @@ typecheck_dot_succeeded:
 		}
 		fail();
 	} else if (auto head = as<LambdaHead>(directed_callable->type)) {
-		return typecheck_lambda_call(call, 0, head, true);
+		return typecheck_lambda_call(call, 0, head, true).expression;
 	}
 
 	reporter.error(call->callable->location, "Expression of type {} can't be called", call->callable->type);
@@ -2323,7 +2456,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 					binary->type = get_builtin_type(BuiltinType::None);
 					return binary;
 				})) {
-					reporter.reports.add(regular_reporter.reports);
+					regular_reporter.reports.add(reporter.reports);
 					return result;
 				}
 			}
@@ -2502,13 +2635,6 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 					auto ass = make_binary(BinaryOperation::ass, Copier{}.deep_copy(first_dot), make_name(tmp, tmp->location), 0, binary->location);
 					block->add(ass);
 				
-					if (block->uid == 543)
-						debug_node_to_print = block;
-
-					print_ast(block);
-					println();
-					println();
-				
 					// Allow block to be substituted
 					return as<Expression>(typecheck((Node *)block, true));
 				}
@@ -2614,10 +2740,10 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 
 				// Try implicit cast last
 				// because of auto dereference
-				if (implicitly_cast(&binary->left, binary->right, 0, false)) {
-					implicitly_cast(&binary->left, binary->right, &reporter, true);
-					binary->type = binary->right;
-					return binary;
+				Reporter cast_reporter;
+				if (implicitly_cast(&binary->left, binary->right, &cast_reporter, false)) {
+					implicitly_cast(&binary->left, binary->right, true);
+					return binary->left;
 				}
 
 				reporter.error(binary->location, "No conversion from {} to {} is available.", binary->left->type, binary->right);
@@ -2931,7 +3057,10 @@ c
 			case BinaryOperation::neq: {
 				if (auto pointer = is_pointer_to_none_comparison(binary->left, binary->right)) {
 					binary->type = get_builtin_type(BuiltinType::Bool);
-					binary->low_operation = pointer == binary->left ? LowBinaryOperation::left_to_bool : LowBinaryOperation::right_to_bool;
+					binary->low_operation = 
+						pointer == binary->left ? 
+							binary->operation == BinaryOperation::neq ? LowBinaryOperation::left_to_bool  : LowBinaryOperation::left_to_bool_not  : 
+							binary->operation == BinaryOperation::neq ? LowBinaryOperation::right_to_bool : LowBinaryOperation::right_to_bool_not ;
 					return binary;
 				}
 				break;
@@ -3163,7 +3292,7 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 			}
 
 			if (!unary->type) {
-				reporter.error(unary->location, "Unary minus can't be applied to expression of type {}", unary->expression->type);
+				reporter.error(unary->location, "Unary {} can't be applied to expression of type {}", unary->operation, unary->expression->type);
 				fail();
 			}
 			break;
@@ -3188,6 +3317,33 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 				fail();
 			}
 			unary->type = unary->expression->type;
+			break;
+		}
+		case UnaryOperation::bnot: {
+			typecheck(&unary->expression);
+			if (auto literal = as<IntegerLiteral>(unary->expression)) {
+				literal->value = ~literal->value;
+				return literal;
+			}
+			if (auto builtin = as<BuiltinTypeName>(unary->expression->type)) {
+				switch (builtin->type_kind) {
+					case BuiltinType::S8:
+					case BuiltinType::S16:
+					case BuiltinType::S32:
+					case BuiltinType::S64:
+					case BuiltinType::U8:
+					case BuiltinType::U16:
+					case BuiltinType::U32:
+					case BuiltinType::U64:
+						unary->type = unary->expression->type;
+						break;
+				}
+			}
+
+			if (!unary->type) {
+				reporter.error(unary->location, "Unary {} can't be applied to expression of type {}", unary->operation, unary->expression->type);
+				fail();
+			}
 			break;
 		}
 		case UnaryOperation::atcast: {

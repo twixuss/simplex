@@ -132,6 +132,33 @@ u64 get_hash(ArrayDesc const &a) {
 
 GHashMap<ArrayDesc, u32> built_array_types;
 
+GLinearSet<LambdaHead *> went_over_heads;
+
+u32 get_first_matching_head_uid(LambdaHead *head) {
+	for (auto other : went_over_heads) {
+		if (head->parameters_block.definition_list.count != other->parameters_block.definition_list.count)
+			goto next_head;
+
+		for (umm i = 0; i < head->parameters_block.definition_list.count; ++i) {
+			if (!types_match(head->parameters_block.definition_list[i]->type, other->parameters_block.definition_list[i]->type)) {
+				goto next_head;
+			}
+		}
+
+		if (!types_match(head->return_type, other->return_type)) {
+			goto next_head;
+		}
+
+		// Signature matches with previous.
+		return other->uid;
+
+	next_head:;
+	}
+
+	went_over_heads.add(head);
+	return head->uid;
+}
+
 void append(StringBuilder &builder, CType type) {
 	auto t = (Expression *)type.type;
 	visit_one(t, Combine{
@@ -195,6 +222,7 @@ void append(StringBuilder &builder, CUnaryOperation op) {
 		case UnaryOperation::pointer: return append(builder, "*");
 		case UnaryOperation::dereference: return append(builder, "*");
 		case UnaryOperation::addr: return append(builder, "&");
+		case UnaryOperation::bnot: return append(builder, "~");
 		default: return append_format(builder, "(invalid unop {})", op.op);
 	}
 }
@@ -305,8 +333,7 @@ void append_address(StringBuilder &code, Node *node) {
 				append_node(code, definition->initial_value);
 				append_line(code, "{} _{} = _{};", ctype(definition->type), node->uid, definition->initial_value->uid);
 			} else {
-				append_line(code, "{} _{};", ctype(definition->type), node->uid);
-				append_line(code, "memset(&_{}, 0, sizeof(_{}));", node->uid, node->uid);
+				append_line(code, "{} _{} = {{0}};", ctype(definition->type), node->uid);
 			}
 			append_line(code, "{} *a{} = &_{};", ctype(definition->type), node->uid, definition->uid);
 		},
@@ -397,8 +424,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 	}
 
 	if (auto expression = as<Expression>(node); expression && !types_match(expression->type, BuiltinType::None) && define) {
-		append_line(code, "{} _{};", ctype(expression->type), node->uid);
-		append_line(code, "memset(&_{}, 0, sizeof(_{}));", node->uid, node->uid);
+		append_line(code, "{} _{} = {{0}};", ctype(expression->type), node->uid);
 	}
 
 	visit_one(node, Combine{
@@ -439,7 +465,14 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				append_node(code, definition->initial_value);
 				append_line(code, "_{} = _{};", node->uid, definition->initial_value->uid);
 			} else {
-				append_line(code, "memset(&_{}, 0, sizeof(_{}));", node->uid, node->uid);
+				if (auto Struct = direct_as<::Struct>(definition->type)) {
+					for (auto member : Struct->member_list) {
+						if (member->initial_value) {
+							append_node(code, member->initial_value);
+							append_line(code, "_{}._{} = _{};", node->uid, member->uid, member->initial_value->uid);
+						}
+					}
+				}
 			}
 		},
 		[&](ZeroInitialized *zero_initialized) {
@@ -491,7 +524,9 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 
 			if (binary->operation == BinaryOperation::as) {
 				append_node(code, binary->left);
-				append_line(code, "_{} = ({})(_{});", node->uid, ctype(binary->right), binary->left->uid);
+				if (!types_match(binary->right, get_builtin_type(BuiltinType::None))) {
+					append_line(code, "_{} = ({})(_{});", node->uid, ctype(binary->right), binary->left->uid);
+				}
 				return;
 			}
 			
@@ -764,30 +799,41 @@ void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_de
 		return;
 	}
 	visit(root, Combine {
-		[&] (auto) {},
-		[&] (Lambda *lambda) {
+		[&](auto) {},
+		[&](Lambda *lambda) {
 			if (lambda->head.is_template)
 				return ForEach_dont_recurse;
 			return ForEach_continue;
 		},
-		[&] (Expression *expression) {
+		[&](Expression *expression) {
 			if (auto array = direct_as<ArrayType>(expression)) {
 				types_to_declare.add(array);
 			} else if (auto array = direct_as<ArrayType>(expression->type)) {
 				types_to_declare.add(array);
 			}
 		},
-		[&] (ArrayType *array) {
+		[&](ArrayType *array) {
 			add_dependencies(array->element_type, types_to_declare);
 			types_to_declare.add(array);
 		},
-		[&] (Struct *s) {
+		[&](Struct *s) {
 			int dummy = 443;
 			for (auto member : s->member_list) {
 				add_dependencies(member, types_to_declare);
 			}
 			types_to_declare.add(s);
 			return ForEach_dont_recurse;
+		},
+		[&](LambdaHead *head) {
+			add_dependencies(head->return_type, types_to_declare);
+			for (auto &parameter : head->parameters_block.definition_list) {
+				add_dependencies(parameter, types_to_declare);
+			}
+			types_to_declare.add(head);
+		},
+		[&](Enum *Enum) {
+			add_dependencies(Enum->underlying_type, types_to_declare);
+			types_to_declare.add(Enum);
 		},
 		[&](Name *name) {
 			add_dependencies(name->definition(), types_to_declare);
@@ -855,7 +901,7 @@ typedef int64_t S64;
 
 	append(builder, R"(
 //
-// Struct definitions
+// Type definitions
 //
 )");
 	
@@ -865,8 +911,12 @@ typedef int64_t S64;
 			[&] (Struct *s) {
 				append_format(builder, "struct _{} {{ // {}\n", s->uid, s->definition ? s->definition->name : to_string(get_source_location(s->location)));
 				++tabs;
-				for (auto member : s->member_list) {
-					append_line(builder, "{} _{};", ctype(member->type), member->uid);
+				if (s->member_list.count) {
+					for (auto member : s->member_list) {
+						append_line(builder, "{} _{};", ctype(member->type), member->uid);
+					}
+				} else {
+					append_line(builder, "char dummy;");
 				}
 				--tabs;
 				append(builder, "};\n");
@@ -882,6 +932,25 @@ R"(typedef struct {{
 )", ctype(array->element_type), array->count.value(), array->uid);
 
 				built_array_types.get_or_insert(array) = array->uid;
+			},
+			[&] (LambdaHead *head) {
+				append_line(builder, "/* {} */", head->location);
+				if (!head->is_template) {
+					append_format(builder, "typedef {} (*_{})(", ctype(head->return_type), head->uid);
+					for (umm i = 0; i < head->parameters_block.definition_list.count; ++i) {
+						auto param = head->parameters_block.definition_list[i];
+
+						if (i) {
+							append(builder, ", ");
+						}
+
+						append(builder, ctype(param->type));
+					}
+					append(builder, ");\n");
+				}
+			},
+			[&](Enum *Enum) {
+				append_format(builder, "typedef {} _{};\n", ctype(Enum->underlying_type), Enum->uid);
 			},
 		});
 	}
@@ -948,26 +1017,6 @@ void print_S64(int64_t v);
 		},
 	});
 	
-	visit(global_block, Combine {
-		[&] (auto) {},
-		[&] (Lambda *lambda) {
-			append_line(builder, "/* {} */", lambda->location);
-			if (!lambda->head.is_template) {
-				append_format(builder, "typedef {} (*_{})(", ctype(lambda->head.return_type), lambda->head.uid);
-				for (umm i = 0; i < lambda->head.parameters_block.definition_list.count; ++i) {
-					auto param = lambda->head.parameters_block.definition_list[i];
-
-					if (i) {
-						append(builder, ", ");
-					}
-
-					append(builder, ctype(param->type));
-				}
-				append(builder, ");\n");
-			}
-		},
-	});
-	
 	append(builder, R"(
 //
 // Function implementations/definitions
@@ -1018,10 +1067,12 @@ void print_S64(int64_t v);
 				lines += c == '\n';
 			}
 		});
-		append_format(builder, R"(
+		if (!generate_readable_code) {
+			append_format(builder, R"(
 #line {} "{}.c"
 )", lines + 3, EscapedCString{path_base});
-	}
+			}
+		}
 
 	append_format(builder, R"(
 int main() {{

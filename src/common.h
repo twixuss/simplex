@@ -206,6 +206,7 @@ struct CompilerContextBase {
 	bool print_stats                       : 1 = false;
 	bool should_print_ast                  : 1 = false;
 	bool run_interactive                   : 1 = false;
+	bool enable_gui                        : 1 = false;
 	bool should_inline_unspecified_lambdas : 1 = false;
 	bool check_that_types_are_types        : 1 = true;
 	bool keep_build_artifacts              : 1 = false;
@@ -217,7 +218,11 @@ struct CompilerContextBase {
 	LockProtected<GHashMap<utf8 *, String>, SpinLock> content_start_to_file_name;
 
 	LockProtected<GList<ReusableFiber>, SpinLock> fibers_to_reuse;
-	u32 allocated_fiber_count;
+	u32 allocated_fiber_count = 0;
+
+	struct {
+		u32 failed_custom_implicit_casts = 0;
+	} stats;
 };
 
 struct CompilerContext;

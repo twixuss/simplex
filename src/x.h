@@ -223,6 +223,7 @@ ENUMERATE_UNARY_OPERATIONS(x, y)
 	x(plus, "+") \
 	x(minus, "-") \
 	x(lnot, "!") \
+	x(bnot, "~") \
 	x(star, "*") \
 	x(addr, "&") \
 	x(typeof, "typeof") \

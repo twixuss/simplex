@@ -123,6 +123,8 @@ struct Parser {
 
 	bool is_valid_name_part(TokenKind kind);
 
+	void ensure_signature_validity_for_operators(Definition *definition);
+
 	void parse_name(String *location, String *name);
 
 	// Parses parse_expression_1 with binary operators and definitions.

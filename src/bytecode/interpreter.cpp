@@ -1,3 +1,11 @@
+#include <imgui.h>
+#include <backends/imgui_impl_win32.h>
+#include <backends/imgui_impl_opengl3.h>
+
+#include <conio.h>
+
+#undef assert
+
 #include "interpreter.h"
 #include "../reporter.h"
 #include "../nodes.h"
@@ -6,17 +14,97 @@
 #include "../compiler_context.h"
 
 #include <tl/linear_set.h>
+#include <tl/opengl.h>
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <tl/win32.h>
 
-#include <conio.h>
+ImVec2 operator-(ImVec2 a, ImVec2 b) { return {a.x - b.x, a.y - b.y}; }
+
+HWND hwnd;
+v2s screen_size;
+
+gl::Functions gl_functions;
+gl::Functions *tl_opengl_functions() {
+	return &gl_functions;
+}
+
+LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+	extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+	if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp))
+		return true;
+
+	switch (msg) {
+		case WM_CLOSE: {
+			PostQuitMessage(0);
+			return 0;
+		}
+		case WM_SIZE: {
+			v2s new_size = {
+				LOWORD(lp),
+				HIWORD(lp),
+			};
+
+			if (!new_size.x || !new_size.y || (wp == SIZE_MINIMIZED))
+				return 0;
+
+			screen_size = new_size;
+			return 0;
+		}
+	}
+	return DefWindowProcW(hwnd, msg, wp, lp);
+}
 
 namespace Bytecode {
 
 String exception_info;
 
+bool Interpreter::init_gui() {
+	WNDCLASSEXW c {
+		.cbSize = sizeof c,
+		.lpfnWndProc = wnd_proc,
+		.hInstance = GetModuleHandleW(0),
+		.hCursor = LoadCursorW(0, IDC_ARROW),
+		.lpszClassName = L"Simplex Bytecode Debugger",
+	};
+	if (!RegisterClassExW(&c)) {
+		current_logger.error("RegisterClassExW failed. {}", win32_error());
+		return false;
+	}
+	hwnd = CreateWindowExW(0, c.lpszClassName, c.lpszClassName, WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, c.hInstance, 0);
+	if (!hwnd || hwnd == INVALID_HANDLE_VALUE) {
+		current_logger.error("CreateWindowExW failed. {}", win32_error());
+		return false;
+	}
+
+	init_rawinput(RawInput_mouse);
+
+	if (!gl::init_opengl((NativeWindowHandle)hwnd, gl::Init_debug)) {
+		current_logger.error("gl::init_opengl failed. {}", win32_error());
+		return false;
+	}
+
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_CULL_FACE);
+	glDepthFunc(GL_LESS);
+
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO &io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+	io.ConfigDragClickToInputText = true;
+	
+	auto &style = ImGui::GetStyle();
+	style.HoverDelayShort = 2.0f;
+	
+	ImGui::StyleColorsDark();
+
+	ImGui_ImplWin32_InitForOpenGL(hwnd);
+	ImGui_ImplOpenGL3_Init();
+	return true;
+}
 Optional<u64> Interpreter::run(Bytecode *bytecode, umm entry_index, bool interactive) {
 	scoped_replace(current_interpreter, this);
 	this->bytecode = bytecode;
@@ -48,6 +136,43 @@ Optional<u64> Interpreter::run(Bytecode *bytecode, umm entry_index, bool interac
 			case InstructionKind::copyext:
 				load_extern_function(i.v_copyext.lib, i.v_copyext.name);
 				break;
+		}
+	}
+
+	if (interactive && context_base->enable_gui) {
+		if (!init_gui()) {
+			context_base->enable_gui = false;
+		}
+
+		MSG msg;
+		while (1) {
+			MSG msg;
+			while (PeekMessageW(&msg, 0, 0, 0, PM_REMOVE)) {
+				switch (msg.message) {
+					case WM_QUIT: {
+						return 0;
+					}
+				}
+
+				TranslateMessage(&msg);
+				DispatchMessageW(&msg);
+			}
+		
+			ImGui_ImplOpenGL3_NewFrame();
+			ImGui_ImplWin32_NewFrame();
+			ImGui::NewFrame();
+
+
+			// GUI
+
+
+			ImGui::Render();
+			glViewport(0, 0, screen_size.x, screen_size.y);
+
+			ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+		
+			gl::present();
+			current_temporary_allocator.clear();
 		}
 	}
 
@@ -85,9 +210,10 @@ Optional<u64> Interpreter::run(Bytecode *bytecode, umm entry_index, bool interac
 
 	return val8(Address { .offset = (s64)((stack + stack_size) - 8)});
 }
+
+
 inline static thread_local char spaces[] = "                                                                                                                                                                                                                                                               ";
 void Interpreter::run_one_instruction() {
-	auto i = bytecode->instructions[current_instruction_index];
 	auto std_out = GetStdHandle(STD_OUTPUT_HANDLE);
 
 	bool skip = false;
@@ -105,7 +231,7 @@ void Interpreter::run_one_instruction() {
 			skip = true;
 		},
 		[&](RunWhileLocationIs r) {
-			if (r.location.data == i.source_location.data && r.location.count == i.source_location.count) {
+			if (r.location.data == bytecode->instructions[current_instruction_index].source_location.data && r.location.count == bytecode->instructions[current_instruction_index].source_location.count) {
 				skip = true;
 			}
 		},
@@ -120,8 +246,8 @@ void Interpreter::run_one_instruction() {
 			}
 
 			skip = true;
-			if (i.source_location) {
-				auto l = get_source_location(i.source_location);
+			if (bytecode->instructions[current_instruction_index].source_location) {
+				auto l = get_source_location(bytecode->instructions[current_instruction_index].source_location);
 				if (l.file == r.file) {
 					if (l.location_line_number != r.line) {
 						if (find_ret_index(current_instruction_index) == find_ret_index(r.instruction_index)) {
@@ -167,231 +293,268 @@ void Interpreter::run_one_instruction() {
 				print_to_console(Span(start, span.data + span.count));
 			}
 		});
-
-	redraw:
+	
+		instruction_index_before_moving_ip = current_instruction_index;
+		
+		if (context_base->enable_gui) {
+		} else {
+		redraw:
 				
-		SetConsoleCursorPosition(std_out, {0, 0});
+			SetConsoleCursorPosition(std_out, {0, 0});
 
-		auto header = [&](Span<char> name, int flag) {
-			with(((enabled_windows & flag) ? ConsoleColor::cyan : ConsoleColor::gray), println("==== {} {} ====", log2(flag), name));
-			return enabled_windows & flag;
-		};
+			auto header = [&](Span<char> name, int flag) {
+				with(((enabled_windows & flag) ? ConsoleColor::cyan : ConsoleColor::gray), println("==== {} {} ====", log2(flag), name));
+				return enabled_windows & flag;
+			};
 				
 				
 
-		Lambda *lambda = 0;
-		if (enabled_windows & (DebugWindowFlag::locals | DebugWindowFlag::arguments | DebugWindowFlag::stack)) {
-			u64 max_lambda_first_instruction = 0;
-			if (current_instruction_index < bytecode->instructions.count - 3) { // Ignore initial instructions that don't belong to any lambda
-				for (auto it = bytecode->first_instruction_to_lambda.iter(); it; it.next()) {
-					auto [first_instruction, some_lambda] = it.key_value();
-					if (current_instruction_index >= first_instruction) {
-						if (first_instruction > max_lambda_first_instruction) {
-							max_lambda_first_instruction = first_instruction;
-							lambda = some_lambda;
+			Lambda *lambda = 0;
+			if (enabled_windows & (DebugWindowFlag::locals | DebugWindowFlag::arguments | DebugWindowFlag::stack)) {
+				u64 max_lambda_first_instruction = 0;
+				if (current_instruction_index < bytecode->instructions.count - 3) { // Ignore initial instructions that don't belong to any lambda
+					for (auto it = bytecode->first_instruction_to_lambda.iter(); it; it.next()) {
+						auto [first_instruction, some_lambda] = it.key_value();
+						if (current_instruction_index >= first_instruction) {
+							if (first_instruction > max_lambda_first_instruction) {
+								max_lambda_first_instruction = first_instruction;
+								lambda = some_lambda;
+							}
 						}
 					}
 				}
 			}
-		}
 
-		for (int debug_window_index = 0; debug_window_index != (int)DebugWindowKind::count; ++debug_window_index) {
-			if (debug_window_index == (int)DebugWindowKind::bytecode && header("Bytecode"s, DebugWindowFlag::bytecode)) {
-				for (s64 o = -5; o <= 5; ++o) {
-					scoped_if(next_instruction_color, o == 0);
+			for (int debug_window_index = 0; debug_window_index != (int)DebugWindowKind::count; ++debug_window_index) {
+				if (debug_window_index == (int)DebugWindowKind::bytecode && header("Bytecode"s, DebugWindowFlag::bytecode)) {
+					for (s64 o = -5; o <= 5; ++o) {
+						u64 instruction_index = current_instruction_index + o;
 
-					u64 instruction_index = current_instruction_index + o;
-					if (instruction_index >= bytecode->instructions.count) {
-						println("...");
-					} else {
-						print_instruction(instruction_index, bytecode->instructions[instruction_index]);
+						scoped_if(ConsoleColor::yellow, instruction_index == instruction_index_before_moving_ip);
+						scoped_if(next_instruction_color, instruction_index == current_instruction_index);
+					
+						if (instruction_index >= bytecode->instructions.count) {
+							println("...");
+						} else {
+							print_instruction(instruction_index, bytecode->instructions[instruction_index]);
+						}
 					}
 				}
-			}
-			else if (debug_window_index == (int)DebugWindowKind::registers && header("Registers"s, DebugWindowFlag::registers)) {
-				auto print_register = [&] (String name, Register r) {
-					print("{}: ", name);
-					u64 current = registers[(int)r];
-					u64 previous = previous_registers[(int)r];
-					if (current == previous) {
-						print("0x{}", format_hex(current));
-					} else {
-						with(ConsoleColor::red, print("0x{}", format_hex(current)));
-						with(ConsoleColor::gray, print(" 0x{}", format_hex(previous)));
-					}
-					println();
-				};
-
-				LinearSet<Register, TemporaryAllocator> used_registers;
-
-				auto add_registers = [&](Instruction i) {
-					i.visit_registers([&](Register r) { used_registers.add(r); });
-				};
-				
-				for (smm j = current_instruction_index; j >= 0 && bytecode->instructions[j].kind != InstructionKind::ret; --j)
-					add_registers(bytecode->instructions[j]);
-				for (smm j = current_instruction_index; j < bytecode->instructions.count && bytecode->instructions[j].kind != InstructionKind::ret; ++j)
-					add_registers(bytecode->instructions[j]);
-
-				find_and_erase(used_registers, Register::base);
-				find_and_erase(used_registers, Register::stack);
-
-				quick_sort(used_registers);
-
-				print_register(u8"base"s, Register::base);
-				print_register(u8"stack"s, Register::stack);
-				for (auto i : used_registers) {
-					print_register(tformat(u8"{}", i), (Register)i);
-				}
-			}
-			else if (debug_window_index == (int)DebugWindowKind::stack && header("Stack"s, DebugWindowFlag::stack)) {
-				if (lambda) {
-					for (s64 i = lambda->stack_frame_size - 8; i >= 0; i -= 8) {
-						s64 addr = reg(Register::stack) + i;
-						print("0x{}: ", format_hex(addr));
-						print_value(Address{.offset = addr}, get_builtin_type(BuiltinType::U64), {.base = PrintIntBase::hex});
-						if (i == 0)
-							print(" <- stack");
-						if (i == lambda->space_for_call_arguments && lambda->temporary_size)
-							print(" <- temporary");
-						if (i == lambda->space_for_call_arguments + lambda->temporary_size && lambda->locals_size)
-							print(" <- locals");
-						if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size)
-							print(" <- base");
-						if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 8)
-							print(" <- return address");
-						if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 16 && lambda->head.total_parameters_size)
-							print(" <- arguments");
-						if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 16 + lambda->head.total_parameters_size && get_size(lambda->head.return_type))
-							print(" <- return value");
+				else if (debug_window_index == (int)DebugWindowKind::registers && header("Registers"s, DebugWindowFlag::registers)) {
+					auto print_register = [&] (String name, Register r) {
+						print("{}: ", name);
+						u64 current = registers[(int)r];
+						u64 previous = previous_registers[(int)r];
+						if (current == previous) {
+							print("0x{}", format_hex(current));
+						} else {
+							with(ConsoleColor::red, print("0x{}", format_hex(current)));
+							with(ConsoleColor::gray, print(" 0x{}", format_hex(previous)));
+						}
 						println();
-					}
-				}
-			}
-			else if (debug_window_index == (int)DebugWindowKind::source && header(tformat("Source {}", i.source_location ? get_source_location(i.source_location).file : u8""s), DebugWindowFlag::source)) {
-				if (i.source_location.count) {
-					auto location = get_source_location(i.source_location, {.lines_before = 8, .lines_after = 8});
-
-					print_source_chunk(location, 0, next_instruction_color);
-				} else {
-					println("unknown source");
-				}
-			}
-			else if (debug_window_index == (int)DebugWindowKind::arguments && header("Arguments"s, DebugWindowFlag::arguments)) {
-				if (lambda) {
-					for (auto parameter : lambda->head.parameters_block.definition_list) {
-						with(ConsoleColor::white, print("{}: ", parameter->name));
-						Address address = {
-							.base = Register::base,
-							.offset = (s64)(16 + parameter->offset),
-						};
-						print_value(address, parameter->type);
-						println();
-					}
-				}
-			}
-			else if (debug_window_index == (int)DebugWindowKind::locals && header("Locals"s, DebugWindowFlag::locals)) {
-				if (lambda) {
-					for (auto local : lambda->locals) {
-						with(ConsoleColor::white, print("{}: ", local->name));
-						Address address = {
-							.base = Register::base,
-							.offset = -(s64)lambda->locals_size + (s64)local->offset,
-						};
-						print_value(address, local->type);
-						println();
-					}
-				}
-			}
-			else if (debug_window_index == (int)DebugWindowKind::call_stack && header("Call stack"s, DebugWindowFlag::call_stack)) {
-				for (auto index : debug_call_stack) {
-					if (auto found = bytecode->first_instruction_to_lambda.find(index)) {
-						auto lambda = *found.value;
-						auto loc = get_source_location(lambda->location);
-						print("{}:{}: ", loc.file, loc.location_line_number);
-						with(ConsoleColor::white, println(lambda->definition ? lambda->definition->name : u8"(unnamed)"s));
-					} else {
-						println("unknown at #{}", index);
-					}
-				}
-			}
-			else if (debug_window_index == (int)DebugWindowKind::output && header("Output"s, DebugWindowFlag::output)) {
-				println(output_builder);
-			}
-		}
-
-		//println();
-		//println("{} - next expression", Commands::next_expression);
-		//println("{} - next instruction", Commands::next_instruction);
-		//println("{} - next line", Commands::next_line);
-		//println("{} - redraw window", Commands::redraw_window);
-		//println("{} - toggle hex", Commands::toggle_hex);
-
-		print(exception_info);
-		exception_info = {};
-
-		CONSOLE_SCREEN_BUFFER_INFO csbi;
-		GetConsoleScreenBufferInfo(std_out, &csbi);
-		for (int i = csbi.dwCursorPosition.Y; i < csbi.dwMaximumWindowSize.Y - 1; ++i) {
-			println();
-		}
-		print("                           \r");
-
-	retry_char:
-		int pressed_key = _getch();
-		switch (pressed_key) {
-			ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
-				(int &)enabled_windows ^= 1 << (pressed_key - '0');
-				goto redraw;
-			}
-			case Commands::next_expression: {
-				run_strategy = RunWhileLocationIs{i.source_location};
-				break;
-			}
-			case Commands::next_instruction: {
-				break;
-			}
-			case Commands::next_line: {
-				if (i.source_location) {
-					auto location = get_source_location(i.source_location);
-					run_strategy = RunToLineAfter{
-						.call_stack_size = debug_call_stack.count,
-						.instruction_index = current_instruction_index,
-						.file = location.file,
-						.line = location.location_line_number,
 					};
-				}
-				break;
-			}
-			case Commands::continuee: {
-				run_strategy = RunAlways{};
-				break;
-			}
-			case Commands::redraw_window: {
-				goto redraw;
-			}
-			case Commands::toggle_hex: {
-				current_print_options.base = (PrintIntBase)(((int)current_print_options.base + 1) % 3);
-				goto redraw;
-			}
-			case 'v': {
-				verbose ^= 1;
-				goto redraw;
-			}
-			default: {
-				goto retry_char;
-			}
-		}
 
-		print("... RUNNING ...");
-		current_temporary_allocator.clear();
+					LinearSet<Register, TemporaryAllocator> used_registers;
+
+					auto add_registers = [&](Instruction i) {
+						i.visit_registers([&](Register r) { used_registers.add(r); });
+					};
+				
+					for (smm j = current_instruction_index; j >= 0 && bytecode->instructions[j].kind != InstructionKind::ret; --j)
+						add_registers(bytecode->instructions[j]);
+					for (smm j = current_instruction_index; j < bytecode->instructions.count && bytecode->instructions[j].kind != InstructionKind::ret; ++j)
+						add_registers(bytecode->instructions[j]);
+
+					find_and_erase(used_registers, Register::base);
+					find_and_erase(used_registers, Register::stack);
+
+					quick_sort(used_registers);
+
+					print_register(u8"base"s, Register::base);
+					print_register(u8"stack"s, Register::stack);
+					for (auto i : used_registers) {
+						print_register(tformat(u8"{}", i), (Register)i);
+					}
+				}
+				else if (debug_window_index == (int)DebugWindowKind::stack && header("Stack"s, DebugWindowFlag::stack)) {
+					if (lambda) {
+						for (s64 i = lambda->stack_frame_size - 8; i >= 0; i -= 8) {
+							s64 addr = reg(Register::stack) + i;
+							print("0x{}: ", format_hex(addr));
+							print_value(Address{.offset = addr}, get_builtin_type(BuiltinType::U64), {.base = PrintIntBase::hex});
+							if (i == 0)
+								print(" <- stack");
+							if (i == lambda->space_for_call_arguments && lambda->temporary_size)
+								print(" <- temporary");
+							if (i == lambda->space_for_call_arguments + lambda->temporary_size && lambda->locals_size)
+								print(" <- locals");
+							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size)
+								print(" <- base");
+							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 8)
+								print(" <- return address");
+							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 16 && lambda->head.total_parameters_size)
+								print(" <- arguments");
+							if (i == lambda->space_for_call_arguments + lambda->temporary_size + lambda->locals_size + 16 + lambda->head.total_parameters_size && get_size(lambda->head.return_type))
+								print(" <- return value");
+							println();
+						}
+					}
+				}
+				else if (debug_window_index == (int)DebugWindowKind::source && header(tformat("Source {}", bytecode->instructions[current_instruction_index].source_location ? get_source_location(bytecode->instructions[current_instruction_index].source_location).file : u8""s), DebugWindowFlag::source)) {
+					if (bytecode->instructions[current_instruction_index].source_location.count) {
+						auto location = get_source_location(bytecode->instructions[current_instruction_index].source_location, {.lines_before = 8, .lines_after = 8});
+
+						print_source_chunk(location, 0, next_instruction_color);
+					} else {
+						println("unknown source");
+					}
+				}
+				else if (debug_window_index == (int)DebugWindowKind::arguments && header("Arguments"s, DebugWindowFlag::arguments)) {
+					if (lambda) {
+						for (auto parameter : lambda->head.parameters_block.definition_list) {
+							with(ConsoleColor::white, print("{}: ", parameter->name));
+							Address address = {
+								.base = Register::base,
+								.offset = (s64)(16 + parameter->offset),
+							};
+							print_value(address, parameter->type);
+							println();
+						}
+					}
+				}
+				else if (debug_window_index == (int)DebugWindowKind::locals && header("Locals"s, DebugWindowFlag::locals)) {
+					if (lambda) {
+						for (auto local : lambda->locals) {
+							with(ConsoleColor::white, print("{}: ", local->name));
+							Address address = {
+								.base = Register::base,
+								.offset = -(s64)lambda->locals_size + (s64)local->offset,
+							};
+							print_value(address, local->type);
+							println();
+						}
+					}
+				}
+				else if (debug_window_index == (int)DebugWindowKind::call_stack && header("Call stack"s, DebugWindowFlag::call_stack)) {
+					for (auto index : debug_call_stack) {
+						if (auto found = bytecode->first_instruction_to_lambda.find(index)) {
+							auto lambda = *found.value;
+							auto loc = get_source_location(lambda->location);
+							print("{}:{}: ", loc.file, loc.location_line_number);
+							with(ConsoleColor::white, println(lambda->definition ? lambda->definition->name : u8"(unnamed)"s));
+						} else {
+							println("unknown at #{}", index);
+						}
+					}
+				}
+				else if (debug_window_index == (int)DebugWindowKind::output && header("Output"s, DebugWindowFlag::output)) {
+					println(output_builder);
+				}
+			}
+
+			//println();
+			//println("{} - next expression", Commands::next_expression);
+			//println("{} - next instruction", Commands::next_instruction);
+			//println("{} - next line", Commands::next_line);
+			//println("{} - redraw window", Commands::redraw_window);
+			//println("{} - toggle hex", Commands::toggle_hex);
+
+			print(exception_info);
+			exception_info = {};
+
+			CONSOLE_SCREEN_BUFFER_INFO csbi;
+			GetConsoleScreenBufferInfo(std_out, &csbi);
+			for (int i = csbi.dwCursorPosition.Y; i < csbi.dwMaximumWindowSize.Y - 1; ++i) {
+				println();
+			}
+			print("                           \r");
+
+		retry_char:
+			int pressed_key = _getch();
+			switch (pressed_key) {
+				ENUMERATE_CHARS_DIGIT(PASTE_CASE) {
+					(int &)enabled_windows ^= 1 << (pressed_key - '0');
+					goto redraw;
+				}
+				case Commands::next_expression: {
+					run_strategy = RunWhileLocationIs{bytecode->instructions[current_instruction_index].source_location};
+					break;
+				}
+				case Commands::next_instruction: {
+					break;
+				}
+				case Commands::next_line: {
+					if (bytecode->instructions[current_instruction_index].source_location) {
+						auto location = get_source_location(bytecode->instructions[current_instruction_index].source_location);
+						run_strategy = RunToLineAfter{
+							.call_stack_size = debug_call_stack.count,
+							.instruction_index = current_instruction_index,
+							.file = location.file,
+							.line = location.location_line_number,
+						};
+					}
+					break;
+				}
+
+				//case Commands::step_in: {
+				//	run_strategy = StepIn{debug_call_stack.count};
+				//	break;
+				//}
+				//case Commands::step_out: {
+				//	run_strategy = StepOut{debug_call_stack.count};
+				//	break;
+				//}
+								
+				case 0xe0: {
+					switch (_getch()) {
+						case Commands::move_ip_back: {
+							if (current_instruction_index != 0)
+								current_instruction_index -= 1;
+							goto redraw;
+						}
+						case Commands::move_ip_forward: {
+							if (current_instruction_index != bytecode->instructions.count - 1)
+								current_instruction_index += 1;
+							goto redraw;
+						}
+					}
+					goto _default;
+				}
+
+				case Commands::continuee: {
+					run_strategy = RunAlways{};
+					break;
+				}
+				case Commands::redraw_window: {
+					goto redraw;
+				}
+				case Commands::toggle_hex: {
+					current_print_options.base = (PrintIntBase)(((int)current_print_options.base + 1) % 3);
+					goto redraw;
+				}
+				case Commands::toggle_verbose: {
+					verbose ^= 1;
+					goto redraw;
+				}
+
+				_default:
+				default: {
+					//MessageBoxA(0, (char*)null_terminate(to_string(format_hex(pressed_key))).data, 0, 0);
+					goto retry_char;
+				}
+			}
+
+			print("... RUNNING ...");
+			current_temporary_allocator.clear();
+
+		}
 	}
 
 	previous_registers = registers;
 
 	__try {
-		switch (i.kind) {
-			#define x(name, fields) case InstructionKind::name: execute(i.v_##name); break;
+		switch (bytecode->instructions[current_instruction_index].kind) {
+			#define x(name, fields) case InstructionKind::name: execute(bytecode->instructions[current_instruction_index].v_##name); break;
 			ENUMERATE_BYTECODE_INSTRUCTION_KIND
 			#undef x
 		}
@@ -402,7 +565,7 @@ void Interpreter::run_one_instruction() {
 			run_strategy = RunNever{};
 			return EXCEPTION_EXECUTE_HANDLER;
 		} else {
-			return EXCEPTION_EXECUTE_FAULT;
+			return EXCEPTION_CONTINUE_SEARCH;
 		}
 	}(GetExceptionInformation())) {
 	}
@@ -730,18 +893,18 @@ void Interpreter::execute(Instruction::or1_t i)  { val1(i.d) = val1(i.a) | val1(
 void Interpreter::execute(Instruction::or2_t i)  { val2(i.d) = val2(i.a) | val2(i.b); }
 void Interpreter::execute(Instruction::or4_t i)  { val4(i.d) = val4(i.a) | val4(i.b); }
 void Interpreter::execute(Instruction::or8_t i)  { val8(i.d) = val8(i.a) | val8(i.b); }
-void Interpreter::execute(Instruction::sll1_t i) { val1(i.d) = val1(i.a) << (u8)val1(i.b); }
-void Interpreter::execute(Instruction::sll2_t i) { val2(i.d) = val2(i.a) << (u8)val1(i.b); }
-void Interpreter::execute(Instruction::sll4_t i) { val4(i.d) = val4(i.a) << (u8)val1(i.b); }
-void Interpreter::execute(Instruction::sll8_t i) { val8(i.d) = val8(i.a) << (u8)val1(i.b); }
-void Interpreter::execute(Instruction::srl1_t i) { val1(i.d) = (u8 )val1(i.a) >> (u8)val1(i.b); }
-void Interpreter::execute(Instruction::srl2_t i) { val2(i.d) = (u16)val2(i.a) >> (u8)val1(i.b); }
-void Interpreter::execute(Instruction::srl4_t i) { val4(i.d) = (u32)val4(i.a) >> (u8)val1(i.b); }
-void Interpreter::execute(Instruction::srl8_t i) { val8(i.d) = (u64)val8(i.a) >> (u8)val1(i.b); }
-void Interpreter::execute(Instruction::sra1_t i) { val1(i.d) = (s8 )val1(i.a) >> (u8)val1(i.b); }
-void Interpreter::execute(Instruction::sra2_t i) { val2(i.d) = (s16)val2(i.a) >> (u8)val1(i.b); }
-void Interpreter::execute(Instruction::sra4_t i) { val4(i.d) = (s32)val4(i.a) >> (u8)val1(i.b); }
-void Interpreter::execute(Instruction::sra8_t i) { val8(i.d) = (s64)val8(i.a) >> (u8)val1(i.b); }
+void Interpreter::execute(Instruction::sll1_t i) { val1(i.d) = val1(i.a) << (u8)(val1(i.b) &  7); }
+void Interpreter::execute(Instruction::sll2_t i) { val2(i.d) = val2(i.a) << (u8)(val1(i.b) & 15); }
+void Interpreter::execute(Instruction::sll4_t i) { val4(i.d) = val4(i.a) << (u8)(val1(i.b) & 31); }
+void Interpreter::execute(Instruction::sll8_t i) { val8(i.d) = val8(i.a) << (u8)(val1(i.b) & 63); }
+void Interpreter::execute(Instruction::srl1_t i) { val1(i.d) = (u8 )val1(i.a) >> (u8)(val1(i.b) &  7); }
+void Interpreter::execute(Instruction::srl2_t i) { val2(i.d) = (u16)val2(i.a) >> (u8)(val1(i.b) & 15); }
+void Interpreter::execute(Instruction::srl4_t i) { val4(i.d) = (u32)val4(i.a) >> (u8)(val1(i.b) & 31); }
+void Interpreter::execute(Instruction::srl8_t i) { val8(i.d) = (u64)val8(i.a) >> (u8)(val1(i.b) & 63); }
+void Interpreter::execute(Instruction::sra1_t i) { val1(i.d) = (s8 )val1(i.a) >> (u8)(val1(i.b) &  7); }
+void Interpreter::execute(Instruction::sra2_t i) { val2(i.d) = (s16)val2(i.a) >> (u8)(val1(i.b) & 15); }
+void Interpreter::execute(Instruction::sra4_t i) { val4(i.d) = (s32)val4(i.a) >> (u8)(val1(i.b) & 31); }
+void Interpreter::execute(Instruction::sra8_t i) { val8(i.d) = (s64)val8(i.a) >> (u8)(val1(i.b) & 63); }
 void Interpreter::execute(Instruction::cmp1_t i) {
 	switch (i.cmp) {
 		case Comparison::equals:                  val1(i.d) = (u8)val1(i.a) == (u8)val1(i.b); break;

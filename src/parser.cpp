@@ -351,7 +351,12 @@ Parser::NamedStruct Parser::parse_struct() {
 
 		expect(':');
 		next();
-		definition->parsed_type = parse_expression();
+		definition->parsed_type = parse_expression_1(); // Don't parse = as binop
+
+		if (token.kind == '=') {
+			next();
+			definition->initial_value = parse_expression();
+		}
 
 		skip_lines();
 		while (token.kind == ';') {
@@ -519,6 +524,34 @@ bool Parser::is_valid_name_part(TokenKind kind) {
 			return true;
 	}
 	return false;
+}
+
+void Parser::ensure_signature_validity_for_operators(Definition *definition) {
+	bool is_operator = definition->name == definition_name_for_implicit_as || definition->name == definition_name_for_explicit_as;
+
+	if (is_operator) {
+		if (definition->mutability != Mutability::constant) {
+			reporter.error(definition->location, "Operator definitions must be constant");
+			yield(YieldResult::fail);
+		}
+
+		auto lambda = definition->initial_value ? as<Lambda>(definition->initial_value) : 0;
+
+		if (!lambda) {
+			reporter.error(definition->location, "Operator definitions must have a lambda as initial value");
+			yield(YieldResult::fail);
+		}
+
+		if (lambda->head.parameters_block.definition_list.count != 1) {
+			reporter.error(definition->location, "Cast operators must accept exactly one argument");
+			yield(YieldResult::fail);
+		}
+
+		if (!lambda->head.parsed_return_type) {
+			reporter.error(lambda->head.location, "Cast operators must explicitly specify the return type");
+			yield(YieldResult::fail);
+		}
+	}
 }
 
 void Parser::parse_name(String *location, String *name) {
@@ -730,7 +763,7 @@ Expression *Parser::parse_expression_0() {
 			
 			next();
 			skip_lines();
-
+			
 			parse_name(&definition->location, &definition->name);
 
 			if (definition->name == "file_size") {
@@ -771,6 +804,8 @@ Expression *Parser::parse_expression_0() {
 				}
 			}
 			
+			ensure_signature_validity_for_operators(definition);
+
 			add_definition_to_block(definition, current_block);
 
 			return finish_node(definition);
@@ -1386,6 +1421,7 @@ Node *Parser::parse_statement() {
 			definition->location = parsed.name;
 			definition->mutability = Mutability::constant;
 			link_constant_definition_to_initial_value(definition);
+			ensure_signature_validity_for_operators(definition);
 			add_definition_to_block(definition, current_block);
 			return definition;
 		}
@@ -1524,6 +1560,9 @@ Node *Parser::parse_next_node() {
 void Parser::link_constant_definition_to_initial_value(Definition *definition) {
 	if (auto lambda = as<Lambda>(definition->initial_value)) {
 		lambda->definition = definition;
+		if ((lambda->is_extern || lambda->is_intrinsic) && !lambda->link_name) {
+			lambda->link_name = definition->name;
+		}
 	} else if (auto Struct = as<::Struct>(definition->initial_value)) {
 		Struct->definition = definition;
 	} else if (auto Enum = as<::Enum>(definition->initial_value)) {

@@ -280,9 +280,24 @@ private:
 
 	void fiber_main();
 
-	bool implicitly_cast(Expression **_expression, Expression *target_type, Reporter *reporter, bool apply);
-	inline bool implicitly_cast(Expression **expression, Expression *target_type, bool apply) {
-		return implicitly_cast(expression, target_type, &reporter, apply);
+	struct ImplicitCastResult {
+		bool did_cast = true; // Most of the paths do a cast, so make it default
+		bool success = false;
+
+		explicit operator bool() { return success; }
+	};
+
+	ImplicitCastResult implicitly_cast(Expression **_expression, Expression *target_type, bool apply);
+
+	inline ImplicitCastResult implicitly_cast(Expression **expression, Expression *target_type, Reporter *reporter, bool apply) {
+		assert(reporter != &this->reporter, "Use this overload for different reporters, not the current one.");
+
+		auto old_reporter = this->reporter;
+		this->reporter = {};
+		auto result = implicitly_cast(expression, target_type, apply);
+		reporter->reports.add(this->reporter.reports);
+		this->reporter = old_reporter;
+		return result;
 	}
 
 	void why_is_this_immutable(Expression *expr);
@@ -309,8 +324,13 @@ private:
 	
 	Struct *get_struct_template_instantiation(Struct *template_struct, Expression *argument);
 
+	struct TypecheckLambdaCallResult {
+		Expression *expression = 0;
+		umm number_of_implicit_casts = 0;
+	};
+
 	// `lambda` can be null if it's a function pointer call
-	Expression *typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply = true);
+	TypecheckLambdaCallResult typecheck_lambda_call(Call *call, Lambda *lambda, LambdaHead *head, bool apply = true);
 	Expression *typecheck_constructor(Call *call, Struct *Struct);;
 
 	Expression *typecheck_binary_dot(Binary *binary);
@@ -321,6 +341,11 @@ private:
 	void add_defers(GList<Defer *> &defers);
 	
 	void ensure_mutable(Expression *expression);
+
+	bool can_reference(Block *block, Definition *definition);
+
+	void resolve_name_in_block(GList<Definition *> &possible_definitions, Block *block, String location, String name);
+	void resolve_name(GList<Definition *> &possible_definitions, String location, String name);
 	
 	Definition *try_find_enum_value(Enum *Enum, Name *name, Reporter *reporter);
 	Definition *find_enum_value(Enum *Enum, Name *name);

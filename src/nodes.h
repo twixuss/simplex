@@ -13,6 +13,7 @@
 #include "value.h"
 #include "x.h"
 #include "binary_operation.h"
+#include "low_binary_operation.h"
 #include "unary_operation.h"
 #include "type.h"
 
@@ -163,6 +164,9 @@ struct NodeBase {
 #define DEFINE_EXPRESSION(name) struct name : Expression, NodeBase<name>
 #define DEFINE_STATEMENT(name) struct name : Statement, NodeBase<name>
 
+inline static constexpr String definition_name_for_implicit_as = u8"as_implicit"s;
+inline static constexpr String definition_name_for_explicit_as = u8"as_explicit"s;
+
 // TODO: some Block's in some nodes (Struct, LambdaHead) don't need breaks/defers/etc, only definitions.
 //       create DefinitionBlock?
 
@@ -258,7 +262,7 @@ DEFINE_EXPRESSION(Lambda) {
 	InlineStatus inline_status = {};
 
 	String extern_library = {};
-	String link_name = {};
+	String link_name = {}; // If no #link_name directive present, set to definition name.
 
 	GLinearSet<Definition *> locals = {};
 	u64 space_for_call_arguments = 0;
@@ -272,7 +276,7 @@ DEFINE_EXPRESSION(Lambda) {
 };
 DEFINE_EXPRESSION(Name) {
 	String name;
-	List<Definition *> possible_definitions;
+	GList<Definition *> possible_definitions;
 
 	bool allow_overload : 1 = false;
 

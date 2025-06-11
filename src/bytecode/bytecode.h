@@ -1,5 +1,6 @@
 #pragma once
 #include "../common.h"
+#include "../nodes.h"
 
 using namespace tl;
 
@@ -300,28 +301,28 @@ struct Instruction {
 	InstructionKind kind;
 
 	// `Invalid` is here to prevent me from leaving an uninitialized member.
-#define y(type, name) type name = Invalid();
-#define x(name, fields)      \
-	template <class Invalid> \
-	struct name##_x {        \
-		PASSTHROUGH fields   \
-	};
+	#define y(type, name) type name = Invalid();
+	#define x(name, fields)      \
+		template <class Invalid> \
+		struct name##_x {        \
+			PASSTHROUGH fields   \
+		};
 	ENUMERATE_BYTECODE_INSTRUCTION_KIND
-#undef x
-#undef y
+	#undef x
+	#undef y
 
-#define x(name, fields) using name##_t = name##_x<void>;
+	#define x(name, fields) using name##_t = name##_x<void>;
 	ENUMERATE_BYTECODE_INSTRUCTION_KIND
-#undef x
+	#undef x
 
-#define x(name, fields) name##_t &name() { assert(kind == InstructionKind::name); return v_##name; }
+	#define x(name, fields) name##_t &name() { assert(kind == InstructionKind::name); return v_##name; }
 	ENUMERATE_BYTECODE_INSTRUCTION_KIND
-#undef x
+	#undef x
 
 	union {
-#define x(name, fields) name##_t v_##name;
+		#define x(name, fields) name##_t v_##name;
 		ENUMERATE_BYTECODE_INSTRUCTION_KIND
-#undef x
+		#undef x
 	};
 	
 	char const *file = 0;
@@ -446,6 +447,15 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 #undef y
 
 inline umm print_instruction(Instruction i) {
+	// Custom printers
+	switch (i.kind) {
+		case InstructionKind::callext: {
+			auto kind = i.kind;
+			REDECLARE_REF(i, i.v_callext);
+			return print("{} {}", kind, i.lambda->link_name);
+		}
+	}
+	// Default printers
 	switch (i.kind) {
 #define x(name, fields) case InstructionKind::name: return print_instruction(i.v_##name);
 		ENUMERATE_BYTECODE_INSTRUCTION_KIND

@@ -41,9 +41,19 @@ struct Interpreter {
 		static constexpr char next_expression  = '.';
 		static constexpr char next_instruction = 'n';
 		static constexpr char next_line        = 'l';
+		
+		static constexpr char step_in          = 0x27; // arrow right
+		static constexpr char step_out         = 0x25; // arrow left
+		static constexpr char next_statement   = 0x28; // arrow down
+
+		static constexpr char move_ip_back     = 0x49;
+		static constexpr char move_ip_forward  = 0x51;
+
 		static constexpr char continuee        = 'c';
+
 		static constexpr char redraw_window    = 'r';
 		static constexpr char toggle_hex       = 'x';
+		static constexpr char toggle_verbose   = 'v';
 	};
 	
 	static constexpr ConsoleColor next_instruction_color = ConsoleColor::green;
@@ -57,6 +67,8 @@ struct Interpreter {
 		}
 	}
 	
+	bool init_gui();
+
 	enum PrintIntBase {
 		decimal,
 		hex,
@@ -120,6 +132,7 @@ struct Interpreter {
 	List<u64> debug_stack;
 	List<s64> debug_call_stack;
 	bool verbose = false;
+	umm instruction_index_before_moving_ip = (umm)-1;
 
 	struct Library {
 		Dll dll;

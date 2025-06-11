@@ -52,7 +52,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)dep\tl\include;$(SolutionDir)dep\clang-c\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)dep\tl\include;$(SolutionDir)dep\clang-c\include;$(SolutionDir)dep\imgui;</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -70,7 +70,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)dep\tl\include;$(SolutionDir)dep\clang-c\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)dep\tl\include;$(SolutionDir)dep\clang-c\include;$(SolutionDir)dep\imgui;</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -84,6 +84,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="dep\imgui\backends\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="dep\imgui\backends\imgui_impl_win32.cpp" />
+    <ClCompile Include="dep\imgui\imgui.cpp" />
+    <ClCompile Include="dep\imgui\imgui_demo.cpp" />
+    <ClCompile Include="dep\imgui\imgui_draw.cpp" />
+    <ClCompile Include="dep\imgui\imgui_tables.cpp" />
+    <ClCompile Include="dep\imgui\imgui_widgets.cpp" />
     <ClCompile Include="src\binary_operation.cpp" />
     <ClCompile Include="src\bytecode\builder.cpp" />
     <ClCompile Include="src\bytecode\optimizer.cpp" />
@@ -134,6 +141,7 @@
     <ClInclude Include="src\get_constant_value.h" />
     <ClInclude Include="src\is_constant.h" />
     <ClInclude Include="src\is_mutable.h" />
+    <ClInclude Include="src\low_binary_operation.h" />
     <ClInclude Include="src\make_node.h" />
     <ClInclude Include="src\escape.h" />
     <ClInclude Include="src\lexer.h" />

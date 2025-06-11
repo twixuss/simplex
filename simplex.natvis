@@ -25,6 +25,7 @@
             <Item Name="[value]" Condition="kind==NodeKind::ArrayType          " Optional="true">*(ArrayType          *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::ArrayConstructor   " Optional="true">*(ArrayConstructor   *)this</Item>
             <Item Name="[value]" Condition="kind==NodeKind::Subscript          " Optional="true">*(Subscript          *)this</Item>
+            <Item Name="[value]" Condition="kind==NodeKind::Struct             " Optional="true">*(Struct             *)this</Item>
         </Expand>
     </Type>
     <Type Name="Name">

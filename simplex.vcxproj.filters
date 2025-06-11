@@ -29,6 +29,13 @@
     <ClCompile Include="src\c2simplex.cpp" />
     <ClCompile Include="src\print_ast.cpp" />
     <ClCompile Include="src\bytecode\optimizer.cpp" />
+    <ClCompile Include="dep\imgui\imgui.cpp" />
+    <ClCompile Include="dep\imgui\imgui_demo.cpp" />
+    <ClCompile Include="dep\imgui\imgui_draw.cpp" />
+    <ClCompile Include="dep\imgui\imgui_tables.cpp" />
+    <ClCompile Include="dep\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="dep\imgui\backends\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="dep\imgui\backends\imgui_impl_win32.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="x.h" />
@@ -74,5 +81,6 @@
     <ClInclude Include="src\c2simplex.h" />
     <ClInclude Include="src\cmd_args.h" />
     <ClInclude Include="src\bytecode\optimizer.h" />
+    <ClInclude Include="src\low_binary_operation.h" />
   </ItemGroup>
 </Project>

@@ -18,7 +18,3 @@ void add_fiber_to_reuse(ReusableFiber fiber) {
 		fibers_to_reuse.add(fiber);
 	};
 }
-
-u32 get_allocated_fiber_count() {
-	return context_base->allocated_fiber_count;
-}

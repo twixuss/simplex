@@ -86,7 +86,7 @@ void append(StringBuilder &builder, Node *node) {
 			break;
 		}
 		default: {
-			append(builder, node->location);
+			append(builder, EscapedCString(node->location));
 			break;
 		}
 	}

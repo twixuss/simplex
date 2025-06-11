@@ -18,6 +18,10 @@ CompilerContext *context;
 #include <x64write.h>
 #pragma pop_macro("assert")
 
+inline bool fits_in_8(auto x)  { return x == (int8_t )x; }
+inline bool fits_in_16(auto x) { return x == (int16_t)x; }
+inline bool fits_in_32(auto x) { return x == (int32_t)x; }
+
 Array regnames8  { "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b", "", "", "", "", "spl", "bpl", "sil", "dil"};
 Array regnames16 { "ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w", };
 Array regnames32 { "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d", };
@@ -81,49 +85,6 @@ inline void append(StringBuilder &builder, Mem m) {
 
 #include <tl/process.h>
 
-template <class T>
-Span<T> same_start(Span<T> where, Span<T> what) {
-	umm i = 0;
-	for (; i < min(where.count, what.count); ++i) {
-		if (what.data[i] != where.data[i]) {
-			break;
-		}
-	}
-	return where.subspan(0, i);
-}
-
-template <class T>
-Span<T> find_most(Span<T> where, Span<T> what) {
-	Span<T> result = where.subspan(0, 0);
-
-	for (umm i = 0; i < where.count; ++i) {
-		auto x = same_start(where.skip(i), what);
-		if (x.count > result.count) {
-			result = x;
-		}
-	}
-
-	return result;
-
-	if (what.count <= where.count) {
-		for (umm i = 0; i < where.count - what.count + 1; ++i) {
-			for (umm j = 0; j < what.count; ++j) {
-				if (where.data[i + j] != what.data[j]) {
-					if (j > result.count) {
-						result = Span(where.data + i, j);
-					}
-					goto continue_outer;
-				}
-			}
-
-			result = Span(where.data + i, what.count);
-			break;
-		continue_outer:;
-		}
-	}
-
-	return result;
-}
 #pragma pack(push, 1) // Ensure no padding in structures
 
 // COFF Header
@@ -199,14 +160,11 @@ struct Emitter {
 		}
 	}
 	
-	bool fits_in_1_byte (s64 x) { return ((x >>  8) + 1) <= 1; }
-	bool fits_in_2_bytes(s64 x) { return ((x >> 16) + 1) <= 1; }
-	bool fits_in_4_bytes(s64 x) { return ((x >> 32) + 1) <= 1; }
 	u8 required_bytes(s64 x) {
 		if (x == 0) return 0;
-		if (fits_in_1_byte (x)) return 1;
-		if (fits_in_2_bytes(x)) return 2;
-		if (fits_in_4_bytes(x)) return 4;
+		if (fits_in_8(x)) return 1;
+		if (fits_in_16(x)) return 2;
+		if (fits_in_32(x)) return 4;
 		return 8;
 	}
 
@@ -265,8 +223,8 @@ struct Emitter {
 	void emit_instruction_impl(b::Instruction::nop_t i) {}
 	void emit_instruction_impl(b::Instruction::push_t i) {
 		if (i.s.is_constant()) {
-			assert(x64w_fits_in_32(i.s.get_constant()));
-			push_i32(&c, i.s.get_constant());
+			assert(fits_in_32(i.s.get_constant()));
+			x64w_push_i32(&c, i.s.get_constant());
 		} else if (i.s.is_register()) {
 			auto mapped = map(i.s.get_register());
 			if (mapped) {
@@ -280,6 +238,9 @@ struct Emitter {
 	}
 	void emit_instruction_impl(b::Instruction::pop_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::copy_t i) {
+		if (i.size == 0)
+			return;
+
 		if (i.d.is_register()) {
 			auto mapped_d = map(i.d.get_register());
 			if (mapped_d) {
@@ -326,7 +287,9 @@ struct Emitter {
 			}
 		}
 	}
-	void emit_instruction_impl(b::Instruction::lea_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::lea_t i) {
+		lea_rm64(&c, map(i.d.get_register()).value(), map(i.s).value());
+	}
 	void emit_instruction_impl(b::Instruction::add1_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::add2_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::add4_t i) { not_implemented(); }
@@ -335,30 +298,33 @@ struct Emitter {
 	void emit_instruction_impl(b::Instruction::sub2_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::sub4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::sub8_t i) {
-		if (i.d.is_register() && i.a.is_register() && (i.d.get_register() == i.a.get_register())) {
-			auto mapped_d = map(i.d.get_register());
-			auto mapped_a = map(i.a.get_register());
+		// sub r0, r1, r2   =>   mov r0, r1
+		//                       sub r0, r2
 
-			if (mapped_d && mapped_a) {
-				if (i.b.is_constant()) {
-					auto b = -i.b.get_constant();
-					if (fits_in_8(b)) {
-						add_r64i8(&c, mapped_d.value(), b);
-					} else {
-						add_r64i32(&c, mapped_d.value(), b);
-					}
-				} else if (i.b.is_register()) {
-					auto mapped_b = map(i.b.get_register());
-					if (mapped_b) {
-						add_rr64(&c, mapped_d.value(), mapped_b.value());
-					} else {
-						not_implemented();
-					}
+		// sub r0, r0, r2   =>   sub r0, r2
+
+		if (i.d.is_register() && i.a.is_register()) {
+			auto mapped_d = map(i.d.get_register()).value();
+			auto mapped_a = map(i.a.get_register()).value();
+
+			if (i.d.get_register() != i.a.get_register()) {
+				mov_rr64(&c, mapped_d, mapped_a);
+			}
+
+			if (i.b.is_constant()) {
+				auto b = i.b.get_constant();
+				if (fits_in_8(b)) {
+					sub_r64i8(&c, mapped_d, b);
+				} else if (fits_in_32(b)) {
+					sub_r64i32(&c, mapped_d, b);
 				} else {
-					not_implemented();
+					mov_ri64(&c, temp_regs[0], b);
+					sub_rr64(&c, mapped_d, temp_regs[0]);
 				}
+			} else if (i.b.is_register()) {
+				sub_rr64(&c, mapped_d, map(i.b.get_register()).value());
 			} else {
-				not_implemented();
+				sub_rm64(&c, mapped_d, map(i.b.get_address()).value());
 			}
 		} else {
 			not_implemented();
@@ -429,7 +395,10 @@ struct Emitter {
 	void emit_instruction_impl(b::Instruction::jmp_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::jf_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::jt_t i) { not_implemented(); }
-	void emit_instruction_impl(b::Instruction::intrinsic_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::intrinsic_t i) {
+		// int3(&c);
+		*c++ = 0xcc;
+	}
 };
 
 extern "C" __declspec(dllexport)

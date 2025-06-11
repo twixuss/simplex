@@ -35,7 +35,6 @@ fn main() {
 
         for a in 0..N {
             for b in 0..N {
-                debug_break()
                 print(if (*curr)[a][b] then "██" else "  ")
             }
             print("\n")
