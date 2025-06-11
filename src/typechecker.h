@@ -347,7 +347,7 @@ private:
 	void resolve_name_in_block(GList<Definition *> &possible_definitions, Block *block, String location, String name);
 	void resolve_name(GList<Definition *> &possible_definitions, String location, String name);
 	
-	Definition *try_find_enum_value(Enum *Enum, Name *name, Reporter *reporter);
+	Definition *try_find_enum_value(Enum *Enum, Name *name);
 	Definition *find_enum_value(Enum *Enum, Name *name);
 
 	//

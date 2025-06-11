@@ -444,7 +444,7 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 		if (auto some_enum = as_some_enum(expression)) {
 			auto name = as<Name>(some_enum->expression);
 			assert(name);
-			auto definition = try_find_enum_value(Enum, name, &reporter);
+			auto definition = try_find_enum_value(Enum, name);
 			if (definition) {
 				if (apply) {
 					auto literal = IntegerLiteral::create();
@@ -1163,12 +1163,10 @@ Expression *Typechecker::typecheck_constructor(Call *call, Struct *Struct) {
 	return call;
 };
 
-Definition *Typechecker::try_find_enum_value(Enum *Enum, Name *name, Reporter *reporter) {
+Definition *Typechecker::try_find_enum_value(Enum *Enum, Name *name) {
 	auto found = Enum->block.definition_map.find(name->name);
 	if (!found) {
-		if (reporter) {
-			reporter->error(name->location, "Enum {} does not contain value named {}.", Enum, name->name);
-		}
+		reporter.error(name->location, "Enum {} does not contain value named {}.", Enum, name->name);
 		return 0;
 	}
 
@@ -1178,24 +1176,20 @@ Definition *Typechecker::try_find_enum_value(Enum *Enum, Name *name, Reporter *r
 	auto &definition = definitions[0];
 			
 	if (!yield_while_null(name->location, &definition->type)) {
-		if (reporter) {
-			reporter->error(name->location, "Could not wait for definition's type");
-			reporter->info(definition->location, "Definition here");
-		}
+		reporter.error(name->location, "Could not wait for definition's type");
+		reporter.info(definition->location, "Definition here");
 		return 0;
 	}
 
 	if (!yield_while_null(name->location, &definition->type->type)) {
-		if (reporter) {
-			reporter->error(name->location, "Could not wait for definition type's type");
-			reporter->info(definition->location, "Definition here");
-		}
+		reporter.error(name->location, "Could not wait for definition type's type");
+		reporter.info(definition->location, "Definition here");
 		return 0;
 	}
 	return definition;
 }
 Definition *Typechecker::find_enum_value(Enum *Enum, Name *name) {
-	if (auto found = try_find_enum_value(Enum, name, &reporter)) {
+	if (auto found = try_find_enum_value(Enum, name)) {
 		return found;
 	}
 	fail();
