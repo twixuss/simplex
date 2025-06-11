@@ -4,3 +4,6 @@
 [submodule "dep/x64write"]
 	path = dep/x64write
 	url = https://github.com/twixuss/x64write
+[submodule "dep/imgui"]
+	path = dep/imgui
+	url = https://github.com/ocornut/imgui
