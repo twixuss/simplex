@@ -283,20 +283,40 @@ private:
 	struct ImplicitCastResult {
 		bool did_cast = true; // Most of the paths do a cast, so make it default
 		bool success = false;
+		Expression **expression = 0;
+		Expression *target_type = 0;
+
+		InlineFunction<void(), 32> apply;
 
 		explicit operator bool() { return success; }
 	};
 
-	ImplicitCastResult implicitly_cast(Expression **_expression, Expression *target_type, bool apply);
-
-	inline ImplicitCastResult implicitly_cast(Expression **expression, Expression *target_type, Reporter *reporter, bool apply) {
+	ImplicitCastResult implicitly_cast(Expression **expression, Expression *target_type);
+	
+	inline ImplicitCastResult implicitly_cast(Expression **expression, Expression *target_type, Reporter *reporter) {
 		assert(reporter != &this->reporter, "Use this overload for different reporters, not the current one.");
 
 		auto old_reporter = this->reporter;
 		this->reporter = {};
-		auto result = implicitly_cast(expression, target_type, apply);
+		auto result = implicitly_cast(expression, target_type);
 		reporter->reports.add(this->reporter.reports);
 		this->reporter = old_reporter;
+		return result;
+	}
+	
+	inline ImplicitCastResult implicitly_cast_apply(Expression **expression, Expression *target_type) {
+		auto result = implicitly_cast(expression, target_type);
+		if (result) {
+			result.apply();
+		}
+		return result;
+	}
+
+	inline ImplicitCastResult implicitly_cast_apply(Expression **expression, Expression *target_type, Reporter *reporter) {
+		auto result = implicitly_cast(expression, target_type, reporter);
+		if (result) {
+			result.apply();
+		}
 		return result;
 	}
 

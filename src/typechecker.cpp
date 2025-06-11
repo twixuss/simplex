@@ -215,11 +215,8 @@ LowBinaryOperation integer_extension_low_op(umm source_size, bool source_signed,
 	invalid_code_path("can't produce LowBinaryOperation for integer extension: {} {} to {}", source_signed ? "signed" : "unsigned", source_size, destination_size);
 }
 
-Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expression, Expression *target_type, bool apply) {
-	auto expression = *_expression;
-	defer {
-		*_expression = expression;
-	};
+Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expression, Expression *target_type) {
+	auto &expression = *_expression;
 
 	auto source_type = expression->type;
 	auto direct_source_type = direct(source_type);
@@ -227,28 +224,36 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 
 	// Equal types do not need implicit cast
 	if (types_match(direct_source_type, direct_target_type)) {
-		return {.did_cast = false, .success = true};
+		return { .did_cast = false, .success = true, .apply = []{},};
 	}
 	
+	auto cast_applier = [=, &expression] {
+		expression = make_cast(expression, target_type);
+	};
+
 	// Autocast
 	if (auto unary = as<Unary>(expression)) {
 		if (unary->operation == UnaryOperation::atcast) {
 			Reporter temp_reporter;
-			if (implicitly_cast(&unary->expression, target_type, &temp_reporter, apply)) {
+			auto inner_cast_result = implicitly_cast(&unary->expression, target_type, &temp_reporter);
+			if (inner_cast_result) {
 				// Implicit cast available, just throw atcast out.
-				if (apply) {
-					expression = unary->expression;
-				}
-				return {.success = true};
+				return {
+					.success = true,
+					.apply = [=, &expression] () mutable {
+						inner_cast_result.apply();
+						expression = unary->expression;
+					},
+				};
 			} else {
 				// Try explicit cast
 				auto cast = make_cast(unary->expression, target_type);
 				WITH_UNWIND_STRATEGY() {
 					typecheck(&cast);
-					if (apply) {
-						expression = cast;
-					}
-					return {.success = true};
+					return {
+						.success = true,
+						.apply = [=, &expression] { expression = cast; },
+					};
 				}
 				return {.success = false};
 			}
@@ -258,10 +263,12 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 	// Unsized integer to concrete
 	if (types_match(direct_source_type, BuiltinType::UnsizedInteger)) {
 		if (::is_concrete_integer(direct_target_type)) {
-			if (apply) {
-				propagate_concrete_type(expression, target_type);
-			}
-			return {.success = true};
+			return {
+				.success = true,
+				.apply = [=, &expression] {
+					propagate_concrete_type(expression, target_type);
+				},
+			};
 		}
 	}
 
@@ -297,8 +304,6 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 								if (auto binary = as<Binary>(expression); binary && binary->operation == BinaryOperation::ban) {
 									if (auto mask = coalesce(get_constant_integer(binary->left), get_constant_integer(binary->right))) {
 										if ((u64)mask.value() <= ((u64)1 << (dst_size * 8)) - 1) {
-											if (apply)
-												expression = make_cast(expression, target_type);
 											return true;
 										}
 									}
@@ -308,12 +313,17 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 
 							if (src_sign == dst_sign) {
 								if (src_size <= dst_size) {
-									if (apply)
-										expression = make_cast(expression, target_type);
-									return {.success = true};
+									return {
+										.success = true,
+										.apply = cast_applier,
+									};
 								} else {
-									if (valid_due_to_masking())
-										return {.success = true};
+									if (valid_due_to_masking()) {
+										return {
+											.success = true,
+											.apply = cast_applier,
+										};
+									}
 
 									reporter.error(expression->location, "Can't implicitly convert {} to {}, because source is bigger than destination, meaning that there could be information loss.", source_type, target_type);
 									return {.success = false};
@@ -340,34 +350,36 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 	// Auto dereference
 	if (auto pointer = as_pointer(direct_source_type)) {
 		if (types_match(pointer->expression, direct_target_type)) {
-			if (apply) {
-				auto dereference = Unary::create();
-				dereference->operation = UnaryOperation::dereference;
-				dereference->expression = expression;
-				dereference->location = expression->location;
-				dereference->type = target_type;
-				expression = dereference;
-			}
-			return {.success = true};
+			return {
+				.success = true,
+				.apply = [=, &expression] {
+					auto dereference = Unary::create();
+					dereference->operation = UnaryOperation::dereference;
+					dereference->expression = expression;
+					dereference->location = expression->location;
+					dereference->type = target_type;
+					expression = dereference;
+				},
+			};
 		}
 	}
 
 	// None -> pointer
 	if (auto none = as<NoneLiteral>(expression)) {
 		if (auto target_pointer = as_pointer(direct_target_type)) {
-			if (apply) {
-				expression = make_cast(expression, target_type);
-			}
-			return {.success = true};
+			return {
+				.success = true,
+				.apply = cast_applier,
+			};
 		}
 	}
 
 	// Anything -> None
 	if (types_match(direct_target_type, BuiltinType::None)) {
-		if (apply) {
-			expression = make_cast(expression, target_type);
-		}
-		return {.success = true};
+		return {
+			.success = true,
+			.apply = cast_applier,
+		};
 	}
 
 	// Pointer -> Pointer
@@ -381,17 +393,17 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 			if (valid_mutability) {
 				if (types_match(source_pointer->expression, target_pointer->expression)) {
 					// *var T => *let T
-					if (apply) {
-						expression = make_cast(expression, target_type);
-					}
-					return {.success = true};
+					return {
+						.success = true,
+						.apply = cast_applier,
+					};
 				} else {
 					if (types_match(target_pointer->expression, BuiltinType::None)) {
 						// *T => *None
-						if (apply) {
-							expression = make_cast(expression, target_type);
-						}
-						return {.success = true};
+						return {
+							.success = true,
+							.apply = cast_applier,
+						};
 					}
 				}
 			}
@@ -402,11 +414,13 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 	if (auto literal = as<IntegerLiteral>(expression)) {
 		if (literal->value == 0) {
 			if (auto pointer = as_pointer(target_type)) {
-				if (apply) {
-					literal->type = get_builtin_type(BuiltinType::U64);
-					expression = make_cast(expression, target_type);
-				}
-				return {.success = true};
+				return {
+					.success = true,
+					.apply = [=, &expression] {
+						literal->type = get_builtin_type(BuiltinType::U64);
+						expression = make_cast(expression, target_type);
+					},
+				};
 			}
 		}
 	}
@@ -415,12 +429,14 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 	if (auto Enum = as<::Enum>(direct_target_type)) {
 		if (Enum->allow_from_int) {
 			if (is_any_integer(direct_source_type)) {
-				if (apply) {
-					auto cast = make_cast(expression, target_type);
-					cast->low_operation = integer_extension_low_op(get_size(direct_source_type), is_signed_integer(direct_source_type), get_size(Enum));
-					expression = cast;
-				}
-				return {.success = true};
+				return {
+					.success = true,
+					.apply = [=, &expression] {
+						auto cast = make_cast(expression, target_type);
+						cast->low_operation = integer_extension_low_op(get_size(direct_source_type), is_signed_integer(direct_source_type), get_size(Enum));
+						expression = cast;
+					},
+				};
 			}
 		}
 	}
@@ -429,12 +445,14 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 	if (auto Enum = as<::Enum>(direct_source_type)) {
 		if (Enum->allow_to_int) {
 			if (is_any_integer(direct_target_type)) {
-				if (apply) {
-					auto cast = make_cast(expression, target_type);
-					cast->low_operation = integer_extension_low_op(get_size(direct_source_type), is_signed_integer(direct_source_type), get_size(Enum));
-					expression = cast;
-				}
-				return {.success = true};
+				return {
+					.success = true,
+					.apply = [=, &expression] {
+						auto cast = make_cast(expression, target_type);
+						cast->low_operation = integer_extension_low_op(get_size(direct_source_type), is_signed_integer(direct_source_type), get_size(Enum));
+						expression = cast;
+					},
+				};
 			}
 		}
 	}
@@ -446,14 +464,16 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 			assert(name);
 			auto definition = try_find_enum_value(Enum, name);
 			if (definition) {
-				if (apply) {
-					auto literal = IntegerLiteral::create();
-					literal->type = Enum;
-					literal->location = expression->location;
-					literal->value = definition->constant_value.value().U64;
-					expression = literal;
-				}
-				return {.success = true};
+				return {
+					.success = true,
+					.apply = [=, &expression] {
+						auto literal = IntegerLiteral::create();
+						literal->type = Enum;
+						literal->location = expression->location;
+						literal->value = definition->constant_value.value().U64;
+						expression = literal;
+					},
+				};
 			} else {
 				reporter.error(expression->location, "Enum {} does not contain {}", Enum->definition ? Enum->definition->name : u8"unnamed"s, name->name);
 				reporter.info(Enum->location, "Enum defined here");
@@ -520,10 +540,12 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 		this->reporter = old_reporter;
 
 		if (result) {
-			if (apply) {
-				expression = result;
-			}
-			return {.success = true};
+			return {
+				.success = true,
+				.apply = [=, &expression] {
+					expression = result;
+				},
+			};
 		}
 	
 		atomic_increment(&context_base->stats.failed_custom_implicit_casts);
@@ -1101,13 +1123,15 @@ Typechecker::TypecheckLambdaCallResult Typechecker::typecheck_lambda_call(Call *
 
 	result.expression = call;
 
+	List<ImplicitCastResult, TemporaryAllocator> argument_implicit_casts;
+
 	for (umm i = 0; i < arguments.count; ++i) {
 		auto &argument = arguments[i];
 		auto &parameter = head->parameters_block.definition_list[i];
 
 		argument.parameter = parameter;
 
-		auto cast_result = implicitly_cast(&argument.expression, parameter->type, apply);
+		auto cast_result = implicitly_cast(&argument.expression, parameter->type);
 
 		if (!cast_result) {
 			reporter.info(parameter->location, "Parameter declared here:");
@@ -1115,9 +1139,15 @@ Typechecker::TypecheckLambdaCallResult Typechecker::typecheck_lambda_call(Call *
 		}
 
 		result.number_of_implicit_casts += cast_result.did_cast;
+
+		argument_implicit_casts.add(cast_result);
 	}
 
 	if (apply) {
+		for (auto &cast : argument_implicit_casts) {
+			cast.apply();
+		}
+
 		call->call_kind = CallKind::lambda;
 		call->type = head->return_type;
 	}
@@ -1144,7 +1174,7 @@ Expression *Typechecker::typecheck_constructor(Call *call, Struct *Struct) {
 		argument.parameter = member;
 
 		if (argument.expression) {
-			if (!implicitly_cast(&argument.expression, member->type, true)) {
+			if (!implicitly_cast_apply(&argument.expression, member->type)) {
 				fail();
 			}
 		} else {
@@ -1514,7 +1544,7 @@ Expression       *Typechecker::typecheck_impl(Block *block, bool can_substitute)
 
 			for (auto other : break_values_to_cast) {
 				Reporter cast_reporter;
-				if (!implicitly_cast(other, picked_value->type, &cast_reporter, true)) {
+				if (!implicitly_cast_apply(other, picked_value->type, &cast_reporter)) {
 					reporter.error((*other)->location, "Value of type {} can't be converted to {}", (*other)->type, picked_value->type);
 					reporter.info(get_last_child_recursive(picked_value)->location, "Block's type {} was deduced from this expression:", picked_value->type);
 					reporter.info("Here's the conversion attempt report:");
@@ -1567,7 +1597,7 @@ Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_s
 		if (definition->mutability == Mutability::constant) {
 
 			if (definition->parsed_type) {
-				if (!implicitly_cast(&definition->initial_value, definition->parsed_type, true)) {
+				if (!implicitly_cast_apply(&definition->initial_value, definition->parsed_type)) {
 					fail();
 				}
 			}
@@ -1580,7 +1610,7 @@ Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_s
 			//}
 		} else {
 			if (definition->parsed_type) {
-				if (!implicitly_cast(&definition->initial_value, definition->parsed_type, true)) {
+				if (!implicitly_cast_apply(&definition->initial_value, definition->parsed_type)) {
 					fail();
 				}
 			} else {
@@ -1734,7 +1764,7 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 
 		if (lambda->head.return_type) {
 			for (auto ret : lambda->returns) {
-				if (!implicitly_cast(&ret->value, lambda->head.return_type, true)) {
+				if (!implicitly_cast_apply(&ret->value, lambda->head.return_type)) {
 					reporter.info(lambda->head.return_type->location, "Return type specified here:");
 					fail();
 				}
@@ -1742,7 +1772,7 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 
 			if (!all_paths_return) {
 				if (lambda->body) {
-					if (!implicitly_cast(&lambda->body, lambda->head.return_type, true)) {
+					if (!implicitly_cast_apply(&lambda->body, lambda->head.return_type)) {
 						fail();
 					}
 				}
@@ -1807,7 +1837,7 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 
 					for (auto other : return_values_to_cast) {
 						Reporter cast_reporter;
-						if (!implicitly_cast(other, picked_value->type, &cast_reporter, true)) {
+						if (!implicitly_cast_apply(other, picked_value->type, &cast_reporter)) {
 							reporter.error((*other)->location, "Return value of type {} can't be converted to {}", (*other)->type, picked_value->type);
 							reporter.info(get_last_child_recursive(picked_value)->location, "Return type {} was deduced from this expression:", picked_value->type);
 							reporter.info("Here's the conversion attempt report:");
@@ -1867,7 +1897,7 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 					} else {
 						make_concrete(lambda->returns[0]->value);
 						for (auto ret : lambda->returns.skip(1)) {
-							if (!implicitly_cast(&ret->value, lambda->returns[0]->value->type, true)) {
+							if (!implicitly_cast_apply(&ret->value, lambda->returns[0]->value->type)) {
 								fail();
 							}
 						}
@@ -2297,8 +2327,8 @@ Expression       *Typechecker::typecheck_impl(IfExpression *If, bool can_substit
 
 		Reporter cast_reporter;
 		cast_reporter.reports.allocator = current_temporary_allocator;
-		auto t2f = implicitly_cast(&If->true_branch, If->false_branch->type, &cast_reporter, false);
-		auto f2t = implicitly_cast(&If->false_branch, If->true_branch->type, &cast_reporter, false);
+		auto t2f = implicitly_cast(&If->true_branch, If->false_branch->type, &cast_reporter);
+		auto f2t = implicitly_cast(&If->false_branch, If->true_branch->type, &cast_reporter);
 
 		if (!t2f && !f2t) {
 			reporter.error(If->location, "Branch types {} and {} don't match in any way.", If->true_branch->type, If->false_branch->type);
@@ -2311,10 +2341,10 @@ Expression       *Typechecker::typecheck_impl(IfExpression *If, bool can_substit
 			cast_reporter.reports.clear();
 			fail();
 		} else if (t2f) {
-			assert_always(implicitly_cast(&If->true_branch, If->false_branch->type, &cast_reporter, true));
+			t2f.apply();
 			If->type = If->true_branch->type;
 		} else {
-			assert_always(implicitly_cast(&If->false_branch, If->true_branch->type, &cast_reporter, true));
+			f2t.apply();
 			If->type = If->false_branch->type;
 		}
 	}
@@ -2444,7 +2474,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 						fail();
 					}
 					ensure_mutable(binary->left);
-					if (!implicitly_cast(&binary->right, binary->left->type, true)) {
+					if (!implicitly_cast_apply(&binary->right, binary->left->type)) {
 						fail();
 					}
 					binary->type = get_builtin_type(BuiltinType::None);
@@ -2735,8 +2765,8 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 				// Try implicit cast last
 				// because of auto dereference
 				Reporter cast_reporter;
-				if (implicitly_cast(&binary->left, binary->right, &cast_reporter, false)) {
-					implicitly_cast(&binary->left, binary->right, true);
+				if (auto cast_result = implicitly_cast(&binary->left, binary->right, &cast_reporter)) {
+					cast_result.apply();
 					return binary->left;
 				}
 
@@ -3147,7 +3177,7 @@ Match            *Typechecker::typecheck_impl(Match *match, bool can_substitute)
 				fail();
 			}
 
-			if (!implicitly_cast(&from, match->expression->type, true))
+			if (!implicitly_cast_apply(&from, match->expression->type))
 				fail();
 		}
 
@@ -3194,7 +3224,7 @@ Match            *Typechecker::typecheck_impl(Match *match, bool can_substitute)
 		assert(match->type, "match->type should be set by now. something went wrong");
 
 		for (auto &Case : match->cases) {
-			if (!implicitly_cast((Expression **)&Case.to, match->type, true)) {
+			if (!implicitly_cast_apply((Expression **)&Case.to, match->type)) {
 				fail();
 			}
 		}
@@ -3307,7 +3337,7 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 		}
 		case UnaryOperation::lnot: {
 			typecheck(&unary->expression);
-			if (!implicitly_cast(&unary->expression, get_builtin_type(BuiltinType::Bool), true)) {
+			if (!implicitly_cast_apply(&unary->expression, get_builtin_type(BuiltinType::Bool))) {
 				fail();
 			}
 			unary->type = unary->expression->type;
@@ -3745,7 +3775,7 @@ ArrayConstructor *Typechecker::typecheck_impl(ArrayConstructor *arr, bool can_su
 
 	make_concrete(arr->elements[0]);
 	for (auto &element : arr->elements.skip(1)) {
-		if (!implicitly_cast(&element, arr->elements[0]->type, true)) {
+		if (!implicitly_cast_apply(&element, arr->elements[0]->type)) {
 			fail();
 		}
 	}
@@ -3883,7 +3913,7 @@ Expression *Typechecker::bt_enum_and_some_enum(Binary *binary) {
 	auto name = as<Name>(some_enum->expression);
 	assert(name);
 
-	implicitly_cast(&binary->right, binary->left->type, true);
+	implicitly_cast_apply(&binary->right, binary->left->type);
 	
 	switch (binary->operation) {
 		case BinaryOperation::equ:
