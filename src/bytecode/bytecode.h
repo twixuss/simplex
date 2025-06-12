@@ -192,6 +192,8 @@ inline void append(StringBuilder &builder, Intrinsic i) {
 	append_format(builder, "(unknown Intrinsic {})", (u64)i);
 }
 
+// NOTE: Site is always written to
+//       InputValue is always read from
 /*
 #define y(type, name)
 #define x(name, fields)

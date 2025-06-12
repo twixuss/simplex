@@ -93,6 +93,14 @@ struct Builder {
 	};
 
 	BitSet<(umm)Register::base> available_registers;
+	// For an allocated register,
+	//     0 means nothing was written yet - saving on call is not needed,
+	//     1 means the registers contains a value and needs to be saved on call
+	// For unallocated register has no meaning.
+	BitSet<(umm)Register::base> initialized_registers;
+
+	void mark_written_registers(Instruction &i);
+
 	u64 temporary_offset = 0;
 	u64 max_temporary_size = 0;
 	u64 max_size_reserved_for_arguments = 0;

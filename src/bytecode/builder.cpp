@@ -19,7 +19,7 @@ bool debug_print;
 		.line = __LINE__, \
 		.source_location = current_location, \
 	}
-#define I(name, ...) (output_bytecode.instructions.add(MI(name, __VA_ARGS__)), 0)
+#define I(name, ...) (mark_written_registers(output_bytecode.instructions.add(MI(name, __VA_ARGS__))), 0)
 
 #define tmpreg(name) \
 	auto name = allocate_register(); \
@@ -299,12 +299,28 @@ u64 Builder::align_size(u64 x) { return ceil<u64>(max<u64>(1, x), 8); }
 s64 Builder::align_size(s64 x) { return ceil<s64>(max<s64>(1, x), 8); }
 
 Register Builder::allocate_register() {
-	return (Register)available_registers.pop().value();
+	auto reg = (Register)available_registers.pop().value();
+	initialized_registers.set((umm)reg, false);
+	return reg;
 }
 void Builder::deallocate(Register r) {
 	assert(!available_registers.get((umm)r));
 	available_registers.set((umm)r, true);
 	assert(available_registers.get((umm)r));
+}
+
+void Builder::mark_written_registers(Instruction &i) {
+	i.visit_operands(Combine{
+		[](auto &) {},
+		[&](Site &site) {
+			if (site.is_register()) {
+				auto r = (umm)site.get_register();
+				if (r < initialized_registers.bit_count) {
+					initialized_registers.set(r, true);
+				}
+			}
+		},
+	});
 }
 
 Address Builder::allocate_temporary(u64 size) {
@@ -527,6 +543,10 @@ void Builder::output_impl(Site destination, Block *block) {
 	}
 } 
 void Builder::output_impl(Site destination, Call *call) {
+	if (call->location == "foo()") {
+		int x = 5;
+	}
+
 	auto [lambda, head, Struct] = get_lambda_and_head_or_struct(call->callable);
 	switch (call->call_kind) {
 		case CallKind::lambda: {
@@ -534,7 +554,7 @@ void Builder::output_impl(Site destination, Call *call) {
 
 			s64 return_value_size = get_size(head->return_type);
 
-			auto registers_to_save = ~available_registers;
+			auto registers_to_save = ~available_registers & initialized_registers;
 			if (destination.is_register())
 				registers_to_save.set((umm)destination.get_register(), false);
 
