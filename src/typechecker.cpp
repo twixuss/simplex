@@ -248,14 +248,19 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 			} else {
 				// Try explicit cast
 				auto cast = make_cast(unary->expression, target_type);
-				WITH_UNWIND_STRATEGY() {
+				
+				with_unwind_strategy {
 					typecheck(&cast);
+				};
+
+				if (cast->type) {
 					return {
 						.success = true,
 						.apply = [=, &expression] { expression = cast; },
 					};
+				} else {
+					return {.success = false};
 				}
-				return {.success = false};
 			}
 		}
 	}
@@ -487,12 +492,12 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 		auto old_reporter = reporter;
 		reporter = {};
 
-		auto result = with_unwind_strategy([&]() -> Expression * {
+		Definition *selected_definition = 0;
+		Lambda *selected_lambda = 0;
+
+		bool result = with_unwind_strategy {
 			GList<Definition *> possible_definitions;
 			resolve_name(possible_definitions, expression->location, definition_name_for_implicit_as);
-
-			Definition *selected_definition = 0;
-			Lambda *selected_lambda = 0;
 
 			for (auto definition : possible_definitions) {
 				assert(definition->mutability == Mutability::constant);
@@ -518,23 +523,10 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 			}
 
 			if (!selected_definition)
-				return 0;
+				return false;
 
-			auto callable = Name::create();
-			callable->name = definition_name_for_implicit_as;
-			callable->location = expression->location;
-			callable->possible_definitions.set(selected_definition);
-			callable->type = selected_definition->type;
-
-			auto call = Call::create();
-			call->location = expression->location;
-			call->callable = callable;
-			call->arguments.add({.expression = expression, .parameter = selected_lambda->head.parameters_block.definition_list[0]});
-			call->type = selected_lambda->head.return_type;
-			call->call_kind = CallKind::lambda;
-
-			return call;
-		});
+			return true;
+		};
 		
 		old_reporter.reports.add(reporter.reports);
 		this->reporter = old_reporter;
@@ -543,7 +535,19 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 			return {
 				.success = true,
 				.apply = [=, &expression] {
-					expression = result;
+					auto callable = Name::create();
+					callable->name = definition_name_for_implicit_as;
+					callable->location = expression->location;
+					callable->possible_definitions.set(selected_definition);
+					callable->type = selected_definition->type;
+
+					auto call = Call::create();
+					call->location = expression->location;
+					call->callable = callable;
+					call->arguments.add({.expression = expression, .parameter = selected_lambda->head.parameters_block.definition_list[0]});
+					call->type = selected_lambda->head.return_type;
+					call->call_kind = CallKind::lambda;
+					expression = call;
 				},
 			};
 		}
@@ -757,12 +761,12 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 			});
 
 			can_generate_vectorized_lambdas = false;
-			success &= with_unwind_strategy([&] {
+			success &= with_unwind_strategy {
 				scoped_replace(current_block, &context->global_block.unprotected);
 				scoped_replace(current_container, 0);
 				scoped_replace(current_loop, 0);
 				return typecheck(&definition_node);
-			});
+			};
 			can_generate_vectorized_lambdas = true;
 
 			{
@@ -1981,11 +1985,12 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 							definition_name->type = 0;
 
 							name->type = 0;
-
-							if (auto result = with_unwind_strategy([&] {
+							
+							with_unwind_strategy {
 								typecheck(&dot);
-								return dot;
-							})) {
+							};
+
+							if (dot->type) {
 								if (previous_successful_dot) {
 									reporter.error(name->location, "Multiple `use`d definitions contain member {}.", name->name);
 									reporter.indentation += 1;
@@ -1995,7 +2000,7 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 									reporter.indentation -= 1;
 									fail();
 								}
-								previous_successful_dot = result;
+								previous_successful_dot = dot;
 								previous_successful_definition = definition;
 							}
 						}
@@ -2064,7 +2069,7 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 
 				{
 					scoped_exchange(reporter, dot_binop_reporter);
-					if (with_unwind_strategy([&] { return call->callable = typecheck_binary_dot(binary); })) {
+					if (with_unwind_strategy { return call->callable = typecheck_binary_dot(binary); }) {
 						dot_binop_reporter.reports.add(reporter.reports);
 						goto typecheck_dot_succeeded;
 					}
@@ -2087,7 +2092,7 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 				Reporter as_is_reporter;
 				{
 					scoped_exchange(reporter, as_is_reporter);
-					if (auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); })) {
+					if (auto result = with_unwind_strategy { return typecheck_impl(call, can_substitute); }) {
 						as_is_reporter.reports.add(reporter.reports);
 						return result;
 					}
@@ -2105,7 +2110,7 @@ Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 					first_argument_address->operation = UnaryOperation::addr;
 					call->arguments[0].expression = first_argument_address;
 
-					if (auto result = with_unwind_strategy([&] { return typecheck_impl(call, can_substitute); })) {
+					if (auto result = with_unwind_strategy { return typecheck_impl(call, can_substitute); }) {
 						by_pointer_reporter.reports.add(reporter.reports);
 						return result;
 					}
@@ -2227,12 +2232,12 @@ typecheck_dot_succeeded:
 
 		for (auto &overload : overloads) {
 			scoped_exchange(reporter, overload.reporter);
-			with_unwind_strategy([&] {
+			with_unwind_strategy {
 				auto result = typecheck_lambda_call(call, overload.lambda, overload.lambda_head, false);
 				assert(result.expression);
 				overload.number_of_implicit_casts = result.number_of_implicit_casts;
 				matching_overloads.add(&overload);
-			});
+			};
 		}
 
 		if (matching_overloads.count == 0) {
@@ -2368,7 +2373,7 @@ BuiltinTypeName  *Typechecker::typecheck_impl(BuiltinTypeName *type, bool can_su
 	return type;
 }
 Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitute) {
-	if (binary->uid == 979) {
+	if (binary->uid == 478) {
 		int x = 4;
 	}
 	if (binary->operation == BinaryOperation::dot) {
@@ -2378,17 +2383,10 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 		Reporter member_reporter;
 		{
 			scoped_exchange(reporter, member_reporter);
-			#if 1
-			if (auto result = with_unwind_strategy([&] { return typecheck_binary_dot(binary); })) {
+			if (auto result = with_unwind_strategy { return typecheck_binary_dot(binary); }) {
 				member_reporter.reports.add(reporter.reports);
 				return result;
 			}
-			#else
-			// Crash in longjmp due to unaligned stack...
-			WITH_UNWIND_STRATEGY() {
-				return typecheck_binary_dot(binary);
-			}
-			#endif
 		}
 
 		//
@@ -2405,7 +2403,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 		Reporter property_reporter;
 		{
 			scoped_exchange(reporter, property_reporter);
-			if (auto result = with_unwind_strategy([&] {
+			if (auto result = with_unwind_strategy {
 				auto member_name = as<Name>(binary->right);
 				if (!member_name) {
 					reporter.error(binary->right->location, "Expected this to be a name for get property to work");
@@ -2426,7 +2424,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 				NOTE_LEAK(binary);
 				NOTE_LEAK(member_name);
 				return call;
-			})) {
+			}) {
 				property_reporter.reports.add(reporter.reports);
 				return result;
 			}
@@ -2465,7 +2463,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 			Reporter regular_reporter;
 			{
 				scoped_exchange(reporter, regular_reporter);
-				if (auto result = with_unwind_strategy([&] {
+				if (auto result = with_unwind_strategy {
 					typecheck(&binary->left);
 					typecheck(&binary->right);
 
@@ -2479,7 +2477,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 					}
 					binary->type = get_builtin_type(BuiltinType::None);
 					return binary;
-				})) {
+				}) {
 					regular_reporter.reports.add(reporter.reports);
 					return result;
 				}
@@ -3026,12 +3024,12 @@ c
 									};
 								});
 
-								success &= with_unwind_strategy([&] {
+								success &= with_unwind_strategy {
 									scoped_replace(current_block, &context->global_block.unprotected);
 									scoped_replace(current_container, 0);
 									scoped_replace(current_loop, 0);
 									return typecheck(&definition_node);
-								});
+								};
 									
 								{
 									with(temporary_storage_checkpoint);
@@ -4127,9 +4125,6 @@ void Typechecker::init_binary_typecheckers() {
 #undef y
 }
 	
-#undef fail
-#undef with_unwind_strategy
-
 u64 get_typechecking_progress() {
 	u64 result = 0;
 	for (auto &entry : typecheck_entries) {

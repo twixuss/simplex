@@ -188,59 +188,41 @@ private:
 	//
 	/* Example:
 	
-	auto thing = with_unwind_strategy([&] {
+	auto thing = with_unwind_strategy {
 		return typecheck(expression); // if `typecheck` fails, rest of the lambda is skipped
 		                              // result of `typecheck` is assigned to `thing`, or null on failure.
-	});
-
-	*/
-	auto with_unwind_strategy(auto &&fn) -> decltype(fn()) {
-		scoped_replace(fail_strategy, FailStrategy::unwind);
-		auto saved_unwind_point = current_unwind_point;
-		defer { 
-			current_unwind_point = saved_unwind_point;
-		};
-		if (setjmp(current_unwind_point.buf) == fail_unwind_tag) {
-			return decltype(fn()){};
-		}
-		return fn();
-	}
-
-	//
-	// Statement WITH_UNWIND_STRATEGY
-	//
-	/* Example:
-	
-	WITH_UNWIND_STRATEGY {
-		return typecheck(expression); // result of `typecheck` is returned on success.
-		                              // rest of the block is skipped on failure.
-	}
-
-	*/
-	struct PreUnwindStrategyState {
-		FailStrategy strategy = {};
-		CopyableJmpBuf unwind_point = {};
-		bool finished = false;
 	};
-	PreUnwindStrategyState begin_unwind_strategy() {
-		PreUnwindStrategyState pre_state = {
-			fail_strategy,
-			current_unwind_point,
-		};
-		fail_strategy = FailStrategy::unwind;
-		if (setjmp(current_unwind_point.buf) == fail_unwind_tag) {
-			pre_state.finished = true;
-		}
-		return pre_state;
-	}
-	void end_unwind_strategy(PreUnwindStrategyState &pre_state) {
-		pre_state.finished = true;
-		fail_strategy = pre_state.strategy;
-		current_unwind_point = pre_state.unwind_point;
-	}
-	#define WITH_UNWIND_STRATEGY() \
-		for (auto _x = begin_unwind_strategy(); !_x.finished; end_unwind_strategy(_x))
+	
+	NOTE: I tried to implement this without a callback lambda using a for loop so you can just return values, e.g.
 
+			WITH_UNWIND_STRATEGY {
+				typecheck(expression);
+				return expression;
+			}
+			// <- go here on failure
+		
+	      but the problem is that for loop's "incremeter" or whatever its called is not executed after return,
+		  so the previous state needs to be restored by requiring defer in the body, which in turn requires opening
+		  for's body in the macro.
+		  So you can't really make this a more concise and neat statement.
+	*/
+
+	struct UnwindStrategyEnabler {
+		Typechecker *t = 0;
+		auto operator->*(auto &&fn) -> decltype(fn()) {
+			scoped_replace(t->fail_strategy, FailStrategy::unwind);
+			auto saved_unwind_point = t->current_unwind_point;
+			defer { 
+				t->current_unwind_point = saved_unwind_point;
+			};
+			if (setjmp(t->current_unwind_point.buf) == fail_unwind_tag) {
+				return decltype(fn()){};
+			}
+			return fn();
+		}
+	};
+
+	#define with_unwind_strategy UnwindStrategyEnabler{this}->*[&]()
 
 	[[nodiscard]]
 	bool yield_while(String location, auto predicate) {
