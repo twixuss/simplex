@@ -15,6 +15,11 @@ inline IntegerLiteral *make_integer(u64 value, Type type = get_builtin_type(Buil
 }
 #endif
 
+FloatLiteral *make_float(UnsizedFloat value, String location, Type type = get_builtin_type(BuiltinType::UnsizedFloat));
+inline FloatLiteral *make_float(UnsizedFloat value, Type type = get_builtin_type(BuiltinType::UnsizedFloat)) {
+	return make_float(value, {}, type);
+}
+
 StringLiteral *make_string(String value, String location = {});
 
 BuiltinTypeName *make_name(BuiltinType type, String location = {});

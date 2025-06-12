@@ -31,6 +31,7 @@ bool do_all_paths_return_impl(Definition *definition) {
 	return false;
 }
 bool do_all_paths_return_impl(IntegerLiteral *literal) { return false; }
+bool do_all_paths_return_impl(FloatLiteral *literal) { return false; }
 bool do_all_paths_return_impl(BooleanLiteral *literal) { return false; }
 bool do_all_paths_return_impl(NoneLiteral *literal) { return false; }
 bool do_all_paths_return_impl(StringLiteral *literal) { return false; }

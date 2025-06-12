@@ -62,6 +62,14 @@ IntegerLiteral *make_integer(u64 value, String location, Type type) {
 }
 #endif
 
+FloatLiteral *make_float(UnsizedFloat value, String location, Type type) {
+	auto result = FloatLiteral::create();
+	result->value = value;
+	result->type = type;
+	result->location = location;
+	return result;
+}
+
 BooleanLiteral *make_boolean(bool value, String location) {
 	auto result = BooleanLiteral::create();
 	result->value = value;

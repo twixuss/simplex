@@ -56,7 +56,7 @@
     <ClInclude Include="src\escape.h" />
     <ClInclude Include="src\nodes.h" />
     <ClInclude Include="src\value.h" />
-    <ClInclude Include="src\unsized_integer.h" />
+    <ClInclude Include="src\unsized_types.h" />
     <ClInclude Include="src\type.h" />
     <ClInclude Include="src\nodes_fwd.h" />
     <ClInclude Include="src\node.h" />

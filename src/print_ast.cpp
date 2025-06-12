@@ -92,6 +92,15 @@ void print_ast_impl(IntegerLiteral *literal) {
 	}
 	print('}');
 }
+void print_ast_impl(FloatLiteral *literal) {
+	print('{');
+	{ tabbed;
+		print(literal->value);
+		print(" as ");
+		print_ast(literal->type);
+	}
+	print('}');
+}
 void print_ast_impl(BooleanLiteral *literal) {
 	print(literal->value);
 }

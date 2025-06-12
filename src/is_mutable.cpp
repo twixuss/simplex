@@ -22,6 +22,7 @@ Result<Empty, Expression *> is_mutable_impl(Definition *definition) {
 	return definition;
 }
 Result<Empty, Expression *> is_mutable_impl(IntegerLiteral *literal) { return literal; }
+Result<Empty, Expression *> is_mutable_impl(FloatLiteral *literal) { return literal; }
 Result<Empty, Expression *> is_mutable_impl(BooleanLiteral *literal) { return literal; }
 Result<Empty, Expression *> is_mutable_impl(NoneLiteral *literal) { return literal; }
 Result<Empty, Expression *> is_mutable_impl(StringLiteral *literal) { return literal; }

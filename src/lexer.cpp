@@ -403,6 +403,10 @@ restart:
 					++cursor;
 				}
 				goto restart;
+			} else if (*cursor == '=') {
+				++cursor;
+				token.kind = (TokenKind)'/=';
+				goto finish;
 			} else if (*cursor == '*') {
 				int level = 1;
 				enum class In : u8 {
@@ -522,7 +526,7 @@ restart:
 				switch (*cursor) {
 					default:
 						goto finish;
-					case 'b': {
+					case 'b': { // binary
 						++cursor;
 						while (1) {
 							switch (*cursor) {
@@ -538,7 +542,7 @@ restart:
 						}
 						break;
 					}
-					case 'o': {
+					case 'o': { // octal
 						++cursor;
 						while (1) {
 							switch (*cursor) {
@@ -554,7 +558,7 @@ restart:
 						}
 						break;
 					}
-					case 'x': {
+					case 'x': { // hexadecimal
 						++cursor;
 						while (1) {
 							switch (*cursor) {
@@ -591,10 +595,15 @@ restart:
 						reporter->error(Span(token.string.data, cursor), "C-like octal literals are not supported. Use 0o{}", Span(token.string.data + 1, cursor));
 						fail();
 					}
+					case '.': {
+						goto parse_float_dot;
+					}
 				}
 			} else {
-				#if 1
+				// decimal
+				#if 0
 				// SIMD
+				not_implemented("floats");
 				#pragma warning(push)
 				#pragma warning(disable: 4309) // constant value truncation
 				VMask mask = vmset1(1);
@@ -632,6 +641,30 @@ restart:
 						case '_':
 							++cursor;
 							break;
+						case '.': {
+						parse_float_dot:
+							auto dot = cursor++;
+							token.kind = Token_float;
+							float_value = int_value;
+							f64 divisor = 1;
+							while (1) {
+								switch (*cursor) {
+									default:
+										if (divisor == 1) {
+											// no fractional part provided, treat as a integer and a dot
+											token.kind = Token_number;
+											cursor = dot;
+										}
+										goto finish;
+									case '0':case '1':case '2':case '3':case '4':case '5':case '6':case '7':case '8':case '9':
+										float_value += (*cursor++ - '0') / (divisor *= 10);
+										break;
+									case '_':
+										++cursor;
+										break;
+								}
+							}
+						}
 					}
 				}
 				#endif

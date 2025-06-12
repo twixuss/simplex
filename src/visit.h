@@ -100,6 +100,7 @@ ForEachDirective visit_impl(While *While, auto &&visitor) {
 }
 ForEachDirective visit_impl(Name *name, auto &&visitor) { return ForEach_continue; }
 ForEachDirective visit_impl(IntegerLiteral *literal, auto &&visitor) { return ForEach_continue; }
+ForEachDirective visit_impl(FloatLiteral *literal, auto &&visitor) { return ForEach_continue; }
 ForEachDirective visit_impl(BooleanLiteral *literal, auto &&visitor) { return ForEach_continue; }
 ForEachDirective visit_impl(NoneLiteral *literal, auto &&visitor) { return ForEach_continue; }
 ForEachDirective visit_impl(StringLiteral  *literal, auto &&visitor) { return ForEach_continue; }

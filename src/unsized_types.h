@@ -20,3 +20,5 @@ using UnsizedInteger = BigInt<DefaultAllocator>;
 #else
 using UnsizedInteger = SignedIntWithBits<UNSIZED_INTEGER_BITS>;
 #endif
+
+using UnsizedFloat = f64;

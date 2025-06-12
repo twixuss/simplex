@@ -657,6 +657,13 @@ void Builder::output_impl(Site destination, Definition *definition) {
 void Builder::output_impl(Site destination, IntegerLiteral *literal) {
 	I(copy, .d = destination, .s = (s64)literal->value, .size = get_size(literal->type));
 } 
+void Builder::output_impl(Site destination, FloatLiteral *literal) {
+	auto size = get_size(literal->type);
+	switch (size) {
+		case 4: I(copy, .d = destination, .s = std::bit_cast<s32>((f32)literal->value), .size = size); break;
+		case 8: I(copy, .d = destination, .s = std::bit_cast<s64>((f64)literal->value), .size = size); break;
+	}
+} 
 void Builder::output_impl(Site destination, BooleanLiteral *literal) {
 	I(copy, .d = destination, .s = (s64)literal->value, .size = 1);
 } 
@@ -935,6 +942,49 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			output(destination, binary->left);
 			return;
 		}
+		case LowBinaryOperation::f32_to_u8:
+		case LowBinaryOperation::f32_to_u16:
+		case LowBinaryOperation::f32_to_s8:
+		case LowBinaryOperation::f32_to_s16: {
+			// TODO: don't allocate if destination is a register
+			tmpreg(tmp);
+
+			output(tmp, binary->left);
+			I(f32_to_s32, tmp, tmp);
+			I(copy, destination, tmp, get_size(binary->right));
+			return;
+		}
+		case LowBinaryOperation::f32_to_u32: 
+		case LowBinaryOperation::f32_to_s32: 
+			output(destination, binary->left);
+			I(f32_to_s32, destination, destination);
+			return;
+		case LowBinaryOperation::f32_to_u64: 
+		case LowBinaryOperation::f32_to_s64: 
+			output(destination, binary->left);
+			I(f32_to_s32, destination, destination);
+			I(and8, destination, destination, 0xffff'ffff);
+			return;
+			
+		case LowBinaryOperation::f64_to_u8:
+		case LowBinaryOperation::f64_to_u16:
+		case LowBinaryOperation::f64_to_u32:
+		case LowBinaryOperation::f64_to_s8:
+		case LowBinaryOperation::f64_to_s16:
+		case LowBinaryOperation::f64_to_s32: {
+			// TODO: don't allocate if destination is a register
+			tmpreg(tmp);
+
+			output(tmp, binary->left);
+			I(f64_to_s64, tmp, tmp);
+			I(copy, destination, tmp, get_size(binary->right));
+			return;
+		}
+		case LowBinaryOperation::f64_to_u64:
+		case LowBinaryOperation::f64_to_s64:
+			output(destination, binary->left);
+			I(f64_to_s64, destination, destination);
+			return;
 	}
 		
 	auto dleft  = binary->left->type ? direct(binary->left->type) : 0;
@@ -982,69 +1032,102 @@ void Builder::output_impl(Site destination, Binary *binary) {
 		case BinaryOperation::bor:
 		case BinaryOperation::bsl:
 		case BinaryOperation::bsr: {
-			auto result_size = get_size(binary->type);
-			auto left_size = get_size(dleft);
-			auto right_size = get_size(dright);
-			assert(result_size == left_size);
-			switch (binary->operation) {
-				case BinaryOperation::bsl:
-				case BinaryOperation::bsr: {
-					break;
-				}
-				default: {
-					assert(left_size == right_size);
-					break;
-				}
-			}
-			assert(result_size <= 8);
-
-			tmpreg(left);
-			output(left, binary->left);
-			tmpreg(right);
-			output(right, binary->right);
-
-
-			switch (result_size) {
-				#define x(n)                                                                                       \
-					case n: {                                                                                      \
-						switch (binary->operation) {                                                               \
-							case BinaryOperation::add: I(add##n, .d = destination, .a = left, .b = right);  break; \
-							case BinaryOperation::sub: I(sub##n, .d = destination, .a = left, .b = right);  break; \
-							case BinaryOperation::mul: I(mul##n, .d = destination, .a = left, .b = right);  break; \
-							case BinaryOperation::div:                                                             \
-								if (is_signed_integer(dleft)) {                                                    \
-									I(divs##n, .d = destination, .a = left, .b = right);                           \
-								} else {                                                                           \
-									I(divu##n, .d = destination, .a = left, .b = right);                           \
-								}                                                                                  \
-								break;                                                                             \
-							case BinaryOperation::mod:                                                             \
-								if (is_signed_integer(dleft)) {                                                    \
-									I(mods##n, .d = destination, .a = left, .b = right);                           \
-								} else {                                                                           \
-									I(modu##n, .d = destination, .a = left, .b = right);                           \
-								}                                                                                  \
-								break;                                                                             \
-							case BinaryOperation::bxo: I(xor##n, .d = destination, .a = left, .b = right);  break; \
-							case BinaryOperation::ban: I(and##n, .d = destination, .a = left, .b = right);  break; \
-							case BinaryOperation::bor: I(or##n,  .d = destination, .a = left, .b = right);  break; \
-							case BinaryOperation::bsl: I(sll##n, .d = destination, .a = left, .b = right);  break; \
-							case BinaryOperation::bsr: {                                                           \
-								if (is_signed_integer(dleft))                                                      \
-									I(sra##n, .d = destination, .a = left, .b = right);                            \
-								else                                                                               \
-									I(srl##n, .d = destination, .a = left, .b = right);                            \
-								break;                                                                             \
-							}                                                                                      \
-							default: not_implemented();                                                            \
-						}                                                                                          \
-						break;                                                                                     \
+			if (is_concrete_integer(binary->left->type) && is_concrete_integer(binary->right->type)) {
+				auto result_size = get_size(binary->type);
+				auto left_size = get_size(dleft);
+				auto right_size = get_size(dright);
+				assert(result_size == left_size);
+				switch (binary->operation) {
+					case BinaryOperation::bsl:
+					case BinaryOperation::bsr: {
+						break;
 					}
-				ENUMERATE_1248
-				#undef x
-			}
+					default: {
+						assert(left_size == right_size);
+						break;
+					}
+				}
+				assert(result_size <= 8);
 
-			return;
+				tmpreg(left);
+				output(left, binary->left);
+				tmpreg(right);
+				output(right, binary->right);
+
+
+				switch (result_size) {
+					#define x(n)                                                                                       \
+						case n: {                                                                                      \
+							switch (binary->operation) {                                                               \
+								case BinaryOperation::add: I(add##n, .d = destination, .a = left, .b = right);  break; \
+								case BinaryOperation::sub: I(sub##n, .d = destination, .a = left, .b = right);  break; \
+								case BinaryOperation::mul: I(mul##n, .d = destination, .a = left, .b = right);  break; \
+								case BinaryOperation::div:                                                             \
+									if (is_signed_integer(dleft)) {                                                    \
+										I(divs##n, .d = destination, .a = left, .b = right);                           \
+									} else {                                                                           \
+										I(divu##n, .d = destination, .a = left, .b = right);                           \
+									}                                                                                  \
+									break;                                                                             \
+								case BinaryOperation::mod:                                                             \
+									if (is_signed_integer(dleft)) {                                                    \
+										I(mods##n, .d = destination, .a = left, .b = right);                           \
+									} else {                                                                           \
+										I(modu##n, .d = destination, .a = left, .b = right);                           \
+									}                                                                                  \
+									break;                                                                             \
+								case BinaryOperation::bxo: I(xor##n, .d = destination, .a = left, .b = right);  break; \
+								case BinaryOperation::ban: I(and##n, .d = destination, .a = left, .b = right);  break; \
+								case BinaryOperation::bor: I(or##n,  .d = destination, .a = left, .b = right);  break; \
+								case BinaryOperation::bsl: I(sll##n, .d = destination, .a = left, .b = right);  break; \
+								case BinaryOperation::bsr: {                                                           \
+									if (is_signed_integer(dleft))                                                      \
+										I(sra##n, .d = destination, .a = left, .b = right);                            \
+									else                                                                               \
+										I(srl##n, .d = destination, .a = left, .b = right);                            \
+									break;                                                                             \
+								}                                                                                      \
+								default: not_implemented();                                                            \
+							}                                                                                          \
+							break;                                                                                     \
+						}
+					ENUMERATE_1248
+					#undef x
+				}
+
+				return;
+			} else if (is_concrete_float(binary->left->type) && is_concrete_float(binary->right->type)) {
+				auto result_size = get_size(binary->type);
+				auto left_size = get_size(dleft);
+				auto right_size = get_size(dright);
+				assert(result_size == left_size);
+				assert(left_size == right_size);
+				assert(result_size <= 8);
+
+				tmpreg(left);
+				output(left, binary->left);
+				tmpreg(right);
+				output(right, binary->right);
+
+				switch (result_size) {
+					#define x(n)                                                                                       \
+						case n: {                                                                                      \
+							switch (binary->operation) {                                                               \
+								case BinaryOperation::add: I(fadd##n, .d = destination, .a = left, .b = right); break; \
+								case BinaryOperation::sub: I(fsub##n, .d = destination, .a = left, .b = right); break; \
+								case BinaryOperation::mul: I(fmul##n, .d = destination, .a = left, .b = right); break; \
+								case BinaryOperation::div: I(fdiv##n, .d = destination, .a = left, .b = right); break; \
+								case BinaryOperation::mod: I(fmod##n, .d = destination, .a = left, .b = right); break; \
+								default: not_implemented();                                                            \
+							}                                                                                          \
+							break;                                                                                     \
+						}
+					ENUMERATE_48
+					#undef x
+				}
+				return;
+			}
+			break;
 		}
 		case BinaryOperation::equ:
 		case BinaryOperation::neq:
@@ -1268,28 +1351,39 @@ void Builder::output_impl(Site destination, Unary *unary) {
 	switch (unary->operation) {
 		case UnaryOperation::addr: {
 			load_address(destination, unary->expression);
-			break;
+			return;
 		}
 		case UnaryOperation::dereference: {
 			tmpreg(addr);
 			output(addr, unary->expression);
 			I(copy, .d = destination, .s = Address { .base = addr }, .size = get_size(unary->expression->type));
-			break;
+			return;
 		}
 		case UnaryOperation::lnot: {
 			output(destination, unary->expression);
 			I(cmp1, destination, 1, destination, Comparison::not_equals);
-			break;
+			return;
 		}
 		case UnaryOperation::minus: {
-			assert(is_concrete_integer(unary->type));
-			output(destination, unary->expression);
-			switch (get_size(unary->type)) {
-				case 1: I(neg1, destination, destination); break;
-				case 2: I(neg2, destination, destination); break;
-				case 4: I(neg4, destination, destination); break;
-				case 8: I(neg8, destination, destination); break;
-				default: invalid_code_path();
+			if (is_concrete_integer(unary->type)) {
+				output(destination, unary->expression);
+				switch (get_size(unary->type)) {
+					case 1: I(neg1, destination, destination); break;
+					case 2: I(neg2, destination, destination); break;
+					case 4: I(neg4, destination, destination); break;
+					case 8: I(neg8, destination, destination); break;
+					default: invalid_code_path();
+				}
+				return;
+			}
+			if (is_concrete_float(unary->type)) {
+				output(destination, unary->expression);
+				switch (get_size(unary->type)) {
+					case 4: I(xor4, destination, destination, (s64)0x8000'0000); break;
+					case 8: I(xor8, destination, destination, (s64)0x8000'0000'0000'0000); break;
+					default: invalid_code_path();
+				}
+				return;
 			}
 			break;
 		}
@@ -1303,10 +1397,10 @@ void Builder::output_impl(Site destination, Unary *unary) {
 				case 8: I(xor8, destination, destination, ~0); break;
 				default: invalid_code_path();
 			}
-			break;
+			return;
 		}
-		default: not_implemented();
 	}
+	not_implemented();
 } 
 void Builder::output_impl(Site destination, Struct *node) { not_implemented(); } 
 void Builder::output_impl(Site destination, Enum *node) { not_implemented(); } 
@@ -1495,6 +1589,7 @@ void Builder::load_address_impl(Site destination, Definition *definition) {
 	I(lea, .d = destination, .s = get_definition_address(definition));
 }
 void Builder::load_address_impl(Site destination, IntegerLiteral *node) { not_implemented(); }
+void Builder::load_address_impl(Site destination, FloatLiteral *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, BooleanLiteral *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, NoneLiteral *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, StringLiteral *node) { not_implemented(); }

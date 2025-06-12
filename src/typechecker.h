@@ -382,6 +382,7 @@ private:
 	[[nodiscard]] Expression       *typecheck_impl(Block *block, bool can_substitute);
 	[[nodiscard]] Definition       *typecheck_impl(Definition *definition, bool can_substitute);
 	[[nodiscard]] IntegerLiteral   *typecheck_impl(IntegerLiteral *literal, bool can_substitute);
+	[[nodiscard]] FloatLiteral     *typecheck_impl(FloatLiteral *literal, bool can_substitute);
 	[[nodiscard]] BooleanLiteral   *typecheck_impl(BooleanLiteral *literal, bool can_substitute);
 	[[nodiscard]] NoneLiteral      *typecheck_impl(NoneLiteral *literal, bool can_substitute);
 	[[nodiscard]] StringLiteral    *typecheck_impl(StringLiteral *literal, bool can_substitute);
@@ -426,6 +427,10 @@ public:
 	Expression *bt_unsized_int_and_sized_int_comp(Binary *binary);
 	Expression *bt_unsized_int(Binary *binary);
 	Expression *bt_sized_int_modify_ass_unsized_int(Binary *binary);
+	Expression *bt_unsized_float_and_sized_float_math(Binary *binary);
+	Expression *bt_unsized_float_and_sized_float_comp(Binary *binary);
+	Expression *bt_unsized_float(Binary *binary);
+	Expression *bt_sized_float_modify_ass_unsized_float(Binary *binary);
 	Expression *bt_enum_and_some_enum(Binary *binary);
 
 	template <bool invert>

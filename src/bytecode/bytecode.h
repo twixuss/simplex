@@ -14,6 +14,10 @@ namespace Bytecode {
 	x(4) \
 	x(8) \
 
+#define ENUMERATE_48 \
+	x(4) \
+	x(8) \
+
 #define ENUMERATE_NAMED_BYTECODE_REGISTERS \
 	x(base           , 248) /* NOTE: all registers before this one can be allocated. */ \
 	x(stack          , 249) \
@@ -274,6 +278,20 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(neg2, (y(Site, d) y(InputValue, a))) \
 	x(neg4, (y(Site, d) y(InputValue, a))) \
 	x(neg8, (y(Site, d) y(InputValue, a))) \
+	x(fadd4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(fadd8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(fsub4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(fsub8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(fmul4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(fmul8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(fdiv4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(fdiv8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(fmod4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(fmod8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
+	x(f32_to_s32, (y(Site, d) y(InputValue, a))) \
+	x(f32_to_f64, (y(Site, d) y(InputValue, a))) \
+	x(f64_to_s64, (y(Site, d) y(InputValue, a))) \
+	x(f64_to_f32, (y(Site, d) y(InputValue, a))) \
 	x(call, (y(InputValue, d))) \
 	x(callext, (y(Lambda *, lambda) y(String, lib) y(String, name))) \
 	x(copyext, (y(Site, d) y(String, lib) y(String, name))) \

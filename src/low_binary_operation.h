@@ -151,4 +151,43 @@ enum class LowBinaryOperation : u8 {
 	right_to_bool_not,
 	// output binary->left
 	left,
+
+	u8_to_f32,
+	u16_to_f32,
+	u32_to_f32,
+	u64_to_f32,
+	s8_to_f32,
+	s16_to_f32,
+	s32_to_f32,
+	s64_to_f32,
+
+	u8_to_f64,
+	u16_to_f64,
+	u32_to_f64,
+	u64_to_f64,
+	s8_to_f64,
+	s16_to_f64,
+	s32_to_f64,
+	s64_to_f64,
+
+	f32_to_u8,
+	f32_to_u16,
+	f32_to_u32,
+	f32_to_u64,
+	f32_to_s8,
+	f32_to_s16,
+	f32_to_s32,
+	f32_to_s64,
+
+	f64_to_u8,
+	f64_to_u16,
+	f64_to_u32,
+	f64_to_u64,
+	f64_to_s8,
+	f64_to_s16,
+	f64_to_s32,
+	f64_to_s64,
+
+	f32_to_f64,
+	f64_to_f32,
 };

@@ -224,6 +224,9 @@ DEFINE_EXPRESSION(Definition) {
 DEFINE_EXPRESSION(IntegerLiteral) {
 	UnsizedInteger value = {};
 };
+DEFINE_EXPRESSION(FloatLiteral) {
+	f64 value = {};
+};
 DEFINE_EXPRESSION(BooleanLiteral) {
 	bool value = false;
 };

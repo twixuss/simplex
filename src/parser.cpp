@@ -961,6 +961,13 @@ Expression *Parser::parse_expression_0() {
 			next();
 			return finish_node(literal);
 		}
+		case Token_float: {
+			auto literal = FloatLiteral::create();
+			literal->location = token.string;
+			literal->value = lexer.float_value;
+			next();
+			return finish_node(literal);
+		}
 		case Token_false:
 		case Token_true: {
 			auto literal = BooleanLiteral::create();

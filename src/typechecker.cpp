@@ -31,6 +31,8 @@
 		}                                                  \
 	};
 
+#define coalesce(a, b) ([&]{ auto _a = a; if (_a) return _a; return b; }())
+
 Typechecker *Typechecker::create(Node *node) {
 	assert(node);
 
@@ -215,6 +217,137 @@ LowBinaryOperation integer_extension_low_op(umm source_size, bool source_signed,
 	invalid_code_path("can't produce LowBinaryOperation for integer extension: {} {} to {}", source_signed ? "signed" : "unsigned", source_size, destination_size);
 }
 
+constexpr Array<Array<LowBinaryOperation, (int)BuiltinType::count>, (int)BuiltinType::count> builtin_type_conversion_low_op_table = [&](){
+	Array<Array<LowBinaryOperation, (int)BuiltinType::count>, (int)BuiltinType::count> result = {};
+
+	#define x(s, d, op) result[(int)BuiltinType::s][(int)BuiltinType::d] = LowBinaryOperation::op
+	
+	x(U8, U8,  left);
+	x(U8, U16, zex8to16);
+	x(U8, U32, zex8to32);
+	x(U8, U64, zex8to64);
+	x(U8, S8,  left);
+	x(U8, S16, zex8to16);
+	x(U8, S32, zex8to32);
+	x(U8, S64, zex8to64);
+	x(U8, F32, u8_to_f32);
+	x(U8, F64, u8_to_f64);
+
+	x(U16, U8,  left);
+	x(U16, U16, left);
+	x(U16, U32, zex16to32);
+	x(U16, U64, zex16to64);
+	x(U16, S8,  left);
+	x(U16, S16, left);
+	x(U16, S32, zex16to32);
+	x(U16, S64, zex16to64);
+	x(U16, F32, u16_to_f32);
+	x(U16, F64, u16_to_f64);
+
+	x(U32, U8,  left);
+	x(U32, U16, left);
+	x(U32, U32, left);
+	x(U32, U64, zex32to64);
+	x(U32, S8,  left);
+	x(U32, S16, left);
+	x(U32, S32, left);
+	x(U32, S64, zex32to64);
+	x(U32, F32, u32_to_f32);
+	x(U32, F64, u32_to_f64);
+
+	x(U64, U8,  left);
+	x(U64, U16, left);
+	x(U64, U32, left);
+	x(U64, U64, left);
+	x(U64, S8,  left);
+	x(U64, S16, left);
+	x(U64, S32, left);
+	x(U64, S64, left);
+	x(U64, F32, u64_to_f32);
+	x(U64, F64, u64_to_f64);
+
+	x(U8, U8,  left);
+	x(U8, U16, sex8to16);
+	x(U8, U32, sex8to32);
+	x(U8, U64, sex8to64);
+	x(U8, S8,  left);
+	x(U8, S16, sex8to16);
+	x(U8, S32, sex8to32);
+	x(U8, S64, sex8to64);
+	x(U8, F32, u8_to_f32);
+	x(U8, F64, u8_to_f64);
+
+	x(U16, U8,  left);
+	x(U16, U16, left);
+	x(U16, U32, sex16to32);
+	x(U16, U64, sex16to64);
+	x(U16, S8,  left);
+	x(U16, S16, left);
+	x(U16, S32, sex16to32);
+	x(U16, S64, sex16to64);
+	x(U16, F32, u16_to_f32);
+	x(U16, F64, u16_to_f64);
+
+	x(U32, U8,  left);
+	x(U32, U16, left);
+	x(U32, U32, left);
+	x(U32, U64, sex32to64);
+	x(U32, S8,  left);
+	x(U32, S16, left);
+	x(U32, S32, left);
+	x(U32, S64, sex32to64);
+	x(U32, F32, u32_to_f32);
+	x(U32, F64, u32_to_f64);
+
+	x(U64, U8,  left);
+	x(U64, U16, left);
+	x(U64, U32, left);
+	x(U64, U64, left);
+	x(U64, S8,  left);
+	x(U64, S16, left);
+	x(U64, S32, left);
+	x(U64, S64, left);
+	x(U64, F32, u64_to_f32);
+	x(U64, F64, u64_to_f64);
+
+	x(F32, U8,  f32_to_u8);
+	x(F32, U16, f32_to_u16);
+	x(F32, U32, f32_to_u32);
+	x(F32, U64, f32_to_u64);
+	x(F32, S8,  f32_to_s8);
+	x(F32, S16, f32_to_s16);
+	x(F32, S32, f32_to_s32);
+	x(F32, S64, f32_to_s64);
+	x(F32, F32, left);
+	x(F32, F64, f32_to_f64);
+
+	x(F64, U8,  f64_to_u8);
+	x(F64, U16, f64_to_u16);
+	x(F64, U32, f64_to_u32);
+	x(F64, U64, f64_to_u64);
+	x(F64, S8,  f64_to_s8);
+	x(F64, S16, f64_to_s16);
+	x(F64, S32, f64_to_s32);
+	x(F64, S64, f64_to_s64);
+	x(F64, F32, f64_to_f32);
+	x(F64, F64, left);
+
+	#undef x
+
+	return result;
+}();
+
+BuiltinType as_builtin_type(BuiltinType t) { return t; }
+BuiltinType as_builtin_type(BuiltinTypeName *t) { return t->type_kind; }
+BuiltinType as_builtin_type(Expression *t) { return as<BuiltinTypeName>(t)->type_kind; }
+BuiltinType as_builtin_type(Type t) { return as<BuiltinTypeName>(t)->type_kind; }
+
+LowBinaryOperation builtin_type_conversion_low_op(auto source, auto target)
+	requires requires { as_builtin_type(source); as_builtin_type(target); }
+{
+	return builtin_type_conversion_low_op_table[(int)as_builtin_type(source)][(int)as_builtin_type(target)];
+}
+
 Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expression, Expression *target_type) {
 	auto &expression = *_expression;
 
@@ -264,10 +397,22 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 			}
 		}
 	}
-
+	
 	// Unsized integer to concrete
 	if (types_match(direct_source_type, BuiltinType::UnsizedInteger)) {
 		if (::is_concrete_integer(direct_target_type)) {
+			return {
+				.success = true,
+				.apply = [=, &expression] {
+					propagate_concrete_type(expression, target_type);
+				},
+			};
+		}
+	}
+
+	// Unsized float to concrete
+	if (types_match(direct_source_type, BuiltinType::UnsizedFloat)) {
+		if (::is_concrete_float(direct_target_type)) {
 			return {
 				.success = true,
 				.apply = [=, &expression] {
@@ -302,8 +447,6 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 							auto dst_size = get_size(dst_builtin_type->type_kind);
 							auto src_sign = get_sign(src_builtin_type->type_kind);
 							auto dst_sign = get_sign(dst_builtin_type->type_kind);
-
-							#define coalesce(a, b) ([&]{ auto _a = a; if (_a) return _a; return b; }())
 
 							auto valid_due_to_masking = [&] {
 								if (auto binary = as<Binary>(expression); binary && binary->operation == BinaryOperation::ban) {
@@ -341,6 +484,37 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 									reporter.error(expression->location, "Can't implicitly convert {} to {}, because source is bigger than destination, meaning that there could be information loss, and the signs don't match.", source_type, target_type);
 									return {.success = false};
 								}
+							}
+
+							break;
+						}
+					}
+				}
+				break;
+			}
+		}
+	}
+	
+	// Float to Float
+	if (auto src_builtin_type = as<BuiltinTypeName>(direct_source_type)) {
+		switch (src_builtin_type->type_kind) {
+			case BuiltinType::F32:
+			case BuiltinType::F64: {
+				if (auto dst_builtin_type = as<BuiltinTypeName>(direct_target_type)) {
+					switch (dst_builtin_type->type_kind) {
+						case BuiltinType::F32:
+						case BuiltinType::F64: {
+							auto src_size = get_size(src_builtin_type->type_kind);
+							auto dst_size = get_size(dst_builtin_type->type_kind);
+
+							if (src_size <= dst_size) {
+								return {
+									.success = true,
+									.apply = cast_applier,
+								};
+							} else {
+								reporter.error(expression->location, "Can't implicitly convert {} to {}, because source is bigger than destination, meaning that there could be information loss.", source_type, target_type);
+								return {.success = false};
 							}
 
 							break;
@@ -438,7 +612,7 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 					.success = true,
 					.apply = [=, &expression] {
 						auto cast = make_cast(expression, target_type);
-						cast->low_operation = integer_extension_low_op(get_size(direct_source_type), is_signed_integer(direct_source_type), get_size(Enum));
+						cast->low_operation = builtin_type_conversion_low_op(direct_source_type, Enum->underlying_type);
 						expression = cast;
 					},
 				};
@@ -454,7 +628,7 @@ Typechecker::ImplicitCastResult Typechecker::implicitly_cast(Expression **_expre
 					.success = true,
 					.apply = [=, &expression] {
 						auto cast = make_cast(expression, target_type);
-						cast->low_operation = integer_extension_low_op(get_size(direct_source_type), is_signed_integer(direct_source_type), get_size(Enum));
+						cast->low_operation = builtin_type_conversion_low_op(Enum->underlying_type, direct_target_type);
 						expression = cast;
 					},
 				};
@@ -1691,6 +1865,10 @@ IntegerLiteral   *Typechecker::typecheck_impl(IntegerLiteral *literal, bool can_
 	literal->type = get_builtin_type(BuiltinType::UnsizedInteger);
 	return literal;
 }
+FloatLiteral     *Typechecker::typecheck_impl(FloatLiteral *literal, bool can_substitute) {
+	literal->type = get_builtin_type(BuiltinType::UnsizedFloat);
+	return literal;
+}
 BooleanLiteral   *Typechecker::typecheck_impl(BooleanLiteral *literal, bool can_substitute) {
 	literal->type = get_builtin_type(BuiltinType::Bool);
 	return literal;
@@ -2376,6 +2554,9 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 	if (binary->uid == 478) {
 		int x = 4;
 	}
+	if (binary->location == "a += b") {
+		int x = 4;
+	}
 	if (binary->operation == BinaryOperation::dot) {
 		//
 		// Struct member access
@@ -2714,17 +2895,26 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 						return binary;
 					}
 				}
-
+				
 				// From concrete integer
 				if (is_concrete_integer(source_type)) {
 					// To integer
 					if (is_concrete_integer(target_type)) {
+						binary->low_operation = builtin_type_conversion_low_op(as<BuiltinTypeName>(source_type)->type_kind, as<BuiltinTypeName>(target_type)->type_kind);
+						binary->type = binary->right;
+						return binary;
+					}
+						
+					// To float
+					if (is_concrete_float(target_type)) {
+						binary->low_operation = builtin_type_conversion_low_op(as<BuiltinTypeName>(source_type)->type_kind, as<BuiltinTypeName>(target_type)->type_kind);
 						binary->type = binary->right;
 						return binary;
 					}
 						
 					// To pointer
 					if (auto right_pointer = as_pointer(target_type)) {
+						binary->low_operation = integer_extension_low_op(get_size(source_type), is_signed_integer(source_type), 8);
 						binary->type = binary->right;
 						return binary;
 					}
@@ -2746,10 +2936,58 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 						return literal;
 					}
 						
+					// To float
+					if (is_concrete_float(target_type)) {
+						literal->type = binary->right;
+						NOTE_LEAK(binary);
+						return literal;
+					}
+						
 					// To pointer
 					if (auto right_pointer = as_pointer(target_type)) {
 						binary->type = binary->right;
 						return binary;
+					}
+				}
+				
+				// From concrete float
+				if (is_concrete_float(source_type)) {
+					// To integer
+					if (is_concrete_integer(target_type)) {
+						binary->low_operation = builtin_type_conversion_low_op(as<BuiltinTypeName>(source_type)->type_kind, as<BuiltinTypeName>(target_type)->type_kind);
+						binary->type = binary->right;
+						return binary;
+					}
+						
+					// To float
+					if (is_concrete_float(target_type)) {
+						binary->low_operation = builtin_type_conversion_low_op(as<BuiltinTypeName>(source_type)->type_kind, as<BuiltinTypeName>(target_type)->type_kind);
+						binary->type = binary->right;
+						return binary;
+					}
+						
+					// To boolean
+					if (types_match(target_type, get_builtin_type(BuiltinType::Bool))) {
+						binary->low_operation = LowBinaryOperation::left_to_bool;
+						binary->type = binary->right;
+						return binary;
+					}
+				}
+
+				// From float literal
+				if (auto literal = as<FloatLiteral>(binary->left)) {
+					// To integer
+					if (is_concrete_integer(target_type)) {
+						literal->type = binary->right;
+						NOTE_LEAK(binary);
+						return literal;
+					}
+						
+					// To float
+					if (is_concrete_float(target_type)) {
+						literal->type = binary->right;
+						NOTE_LEAK(binary);
+						return literal;
 					}
 				}
 				
@@ -3106,6 +3344,8 @@ c
 			
 			// Into   { let c = &x; *c = *c + y; } 
 			
+			ensure_mutable(binary->left);
+
 			auto address_of_left = make_address(binary->left);
 
 			auto definition = Definition::create();
@@ -3302,12 +3542,18 @@ Expression       *Typechecker::typecheck_impl(Unary *unary, bool can_substitute)
 				literal->value = -literal->value;
 				return literal;
 			}
+			if (auto literal = as<FloatLiteral>(unary->expression)) {
+				literal->value = -literal->value;
+				return literal;
+			}
 			if (auto builtin = as<BuiltinTypeName>(unary->expression->type)) {
 				switch (builtin->type_kind) {
 					case BuiltinType::S8:
 					case BuiltinType::S16:
 					case BuiltinType::S32:
 					case BuiltinType::S64:
+					case BuiltinType::F32:
+					case BuiltinType::F64:
 						unary->type = unary->expression->type;
 						break;
 				}
@@ -3428,7 +3674,7 @@ Block            *Typechecker::typecheck_impl(For *For, bool can_substitute) {
 	///////////////////////////
 	{
 		let __r = 0..10
-		let __i = __r.begin
+		var __i = __r.begin
 		while __i != __r.end {
 			let it: U64 = __i
 			{
@@ -3448,7 +3694,7 @@ Block            *Typechecker::typecheck_impl(For *For, bool can_substitute) {
 	///////////////////////////
 	{
 		let __r = 0..10
-		let __i = __r.end
+		var __i = __r.end
 		while __i != __r.begin {
 			__i -= 1
 			let it = __i
@@ -3480,7 +3726,7 @@ Block            *Typechecker::typecheck_impl(For *For, bool can_substitute) {
 
 	auto __i = Definition::create();
 	__i->name = u8"__i"s;
-	__i->mutability = Mutability::readonly;
+	__i->mutability = Mutability::variable;
 	__i->container = current_container;
 	__i->initial_value = make_binary(BinaryOperation::dot, make_name(__r, For->location), make_name(begin_name, For->location), 0, For->location);
 	__i->location = For->location;
@@ -3837,7 +4083,7 @@ Expression *Typechecker::bt_unsized_int_and_sized_int_math(Binary *binary) {
 
 	binary->type = sized->type;
 	return binary;
-};
+}
 Expression *Typechecker::bt_unsized_int_and_sized_int_comp(Binary *binary) {
 	auto sized = binary->left;
 	auto unsized = binary->right;
@@ -3849,7 +4095,7 @@ Expression *Typechecker::bt_unsized_int_and_sized_int_comp(Binary *binary) {
 	propagate_concrete_type(unsized, sized->type);
 	binary->type = get_builtin_type(BuiltinType::Bool);
 	return binary;
-};
+}
 Expression *Typechecker::bt_unsized_int(Binary *binary) {
 	auto l = get_constant_value(binary->left).value();
 	auto r = get_constant_value(binary->right).value();
@@ -3874,7 +4120,64 @@ Expression *Typechecker::bt_unsized_int(Binary *binary) {
 		case BinaryOperation::grq: return make_boolean(l.UnsizedInteger >= r.UnsizedInteger, binary->location);
 	}
 	invalid_code_path("Attempt to evaluate binary {} on unsized integers. This is not supported/implemented", binary->operation);
-};
+}
+Expression *Typechecker::bt_sized_int_modify_ass_unsized_int(Binary *binary) {
+	ensure_mutable(binary->left);
+	binary->right->type = binary->left->type;
+	binary->type = get_builtin_type(BuiltinType::None);
+	return binary;
+}
+Expression *Typechecker::bt_unsized_float_and_sized_float_math(Binary *binary) {
+	auto sized = binary->left;
+	auto unsized = binary->right;
+
+	if (is_concrete(unsized->type)) {
+		Swap(sized, unsized);
+	}
+
+	propagate_concrete_type(unsized, sized->type);
+
+	binary->type = sized->type;
+	return binary;
+}
+Expression *Typechecker::bt_unsized_float_and_sized_float_comp(Binary *binary) {
+	auto sized = binary->left;
+	auto unsized = binary->right;
+
+	if (is_concrete(unsized->type)) {
+		Swap(sized, unsized);
+	}
+
+	propagate_concrete_type(unsized, sized->type);
+	binary->type = get_builtin_type(BuiltinType::Bool);
+	return binary;
+}
+Expression *Typechecker::bt_unsized_float(Binary *binary) {
+	auto l = get_constant_value(binary->left).value();
+	auto r = get_constant_value(binary->right).value();
+	assert(l.kind == ValueKind::UnsizedFloat);
+	assert(r.kind == ValueKind::UnsizedFloat);
+	switch (binary->operation) {
+		case BinaryOperation::add: return make_float(l.UnsizedFloat + r.UnsizedFloat, binary->location);
+		case BinaryOperation::sub: return make_float(l.UnsizedFloat - r.UnsizedFloat, binary->location);
+		case BinaryOperation::mul: return make_float(l.UnsizedFloat * r.UnsizedFloat, binary->location);
+		case BinaryOperation::div: return make_float(l.UnsizedFloat / r.UnsizedFloat, binary->location);
+		case BinaryOperation::mod: return make_float(frac(l.UnsizedFloat / r.UnsizedFloat) * r.UnsizedFloat, binary->location);
+		case BinaryOperation::equ: return make_boolean(l.UnsizedFloat == r.UnsizedFloat, binary->location);
+		case BinaryOperation::neq: return make_boolean(l.UnsizedFloat != r.UnsizedFloat, binary->location);
+		case BinaryOperation::les: return make_boolean(l.UnsizedFloat < r.UnsizedFloat, binary->location);
+		case BinaryOperation::grt: return make_boolean(l.UnsizedFloat > r.UnsizedFloat, binary->location);
+		case BinaryOperation::leq: return make_boolean(l.UnsizedFloat <= r.UnsizedFloat, binary->location);
+		case BinaryOperation::grq: return make_boolean(l.UnsizedFloat >= r.UnsizedFloat, binary->location);
+	}
+	invalid_code_path("Attempt to evaluate binary {} on unsized floats. This is not supported/implemented", binary->operation);
+}
+Expression *Typechecker::bt_sized_float_modify_ass_unsized_float(Binary *binary) {
+	ensure_mutable(binary->left);
+	binary->right->type = binary->left->type;
+	binary->type = get_builtin_type(BuiltinType::None);
+	return binary;
+}
 
 template <bool invert>
 Expression *Typechecker::bt_comp_Type(Binary *binary) {
@@ -3895,13 +4198,6 @@ Expression *Typechecker::bt_math_opt(Binary *binary) {
 	}
 	return binary;
 };
-
-Expression *Typechecker::bt_sized_int_modify_ass_unsized_int(Binary *binary) {
-	ensure_mutable(binary->left);
-	binary->right->type = binary->left->type;
-	binary->type = get_builtin_type(BuiltinType::None);
-	return binary;
-}
 
 Expression *Typechecker::bt_enum_and_some_enum(Binary *binary) {
 	auto Enum = direct_as<::Enum>(binary->left->type);
@@ -3984,13 +4280,20 @@ void Typechecker::init_binary_typecheckers() {
 		x(type, type, leq) = &bt_set_bool; \
 		x(type, type, grt) = &bt_set_bool; \
 		x(type, type, grq) = &bt_set_bool
-
+	
 	#define MATHABLE_INTEGER(type) \
 		x(type, type, add) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type + r.type, get_builtin_type(BuiltinType::type)); }>; \
 		x(type, type, sub) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type - r.type, get_builtin_type(BuiltinType::type)); }>; \
 		x(type, type, mul) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type * r.type, get_builtin_type(BuiltinType::type)); }>; \
 		x(type, type, div) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type / r.type, get_builtin_type(BuiltinType::type)); }>; \
 		x(type, type, mod) = &bt_math_opt<[](Value l, Value r){ return make_integer(l.type % r.type, get_builtin_type(BuiltinType::type)); }>;
+	
+	#define MATHABLE_FLOAT(type) \
+		x(type, type, add) = &bt_math_opt<[](Value l, Value r){ return make_float(     l.type + r.type,           get_builtin_type(BuiltinType::type)); }>; \
+		x(type, type, sub) = &bt_math_opt<[](Value l, Value r){ return make_float(     l.type - r.type,           get_builtin_type(BuiltinType::type)); }>; \
+		x(type, type, mul) = &bt_math_opt<[](Value l, Value r){ return make_float(     l.type * r.type,           get_builtin_type(BuiltinType::type)); }>; \
+		x(type, type, div) = &bt_math_opt<[](Value l, Value r){ return make_float(     l.type / r.type,           get_builtin_type(BuiltinType::type)); }>; \
+		x(type, type, mod) = &bt_math_opt<[](Value l, Value r){ return make_float(frac(l.type / r.type) * r.type, get_builtin_type(BuiltinType::type)); }>;
 	
 	#define BITWISE(signed, unsigned) \
 		x(unsigned, unsigned, bor) = &bt_take_left; \
@@ -4054,6 +4357,19 @@ void Typechecker::init_binary_typecheckers() {
 		/* x(t, UnsizedInteger, bslass) = &bt_sized_int_modify_ass_unsized_int; */ \
 		/* x(t, UnsizedInteger, bsrass) = &bt_sized_int_modify_ass_unsized_int; */ \
 
+	#define UNSIZED_FLOAT_AND_SIZED_FLOAT(t) \
+		SYMMETRIC(t, UnsizedFloat, add) = &bt_unsized_float_and_sized_float_math; \
+		SYMMETRIC(t, UnsizedFloat, sub) = &bt_unsized_float_and_sized_float_math; \
+		SYMMETRIC(t, UnsizedFloat, mul) = &bt_unsized_float_and_sized_float_math; \
+		SYMMETRIC(t, UnsizedFloat, div) = &bt_unsized_float_and_sized_float_math; \
+		SYMMETRIC(t, UnsizedFloat, mod) = &bt_unsized_float_and_sized_float_math; \
+		SYMMETRIC(t, UnsizedFloat, equ) = &bt_unsized_float_and_sized_float_comp; \
+		SYMMETRIC(t, UnsizedFloat, neq) = &bt_unsized_float_and_sized_float_comp; \
+		SYMMETRIC(t, UnsizedFloat, les) = &bt_unsized_float_and_sized_float_comp; \
+		SYMMETRIC(t, UnsizedFloat, leq) = &bt_unsized_float_and_sized_float_comp; \
+		SYMMETRIC(t, UnsizedFloat, grt) = &bt_unsized_float_and_sized_float_comp; \
+		SYMMETRIC(t, UnsizedFloat, grq) = &bt_unsized_float_and_sized_float_comp; \
+
 	ORDERABLE(Bool);
 	ORDERABLE(U8);
 	ORDERABLE(U16);
@@ -4064,6 +4380,9 @@ void Typechecker::init_binary_typecheckers() {
 	ORDERABLE(S32);
 	ORDERABLE(S64);
 
+	ORDERABLE(F32);
+	ORDERABLE(F64);
+
 	MATHABLE_INTEGER(U8);
 	MATHABLE_INTEGER(U16);
 	MATHABLE_INTEGER(U32);
@@ -4072,6 +4391,9 @@ void Typechecker::init_binary_typecheckers() {
 	MATHABLE_INTEGER(S16);
 	MATHABLE_INTEGER(S32);
 	MATHABLE_INTEGER(S64);
+
+	MATHABLE_FLOAT(F32);
+	MATHABLE_FLOAT(F64);
 
 	BITWISE(S8,  U8 );
 	BITWISE(S16, U16);
@@ -4096,6 +4418,9 @@ void Typechecker::init_binary_typecheckers() {
 	UNSIZED_INT_AND_SIZED_INT(S32);
 	UNSIZED_INT_AND_SIZED_INT(S64);
 
+	UNSIZED_FLOAT_AND_SIZED_FLOAT(F32);
+	UNSIZED_FLOAT_AND_SIZED_FLOAT(F64);
+	
 	x(UnsizedInteger, UnsizedInteger, add) = &bt_unsized_int;
 	x(UnsizedInteger, UnsizedInteger, sub) = &bt_unsized_int;
 	x(UnsizedInteger, UnsizedInteger, mul) = &bt_unsized_int;
@@ -4112,6 +4437,18 @@ void Typechecker::init_binary_typecheckers() {
 	x(UnsizedInteger, UnsizedInteger, leq) = &bt_unsized_int;
 	x(UnsizedInteger, UnsizedInteger, grt) = &bt_unsized_int;
 	x(UnsizedInteger, UnsizedInteger, grq) = &bt_unsized_int;
+
+	x(UnsizedFloat, UnsizedFloat, add) = &bt_unsized_float;
+	x(UnsizedFloat, UnsizedFloat, sub) = &bt_unsized_float;
+	x(UnsizedFloat, UnsizedFloat, mul) = &bt_unsized_float;
+	x(UnsizedFloat, UnsizedFloat, div) = &bt_unsized_float;
+	x(UnsizedFloat, UnsizedFloat, mod) = &bt_unsized_float;
+	x(UnsizedFloat, UnsizedFloat, equ) = &bt_unsized_float;
+	x(UnsizedFloat, UnsizedFloat, neq) = &bt_unsized_float;
+	x(UnsizedFloat, UnsizedFloat, les) = &bt_unsized_float;
+	x(UnsizedFloat, UnsizedFloat, leq) = &bt_unsized_float;
+	x(UnsizedFloat, UnsizedFloat, grt) = &bt_unsized_float;
+	x(UnsizedFloat, UnsizedFloat, grq) = &bt_unsized_float;
 
 	x(Bool, Bool, lan) = &bt_set_bool;
 	x(Bool, Bool, lor) = &bt_set_bool;

@@ -1,6 +1,6 @@
 #pragma once
 #include "common.h"
-#include "unsized_integer.h"
+#include "unsized_types.h"
 #include "nodes_fwd.h"
 #include "x.h"
 

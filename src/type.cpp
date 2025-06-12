@@ -262,6 +262,7 @@ bool is_concrete(Type type) {
 	if (auto builtin_type = as<BuiltinTypeName>(type)) {
 		switch (builtin_type->type_kind) {
 			case BuiltinType::UnsizedInteger:
+			case BuiltinType::UnsizedFloat:
 				return false;
 		}
 	}
@@ -269,9 +270,22 @@ bool is_concrete(Type type) {
 	return true;
 }
 
+bool is_concrete_float(Type type) {
+	type = direct(type);
+	if (auto builtin_type = as<BuiltinTypeName>(type)) {
+		switch (builtin_type->type_kind) {
+			case BuiltinType::F32:
+			case BuiltinType::F64:
+				return true;
+		}
+	}
+
+	return false;
+}
 void propagate_concrete_type(Expression *expression, Type type) {
 	switch (expression->kind) {
 		case NodeKind::IntegerLiteral: 
+		case NodeKind::FloatLiteral: 
 		case NodeKind::Name:
 			expression->type = type;
 			break;
@@ -311,6 +325,10 @@ void make_concrete(Expression *expression) {
 				propagate_concrete_type(expression, get_builtin_type(BuiltinType::S64));
 				return;
 			}
+			case BuiltinType::UnsizedFloat: {
+				propagate_concrete_type(expression, get_builtin_type(BuiltinType::F64));
+				return;
+			}
 		}
 	}
 }
@@ -326,6 +344,8 @@ u64 get_size(BuiltinType type_kind) {
 		case BuiltinType::S16:    return 2;
 		case BuiltinType::S32:    return 4;
 		case BuiltinType::S64:    return 8;
+		case BuiltinType::F32:    return 4;
+		case BuiltinType::F64:    return 8;
 		case BuiltinType::Bool:   return 1;
 		case BuiltinType::Type:   return 8;
 		default: invalid_code_path("Invalid BuiltinType {}", type_kind);

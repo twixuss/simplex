@@ -42,6 +42,14 @@ Result<Value, Expression *> get_constant_value_impl(IntegerLiteral *node) {
 		default: invalid_code_path();
 	}
 }
+Result<Value, Expression *> get_constant_value_impl(FloatLiteral *node) { 
+	switch (as<BuiltinTypeName>(node->type)->type_kind) {
+		case BuiltinType::F32: return Value((f32)node->value);
+		case BuiltinType::F64: return Value((f64)node->value);
+		case BuiltinType::UnsizedFloat: return Value(unsized_float_tag, node->value);
+		default: invalid_code_path();
+	}
+}
 Result<Value, Expression *> get_constant_value_impl(BooleanLiteral *node) { return Value(((BooleanLiteral *)node)->value); }
 Result<Value, Expression *> get_constant_value_impl(NoneLiteral *node) { return Value(ValueKind::none); }
 Result<Value, Expression *> get_constant_value_impl(StringLiteral *node) { return Value(((StringLiteral *)node)->value); }

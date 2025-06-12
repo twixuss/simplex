@@ -25,6 +25,7 @@ Result<Empty, Expression *> is_constant_impl(Definition *definition) {
 	return definition;
 }
 Result<Empty, Expression *> is_constant_impl(IntegerLiteral *literal) { return Empty{}; }
+Result<Empty, Expression *> is_constant_impl(FloatLiteral *literal) { return Empty{}; }
 Result<Empty, Expression *> is_constant_impl(BooleanLiteral *literal) { return Empty{}; }
 Result<Empty, Expression *> is_constant_impl(NoneLiteral *literal) { return Empty{}; }
 Result<Empty, Expression *> is_constant_impl(StringLiteral *literal) { return Empty{}; }

@@ -176,7 +176,10 @@ void append(StringBuilder &builder, CType type) {
 				case BuiltinType::S16: append(builder, "int16_t"); break;
 				case BuiltinType::S32: append(builder, "int32_t"); break;
 				case BuiltinType::S64: append(builder, "int64_t"); break;
+				case BuiltinType::F32: append(builder, "float"); break;
+				case BuiltinType::F64: append(builder, "double"); break;
 				case BuiltinType::UnsizedInteger: append(builder, "int64_t"); break;
+				case BuiltinType::UnsizedFloat: append(builder, "float64_t"); break;
 				case BuiltinType::None: append(builder, "void"); break;
 				default: append_format(builder, "UnknownBuiltinType_{}", t->type_kind); break;
 			}
@@ -493,6 +496,9 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 		[&](IntegerLiteral *literal) {
 			append_line(code, "_{} = {};", node->uid, (u64)literal->value);
 		},
+		[&](FloatLiteral *literal) {
+			append_line(code, "_{} = {};", node->uid, (f64)literal->value);
+		},
 		[&](StringLiteral *literal) {
 			append_line(code, "_{} = __make_string(\"{}\");", node->uid, EscapedCString{literal->value});
 		},
@@ -541,6 +547,25 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				append_node(code, binary->left);
 				append_node(code, binary->right);
 				append_line(code, "_{} = _{} {} (char *)_{};", node->uid, binary->left->uid, CBinaryOperation{binary->operation}, binary->right->uid);
+				return;
+			}
+
+			if (is_concrete_float(binary->right->type) && is_concrete_float(binary->left->type) && binary->operation == BinaryOperation::mod) {
+				append_node(code, binary->left);
+				append_node(code, binary->right);
+
+				// a % b
+				// = frac(a / b) * b
+				// = (a / b - floor(a / b)) * b
+				// 
+				// d = a / b
+				// (d - floor(d)) * b
+				
+				auto temp_type_str = get_size(binary->right->type) == 4 ? "float" : "double";
+				auto floor_str = get_size(binary->right->type) == 4 ? "floorf" : "floor";
+
+				append_line(code, "{} d{} = _{} / _{};", temp_type_str, node->uid, binary->left->uid, binary->right->uid);
+				append_line(code, "_{} = (d{} - {}(d{})) * _{};", node->uid, node->uid, floor_str, node->uid, binary->right->uid);
 				return;
 			}
 
@@ -852,6 +877,7 @@ bool convert_ast(Block *global_block, Lambda *main_lambda, Definition *main_lamb
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <math.h>
 
 #undef assert
 

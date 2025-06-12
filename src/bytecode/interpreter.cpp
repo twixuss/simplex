@@ -729,6 +729,9 @@ inline constexpr v2<Int> edivmod(Int x, Int y) {
 	};
 }
 
+inline f32 mod(f32 x, f32 y) { return frac(x / y) * y; }
+inline f64 mod(f64 x, f64 y) { return frac(x / y) * y; }
+
 static void _checks() {
 	static_assert(all(edivmod<int>(-2147483648, -3) == v2s{715827883, 1}));
 	static_assert(all(edivmod<int>(-2147483647, -3) == v2s{715827883, 2}));
@@ -971,6 +974,20 @@ void Interpreter::execute(Instruction::neg1_t i) { val1(i.d) = -val1(i.a); }
 void Interpreter::execute(Instruction::neg2_t i) { val2(i.d) = -val2(i.a); }
 void Interpreter::execute(Instruction::neg4_t i) { val4(i.d) = -val4(i.a); }
 void Interpreter::execute(Instruction::neg8_t i) { val8(i.d) = -val8(i.a); }
+void Interpreter::execute(Instruction::fadd4_t i) { *(f32 *)&val4(i.d) = std::bit_cast<f32>(val4(i.a)) + std::bit_cast<f32>(val4(i.b)); }
+void Interpreter::execute(Instruction::fadd8_t i) { *(f64 *)&val8(i.d) = std::bit_cast<f64>(val8(i.a)) + std::bit_cast<f64>(val8(i.b)); }
+void Interpreter::execute(Instruction::fsub4_t i) { *(f32 *)&val4(i.d) = std::bit_cast<f32>(val4(i.a)) - std::bit_cast<f32>(val4(i.b)); }
+void Interpreter::execute(Instruction::fsub8_t i) { *(f64 *)&val8(i.d) = std::bit_cast<f64>(val8(i.a)) - std::bit_cast<f64>(val8(i.b)); }
+void Interpreter::execute(Instruction::fmul4_t i) { *(f32 *)&val4(i.d) = std::bit_cast<f32>(val4(i.a)) * std::bit_cast<f32>(val4(i.b)); }
+void Interpreter::execute(Instruction::fmul8_t i) { *(f64 *)&val8(i.d) = std::bit_cast<f64>(val8(i.a)) * std::bit_cast<f64>(val8(i.b)); }
+void Interpreter::execute(Instruction::fdiv4_t i) { *(f32 *)&val4(i.d) = std::bit_cast<f32>(val4(i.a)) / std::bit_cast<f32>(val4(i.b)); }
+void Interpreter::execute(Instruction::fdiv8_t i) { *(f64 *)&val8(i.d) = std::bit_cast<f64>(val8(i.a)) / std::bit_cast<f64>(val8(i.b)); }
+void Interpreter::execute(Instruction::fmod4_t i) { *(f32 *)&val4(i.d) = mod(std::bit_cast<f32>(val4(i.a)), std::bit_cast<f32>(val4(i.b))); }
+void Interpreter::execute(Instruction::fmod8_t i) { *(f64 *)&val8(i.d) = mod(std::bit_cast<f64>(val8(i.a)), std::bit_cast<f64>(val8(i.b))); }
+void Interpreter::execute(Instruction::f32_to_s32_t i) { val4(i.d) = (s32)std::bit_cast<f32>(val4(i.a)); }
+void Interpreter::execute(Instruction::f64_to_s64_t i) { val8(i.d) = (s64)std::bit_cast<f64>(val8(i.a)); }
+void Interpreter::execute(Instruction::f32_to_f64_t i) { *(f64 *)&val8(i.d) = (f64)std::bit_cast<f32>(val4(i.a)); }
+void Interpreter::execute(Instruction::f64_to_f32_t i) { *(f32 *)&val4(i.d) = (f32)std::bit_cast<f64>(val8(i.a)); }
 void Interpreter::execute(Instruction::call_t i) {
 	E(push, (s64)current_instruction_index);
 

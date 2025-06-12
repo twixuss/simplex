@@ -86,6 +86,7 @@ Value NodeInterpreter::load_address(Expression *expression) {
 	return result;
 }
 Value NodeInterpreter::load_address_impl(IntegerLiteral *) { invalid_code_path(); }
+Value NodeInterpreter::load_address_impl(FloatLiteral *) { invalid_code_path(); }
 Value NodeInterpreter::load_address_impl(BooleanLiteral *) { invalid_code_path(); }
 Value NodeInterpreter::load_address_impl(NoneLiteral *) { invalid_code_path(); }
 Value NodeInterpreter::load_address_impl(StringLiteral *) { invalid_code_path(); }
@@ -185,7 +186,20 @@ Value NodeInterpreter::execute_impl(IntegerLiteral *literal) {
 		}
 	}
 
-	immediate_reporter.error(literal->location, "Could not execute this literal because it does not have a concrete type, its type is {}. This is probably a bug in the compiler.", literal->type);
+	immediate_reporter.error(literal->location, "Could not execute this integer literal because it does not have a concrete type, its type is {}. This is probably a bug in the compiler.", literal->type);
+	yield(YieldResult::fail);
+	return {};
+}
+Value NodeInterpreter::execute_impl(FloatLiteral *literal) {
+	if (auto builtin_type = direct_as<BuiltinTypeName>(literal->type)) {
+		switch (builtin_type->type_kind) {
+			case BuiltinType::F32: return Value((f32)literal->value);
+			case BuiltinType::F64: return Value((f64)literal->value);
+			case BuiltinType::UnsizedFloat: return Value(unsized_float_tag, literal->value);
+		}
+	}
+
+	immediate_reporter.error(literal->location, "Could not execute this float literal because it does not have a concrete type, its type is {}. This is probably a bug in the compiler.", literal->type);
 	yield(YieldResult::fail);
 	return {};
 }

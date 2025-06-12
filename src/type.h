@@ -4,7 +4,7 @@
 #include "nodes_fwd.h"
 #include "token.h"
 #include "mutability.h"
-#include "unsized_integer.h"
+#include "unsized_types.h"
 
 enum class BuiltinType : u8 {
 	#define x(name) name,
@@ -86,6 +86,9 @@ bool is_any_integer(Type type);
 bool is_signed_integer(Type type);
 bool is_unsigned_integer(Type type);
 bool is_concrete(Type type);
+
+bool is_concrete_float(Type type);
+
 void propagate_concrete_type(Expression *expression, Type type);
 void make_concrete(Expression *expression);
 

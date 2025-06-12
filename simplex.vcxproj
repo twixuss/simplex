@@ -160,7 +160,7 @@
     <ClInclude Include="src\type.h" />
     <ClInclude Include="src\typechecker.h" />
     <ClInclude Include="src\unary_operation.h" />
-    <ClInclude Include="src\unsized_integer.h" />
+    <ClInclude Include="src\unsized_types.h" />
     <ClInclude Include="src\value.h" />
     <ClInclude Include="src\visit.h" />
     <ClInclude Include="src\x.h" />

@@ -1,6 +1,6 @@
 #pragma once
 #include "common.h"
-#include "unsized_integer.h"
+#include "unsized_types.h"
 #include "type.h"
 #include "x.h"
 
@@ -24,6 +24,7 @@ ValueKind to_value_kind(Type type);
 inline struct StructTag {} struct_tag;
 inline struct ArrayTag {} array_tag;
 inline struct UnsizedIntegerTag {} unsized_integer_tag;
+inline struct UnsizedFloatTag {} unsized_float_tag;
 
 struct Value {
 	ValueKind kind = {};
@@ -36,7 +37,10 @@ struct Value {
 		s16 S16;
 		s32 S32;
 		s64 S64;
+		f32 F32;
+		f64 F64;
 		UnsizedInteger UnsizedInteger;
+		UnsizedFloat UnsizedFloat;
 		bool Bool;
 		String String;
 		Lambda *lambda;
@@ -78,6 +82,8 @@ struct Value {
 	explicit Value(s16         value) : kind(ValueKind::S16    ), S16    (value) {}
 	explicit Value(s32         value) : kind(ValueKind::S32    ), S32    (value) {}
 	explicit Value(s64         value) : kind(ValueKind::S64    ), S64    (value) {}
+	explicit Value(f32         value) : kind(ValueKind::F32    ), F32    (value) {}
+	explicit Value(f64         value) : kind(ValueKind::F64    ), F64    (value) {}
 	explicit Value(bool        value) : kind(ValueKind::Bool   ), Bool   (value) {}
 	explicit Value(::String    value) : kind(ValueKind::String ), String (value) {}
 	explicit Value(Lambda     *value) : kind(ValueKind::lambda ), lambda (value) {}
@@ -86,6 +92,7 @@ struct Value {
 	explicit Value(StructTag, Span<Value> value) : kind(ValueKind::struct_), elements(to_list(value)) {}
 	explicit Value(ArrayTag,  Span<Value> value) : kind(ValueKind::array),   elements(to_list(value)) {}
 	explicit Value(UnsizedIntegerTag, ::UnsizedInteger value) : kind(ValueKind::UnsizedInteger), UnsizedInteger(value) {}
+	explicit Value(UnsizedFloatTag, ::UnsizedFloat value) : kind(ValueKind::UnsizedFloat), UnsizedFloat(value) {}
 	
 	Value copy() {
 		Value result = *this;

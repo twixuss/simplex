@@ -21,6 +21,7 @@ void append(StringBuilder &builder, Nameable<Block *> expr) { not_implemented("B
 void append(StringBuilder &builder, Nameable<Call *> expr) { not_implemented("Call"); }
 void append(StringBuilder &builder, Nameable<Definition *> expr) { not_implemented("Definition"); }
 void append(StringBuilder &builder, Nameable<IntegerLiteral *> expr) { not_implemented("IntegerLiteral"); }
+void append(StringBuilder &builder, Nameable<FloatLiteral *> expr) { not_implemented("FloatLiteral"); }
 void append(StringBuilder &builder, Nameable<BooleanLiteral *> expr) { not_implemented("BooleanLiteral"); }
 void append(StringBuilder &builder, Nameable<NoneLiteral *> expr) { not_implemented("NoneLiteral"); }
 void append(StringBuilder &builder, Nameable<StringLiteral *> expr) { not_implemented("StringLiteral"); }

@@ -27,9 +27,6 @@ void append(StringBuilder &builder, TokenKind kind) {
 		case Token_string: return append(builder, "string");
 	}
 
-	if ((u32)kind <= 0xff)
-		return append(builder, (char)kind);
-
 	switch (kind) {
 #define x(name) case Token_##name: return append(builder, #name);
 #define y(name, value) x(name)
@@ -37,7 +34,7 @@ void append(StringBuilder &builder, TokenKind kind) {
 #undef y
 #undef x
 	}
-
+	
 	char buf[8];
 	char *c = buf + sizeof(buf);
 	while (kind) {

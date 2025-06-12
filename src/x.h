@@ -98,6 +98,8 @@ ENUMERATE_CONCRETE_BUILTIN_TYPES(x)
 	x(S16) \
 	x(S32) \
 	x(S64) \
+	x(F32) \
+	x(F64) \
 	x(Bool) \
 	x(None) \
 /*
@@ -115,6 +117,7 @@ ENUMERATE_ABSTRACT_BUILTIN_TYPES(x)
 */
 #define ENUMERATE_ABSTRACT_BUILTIN_TYPES(x) \
 	x(UnsizedInteger) \
+	x(UnsizedFloat) \
 	x(Overload) \
 	x(Template) \
 	x(SomeEnum) \
@@ -245,6 +248,7 @@ ENUMERATE_TOKEN_KIND(x, y)
 	y(name, 'a') \
 	y(string, '"') \
 	y(number, '0') \
+	y(float, '1') \
 	y(directive, '#dir') \
 	ENUMERATE_KEYWORDS(x) \
 
@@ -271,6 +275,7 @@ ENUMERATE_EXPRESSION_KIND(x)
 	x(Call) \
 	x(Definition) \
 	x(IntegerLiteral) \
+	x(FloatLiteral) \
 	x(BooleanLiteral) \
 	x(NoneLiteral) \
 	x(StringLiteral) \
@@ -351,7 +356,10 @@ ENUMERATE_EXECUTION_VALUE_KIND(x)
 	x(S16) \
 	x(S32) \
 	x(S64) \
+	x(F32) \
+	x(F64) \
 	x(UnsizedInteger) \
+	x(UnsizedFloat) \
 	x(Bool) \
 	x(String) \
 	x(lambda) \

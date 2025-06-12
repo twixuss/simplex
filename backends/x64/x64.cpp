@@ -388,6 +388,20 @@ struct Emitter {
 	void emit_instruction_impl(b::Instruction::neg2_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::neg4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::neg8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::fadd4_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::fadd8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::fsub4_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::fsub8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::fmul4_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::fmul8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::fdiv4_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::fdiv8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::fmod4_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::fmod8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::f32_to_s32_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::f32_to_f64_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::f64_to_s64_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::f64_to_f32_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::call_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::callext_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::copyext_t i) { not_implemented(); }

@@ -91,6 +91,10 @@ void Copier::deep_copy_impl(IntegerLiteral *from, IntegerLiteral *to) {
 	COPY(value);
 	COPY(type); // builtin, no need to look up
 } 
+void Copier::deep_copy_impl(FloatLiteral *from, FloatLiteral *to) {
+	COPY(value);
+	COPY(type); // builtin, no need to look up
+} 
 void Copier::deep_copy_impl(BooleanLiteral *from, BooleanLiteral *to) {
 	COPY(value);
 	COPY(type); // builtin, no need to look up
