@@ -11,6 +11,7 @@
 #include <tl/process.h>
 #include <tl/linear_set.h>
 #include <tl/variant.h>
+#include <tl/precise_time.h>
 
 CompilerContext *context;
 

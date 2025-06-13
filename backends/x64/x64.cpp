@@ -7,6 +7,7 @@
 CompilerContext *context;
 
 #include <tl/variant.h>
+#include <tl/precise_time.h>
 
 #include <Windows.h>
 

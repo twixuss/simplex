@@ -8,6 +8,8 @@
 #include <tl/bucket_hash_map.h>
 #include <tl/dynamic_lib.h>
 #include <tl/opengl.h>
+#include <tl/precise_time.h>
+#include <tl/date.h>
 
 #include "x.h"
 #include "reporter.h"

@@ -46,7 +46,7 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 #include <tl/contiguous_hash_map.h>
 #include <tl/hash_set.h>
 #include <tl/reusable_fiber.h>
-#include <tl/time.h>
+#include <tl/precise_time.h>
 #include <tl/debug.h>
 #include <tl/bits.h>
 #include <tl/block_list.h>
