@@ -776,7 +776,7 @@ void Typechecker::why_is_this_immutable(Expression *expr) {
 }
 
 Expression *Typechecker::inline_body(Call *call, Lambda *lambda) {
-	if (!yield_while_null(call->location, &lambda->body->type)) {
+	if (!yield_while(call->location, [&] { return lambda->body->type == 0; })) {
 		reporter.error(lambda->location, "Could not wait for lambda's body to typecheck for inlining");
 		fail();
 	}
@@ -1265,7 +1265,7 @@ Typechecker::TypecheckLambdaCallResult Typechecker::typecheck_lambda_call(Call *
 		return {.expression = instantiate_lambda_template(call, lambda)};
 	}
 
-	if (!yield_while_null(call->location, &head->return_type)) {
+	if (!yield_while(call->location, [&] { return head->return_type == 0; })) {
 		reporter.error(call->location, "INTERNAL ERROR: Lambda `{}` was not properly typechecked. Its return type is not set.", call->callable->location);
 		reporter.info(head->location, "That lambda is here:");
 		fail();
@@ -1383,13 +1383,13 @@ Definition *Typechecker::try_find_enum_value(Enum *Enum, Name *name) {
 
 	auto &definition = definitions[0];
 			
-	if (!yield_while_null(name->location, &definition->type)) {
+	if (!yield_while(name->location, [&] { return definition->type == 0; })) {
 		reporter.error(name->location, "Could not wait for definition's type");
 		reporter.info(definition->location, "Definition here");
 		return 0;
 	}
 
-	if (!yield_while_null(name->location, &definition->type->type)) {
+	if (!yield_while(name->location, [&] { return definition->type->type == 0; })) {
 		reporter.error(name->location, "Could not wait for definition type's type");
 		reporter.info(definition->location, "Definition here");
 		return 0;
@@ -1566,7 +1566,7 @@ void Typechecker::resolve_name_in_block(GList<Definition *> &possible_definition
 			int x = 42;
 		}
 
-		if (!yield_while_null(location, &definition->type)) {
+		if (!yield_while(location, [&] { return definition->type == 0; })) {
 			// Sometimes this error is meaningless and noisy because is is caused by another error.
 			// But other times compiler fails with only this error, which is not printed in case
 			// print_wait_failures is false.
@@ -2141,7 +2141,7 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 
 
 
-				if (yield_while_null(name->location, &definition->type)) {
+				if (yield_while(name->location, [&] { return definition->type == 0; })) {
 					auto direct_definition_type = direct(definition->type);
 					auto Struct = as<::Struct>(direct_definition_type);
 					if (!Struct) {

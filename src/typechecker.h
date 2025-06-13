@@ -249,13 +249,6 @@ private:
 		return yield_while({}, predicate);
 	}
 
-	[[nodiscard]] 
-	bool yield_while_null(String location, auto *pointer) {
-		return yield_while(location, [&] {
-			return !*pointer;
-		});
-	}
-
 	struct Unwind {};
 
 	void yield(YieldResult result);
