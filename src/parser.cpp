@@ -1153,6 +1153,8 @@ Expression *Parser::parse_expression_0() {
 	invalid_code_path("node was not returned");
 }
 Node *Parser::parse_statement() {
+	InlineStatus inline_status = InlineStatus::unspecified;
+
 	switch (token.kind) {
 		case Token_return: {
 			auto return_ = Return::create();
@@ -1408,9 +1410,22 @@ Node *Parser::parse_statement() {
 
 			return defer_;
 		}
+		case Token_inline: {
+			next();
+			expect(Token_fn);
+			inline_status = InlineStatus::always;
+			goto parse_lambda_label;
+		}
+		case Token_noinline: {
+			next();
+			expect(Token_fn);
+			inline_status = InlineStatus::never;
+			goto parse_lambda_label;
+		}
 		case Token_fn: {
+		parse_lambda_label:
 			auto parsed = parse_lambda();
-				
+
 			if (!parsed.name.count) {
 				return parsed.lambda_or_head;
 			}
@@ -1421,6 +1436,9 @@ Node *Parser::parse_statement() {
 				yield(YieldResult::fail);
 			}
 			assert(parsed.lambda_or_head->kind == NodeKind::Lambda);
+			
+			auto lambda = as<Lambda>(parsed.lambda_or_head);
+			lambda->inline_status = inline_status;
 
 			auto definition = Definition::create();
 			definition->name = parsed.name;
