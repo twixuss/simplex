@@ -710,7 +710,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 		failed = false;
 
 		for (auto node : context->global_block.unprotected.children) {
-			typecheck_entries.add({.node = node});
+			auto &entry = typecheck_entries.add({.node = node});
+			typecheck_entries_by_node.insert(node, &entry);
 		}
 
 
@@ -857,6 +858,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 				auto &cycle = cyclic_dependencies[i];
 
 				bool all_are_lambdas = true;
+				bool all_are_inline = true;
 				Lambda *lambda_with_no_return_type = 0;
 				for (umm j = 0; j < cycle.count; ++j) {
 					auto &entry = *cycle[j];
@@ -866,6 +868,9 @@ s32 tl_main(Span<Span<utf8>> args) {
 							if (!lambda->head.return_type) {
 								lambda_with_no_return_type = lambda;
 							}
+							if (lambda->inline_status != InlineStatus::always) {
+								all_are_inline = false;
+							}
 						} else {
 							all_are_lambdas = false;
 						}
@@ -874,16 +879,20 @@ s32 tl_main(Span<Span<utf8>> args) {
 					}
 				}
 
-				if (all_are_lambdas && lambda_with_no_return_type) {
-					immediate_reporter.help(lambda_with_no_return_type->location, "All nodes in this cycle are lambdas. Recursive functions must have explicit return types. This lambda does not have one.");
-				}
-
-
 				for (umm j = 0; j < cycle.count; ++j) {
 					auto &entry = *cycle[j];
 					auto &next_entry = *cycle[(j + 1) % cycle.count];
 
 					immediate_reporter.info(entry.node->location, "{} depends on {}.", entry.node->location, next_entry.node->location);
+				}
+
+				if (all_are_lambdas) {
+					if (lambda_with_no_return_type) {
+						immediate_reporter.help(lambda_with_no_return_type->location, "All nodes in this cycle are lambdas. Recursive functions must have explicit return types. This lambda does not have one.");
+					}
+					if (all_are_inline) {
+						immediate_reporter.help("All of the lambdas in this cycle are marked as `inline`. All-inline recursion leads to infinite body substitution, hence not allowed. At least one lambda in this cycle must be not inline");
+					}
 				}
 			}
 		}

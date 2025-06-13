@@ -29,6 +29,7 @@ struct TypecheckEntry {
 };
 
 TYPECHECKER_GLOBAL StaticBlockList<TypecheckEntry, 256, DefaultAllocator> typecheck_entries;
+TYPECHECKER_GLOBAL GHashMap<Node *, TypecheckEntry *> typecheck_entries_by_node;
 
 
 struct BinaryTypecheckerKey {

@@ -776,10 +776,26 @@ void Typechecker::why_is_this_immutable(Expression *expr) {
 }
 
 Expression *Typechecker::inline_body(Call *call, Lambda *lambda) {
+	// Code after this assumes that null container means global block.
+	// This checks that.
+	// Because definition does not have a reference to parent block.
+	if (!lambda->definition->container) {
+		context->global_block.use([&](auto &global_block) {
+			assert(find(global_block.definition_list, lambda->definition));
+		});
+	}
+
+	if (lambda->definition && !lambda->definition->container) {
+		entry->dependency = *typecheck_entries_by_node.find(lambda->definition).value;
+	}
+
 	if (!yield_while(call->location, [&] { return lambda->body->type == 0; })) {
-		reporter.error(lambda->location, "Could not wait for lambda's body to typecheck for inlining");
+		reporter.error(call->location, "Inlining a lambda requires its body to be fully typechecked. This is not the case here.");
+		reporter.info(lambda->location, "Lambda defined here:");
 		fail();
 	}
+
+	entry->dependency = 0;
 		
 	auto copied_lambda = as<Lambda>(Copier{}.deep_copy(lambda));
 	NOTE_LEAK(copied_lambda);
@@ -1327,12 +1343,11 @@ Typechecker::TypecheckLambdaCallResult Typechecker::typecheck_lambda_call(Call *
 		}
 
 		call->call_kind = CallKind::lambda;
-		call->type = head->return_type;
-	}
 
-	if (lambda) {
-		if (apply && should_inline(call, lambda)) {
+		if (lambda && should_inline(call, lambda)) {
 			result.expression = inline_body(call, lambda);
+		} else {
+			call->type = head->return_type;
 		}
 	}
 	return result;
@@ -1516,12 +1531,11 @@ void Typechecker::ensure_mutable(Expression *expression) {
 
 bool Typechecker::can_reference(Block *block, Definition *definition) {
 	// Definition order in lambdas or heads matters - you can't refence stuff that is declared later.
-	// Exceptions are constants.
 	// Because lambda content typechecking happens in order, just check if the type is set - if it is,
 	// the definition is declared before, otherwise after.
 
 	if (block->container && block->container == definition->container && (as<Lambda>(block->container) || as<LambdaHead>(block->container))) {
-		if (definition->mutability != Mutability::constant && !definition->type) {
+		if (!definition->type) {
 			return false;
 		}
 	}
@@ -1554,12 +1568,7 @@ void Typechecker::resolve_name_in_block(GList<Definition *> &possible_definition
 
 
 		if (block == &context->global_block.unprotected) {
-			for (auto &typecheck_entry : typecheck_entries) {
-				if (typecheck_entry.node == definition) {
-					entry->dependency = &typecheck_entry;
-					break;
-				}
-			}
+			entry->dependency = *typecheck_entries_by_node.find(definition).value;
 		}
 			
 		if (name == "test") {
@@ -1940,7 +1949,7 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 			scoped_replace(current_block, &lambda->head.parameters_block);
 
 			typecheck(&lambda->body);
-
+	
 			all_paths_return = do_all_paths_return(lambda->body);
 		}
 
