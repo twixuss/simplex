@@ -1137,10 +1137,10 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 				append_format(source_builder, "{}: [{}]{{{}}}", parameter->name, vector_size, parameter->type);
 			}
 			append_format(source_builder, "): [{}]{{{}}} => {{\n"
-				"	var i: S64\n"
-				"	var c: [{}]{{{}}}\n"
-				"	while i < {} {{\n"
-				"		c[i] = {}("
+				"	var __i: S64\n"
+				"	var __result: [{}]{{{}}}\n"
+				"	while __i < {} {{\n"
+				"		__result[__i] = {}("
 				, vector_size, original_lambda->head.return_type, vector_size, original_lambda->head.return_type, vector_size, original_lambda->definition->name
 			);
 				
@@ -1149,15 +1149,15 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 				if (i) {
 					append(source_builder, ", ");
 				}
-				append_format(source_builder, "{}[i]", parameter->name);
+				append_format(source_builder, "{}[__i]", parameter->name);
 			}
 				
 			append_format(source_builder, ")\n"
 				//"		println(x[i])\n"
 				//"		println(c[i])\n"
-				"		i = i + 1\n"
+				"		__i = __i + 1\n"
 				"	}}\n"
-				"	c\n"
+				"	__result\n"
 				"}}\n"
 			);
 			append(source_builder, Repeat{'\0', LEXER_PADDING_SIZE});
@@ -1598,25 +1598,37 @@ Typechecker::TypecheckLambdaCallResult Typechecker::typecheck_lambda_call(Call *
 	
 	sort_arguments(arguments, parameters, call->location, head, lambda ? lambda->definition : 0);
 
-	if (can_generate_vectorized_lambdas) {
-		if (lambda) {
-			if (arguments.count == 1) {
-				if (auto array = as<ArrayType>(arguments[0].expression->type)) {
-					if (types_match(array->element_type, parameters[0]->type)) {
-						auto vectorized_lambda = get_or_instantiate_vectorized_lambda(lambda, array->count.value(), call->location);
+	if (can_generate_vectorized_lambdas && lambda && parameters.count) {
+		bool vectorizable = true;
+		u64 vector_size = 0;
 
-						auto name = Name::create();
-						name->location = callable->location;
-						name->name = vectorized_lambda.instantiated_definition->name;
-						name->possible_definitions.set(vectorized_lambda.instantiated_definition);
-						name->type = vectorized_lambda.instantiated_definition->type;
-
-						callable = name;
-						lambda = vectorized_lambda.instantiated_lambda;
-						head = &lambda->head;
+		for (umm i = 0; i < arguments.count; ++i) {
+			if (auto array = as<ArrayType>(arguments[i].expression->type)) {
+				if (types_match(array->element_type, parameters[i]->type)) {
+					if (vector_size == 0) {
+						vector_size = array->count.value();
+						continue;
+					} else if (vector_size == array->count.value()) {
+						continue;
 					}
 				}
 			}
+			vectorizable = false;
+			break;
+		}
+
+		if (vectorizable) {
+			auto vectorized_lambda = get_or_instantiate_vectorized_lambda(lambda, vector_size, call->location);
+
+			auto name = Name::create();
+			name->location = callable->location;
+			name->name = vectorized_lambda.instantiated_definition->name;
+			name->possible_definitions.set(vectorized_lambda.instantiated_definition);
+			name->type = vectorized_lambda.instantiated_definition->type;
+
+			callable = name;
+			lambda = vectorized_lambda.instantiated_lambda;
+			head = &lambda->head;
 		}
 	}
 
@@ -2542,7 +2554,7 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 }
 Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 	defer { assert(call->callable->type != 0); };
-	if (call->location == u8"Bar(b = 10)"s) {
+	if (call->location == u8"foo(.[1, 2, 3, 4], .[true, true, false, false])"s) {
 		int x = 4;
 	}
 	if (call->uid == 356) {
