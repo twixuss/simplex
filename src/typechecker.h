@@ -304,7 +304,55 @@ private:
 
 	Value execute(Node *node);
 
-	VectorizedLambda get_or_instantiate_vectorized_lambda(Lambda *original_lambda, u64 vector_size, String instantiation_location);
+	Expression *make_broadcast(Expression *scalar, u64 count);
+	
+	struct VectorizeContext {
+		Lambda *original_lambda;
+		Lambda *instantiated_lambda;
+		Definition *instantiated_definition;
+		u64 vector_size;
+		String instantiation_location;
+	};
+
+	VectorizeContext vc;
+
+	[[nodiscard]] Block                *vectorize_node_impl(Block *node);
+	[[nodiscard]] Call                 *vectorize_node_impl(Call *node);
+	[[nodiscard]] Definition           *vectorize_node_impl(Definition *node);
+	[[nodiscard]] Expression           *vectorize_node_impl(IntegerLiteral *node);
+	[[nodiscard]] FloatLiteral         *vectorize_node_impl(FloatLiteral *node);
+	[[nodiscard]] BooleanLiteral       *vectorize_node_impl(BooleanLiteral *node);
+	[[nodiscard]] NoneLiteral          *vectorize_node_impl(NoneLiteral *node);
+	[[nodiscard]] StringLiteral        *vectorize_node_impl(StringLiteral *node);
+	[[nodiscard]] Lambda               *vectorize_node_impl(Lambda *node);
+	[[nodiscard]] LambdaHead           *vectorize_node_impl(LambdaHead *node);
+	[[nodiscard]] Name                 *vectorize_node_impl(Name *node);
+	[[nodiscard]] IfExpression         *vectorize_node_impl(IfExpression *node);
+	[[nodiscard]] BuiltinTypeName      *vectorize_node_impl(BuiltinTypeName *node);
+	[[nodiscard]] Expression           *vectorize_node_impl(Binary *node);
+	[[nodiscard]] Match                *vectorize_node_impl(Match *node);
+	[[nodiscard]] Unary                *vectorize_node_impl(Unary *node);
+	[[nodiscard]] Struct               *vectorize_node_impl(Struct *node);
+	[[nodiscard]] ArrayType            *vectorize_node_impl(ArrayType *node);
+	[[nodiscard]] Enum                 *vectorize_node_impl(Enum *node);
+	[[nodiscard]] Subscript            *vectorize_node_impl(Subscript *node);
+	[[nodiscard]] ArrayConstructor     *vectorize_node_impl(ArrayConstructor *node);
+	[[nodiscard]] ZeroInitialized      *vectorize_node_impl(ZeroInitialized *node);
+	[[nodiscard]] CallerLocation       *vectorize_node_impl(CallerLocation *node);
+	[[nodiscard]] CallerArgumentString *vectorize_node_impl(CallerArgumentString *node);
+	[[nodiscard]] IfStatement          *vectorize_node_impl(IfStatement *node);
+	[[nodiscard]] Return               *vectorize_node_impl(Return *node);
+	[[nodiscard]] While                *vectorize_node_impl(While *node);
+	[[nodiscard]] For                  *vectorize_node_impl(For *node);
+	[[nodiscard]] Continue             *vectorize_node_impl(Continue *node);
+	[[nodiscard]] Break                *vectorize_node_impl(Break *node);
+	[[nodiscard]] Import               *vectorize_node_impl(Import *node);
+	[[nodiscard]] Defer                *vectorize_node_impl(Defer *node);
+	[[nodiscard]] Use                  *vectorize_node_impl(Use *node);
+	[[nodiscard]] Node                 *vectorize_node(Node *node);
+	[[nodiscard]] Expression           *vectorize_node(Expression *expression);
+	[[nodiscard]] Statement            *vectorize_node(Statement *statement);
+	[[nodiscard]] VectorizedLambda get_or_instantiate_vectorized_lambda(Lambda *original_lambda, u64 vector_size, String instantiation_location);
 
 	struct SortArgumentOptions {
 		bool allow_missing = false;

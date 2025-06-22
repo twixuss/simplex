@@ -876,22 +876,254 @@ Value Typechecker::execute(Node *node) {
 	}
 }
 
-VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *original_lambda, u64 vector_size, String instantiation_location) {
-	return locked_use(vectorized_lambdas) {
-		VectorizedLambda vectorized = {};
-		auto found = vectorized_lambdas.find({ original_lambda, vector_size });
-		if (found) {
-			vectorized = *found.value;
-		} else {
-			assert(original_lambda->definition, "Lambda requires a name to be vectorizable. Assign it to a definition.");
+Expression *Typechecker::make_broadcast(Expression *scalar, u64 count) {
+	/*
+	
+	{
+		let __scalar = `scalar`
+		.[__scalar, __scalar, __scalar, __scalar]
+	}
 
-			String lambda_name = {};
-			if (original_lambda->definition) {
-				lambda_name = format(u8"__v_{}_{}"s, original_lambda->definition->name, vector_size);
-			} else {
-				auto location = get_source_location(original_lambda->location);
-				lambda_name = format(u8"__v_{}_{}_{}_{}"s, Nameable(location.file), location.location_line_number, original_lambda->uid, vector_size);
-			}
+	*/
+	auto block = Block::create();
+
+	auto def = Definition::create();
+	def->container = current_container;
+	def->initial_value = scalar;
+	def->location = scalar->location;
+	def->mutability = Mutability::readonly;
+	def->name = u8"__scalar"s;
+	def->type = scalar->type;
+	block->add(def);
+
+	auto arr = ArrayConstructor::create();
+	arr->location = scalar->location;
+	arr->elements.resize(count);
+	arr->type = make_array_type(scalar->type, count);
+	for (umm i = 0; i < count; ++i) {
+		auto name = Name::create();
+		name->location = scalar->location;
+		name->possible_definitions.set(def);
+		name->name = def->name;
+		name->type = def->type;
+		arr->elements[i] = name;
+	}
+	block->add(arr);
+
+	return block;
+}
+
+void calculate_parameter_offsets(LambdaHead *head) {
+	u64 total_parameters_size = 0;
+	for (auto parameter : head->parameters_block.definition_list) {
+		parameter->offset = total_parameters_size;
+		auto parameter_size = get_size(parameter->type);
+		parameter_size = max((u64)1, parameter_size);
+		total_parameters_size += parameter_size;
+		total_parameters_size = ceil(total_parameters_size, (u64)8);
+	}
+	head->total_parameters_size = total_parameters_size;
+}
+
+Node *Typechecker::vectorize_node(Node *node) {
+	scoped_replace(debug_current_location, node->location);
+	switch (node->kind) {
+		#define x(name) case NodeKind::name: return vectorize_node_impl((name *)node);
+		ENUMERATE_NODE_KIND(x)
+		#undef x
+		default: invalid_code_path();
+	}
+}
+Expression *Typechecker::vectorize_node(Expression *expression) {
+	expression = as<Expression>(vectorize_node((Node *)expression));
+	assert(expression);
+	return expression;
+}
+Statement *Typechecker::vectorize_node(Statement *statement) {
+	statement = as<Statement>(vectorize_node((Node *)statement));
+	assert(statement);
+	return statement;
+}
+Block                *Typechecker::vectorize_node_impl(Block *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Call                 *Typechecker::vectorize_node_impl(Call *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Definition           *Typechecker::vectorize_node_impl(Definition *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Expression           *Typechecker::vectorize_node_impl(IntegerLiteral *original) {
+	return make_broadcast(original, vc.vector_size);
+}
+FloatLiteral         *Typechecker::vectorize_node_impl(FloatLiteral *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+BooleanLiteral       *Typechecker::vectorize_node_impl(BooleanLiteral *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+NoneLiteral          *Typechecker::vectorize_node_impl(NoneLiteral *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+StringLiteral        *Typechecker::vectorize_node_impl(StringLiteral *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Lambda               *Typechecker::vectorize_node_impl(Lambda *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+LambdaHead           *Typechecker::vectorize_node_impl(LambdaHead *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Name                 *Typechecker::vectorize_node_impl(Name *original) {
+	if (original->possible_definitions.count == 1) {
+		auto &original_definition = original->possible_definitions[0];
+
+		// TODO: something better than linear search
+		auto found_index = find_index_of(vc.original_lambda->head.parameters_block.definition_list, original_definition);
+
+		if (found_index < vc.original_lambda->head.parameters_block.definition_list.count) {
+			auto result = Name::create();
+			auto instantiated_definition = vc.instantiated_lambda->head.parameters_block.definition_list[found_index];
+			result->possible_definitions.set(instantiated_definition);
+			result->type = instantiated_definition->type;
+			result->location = original->location;
+			return result;
+		}
+	}
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+IfExpression         *Typechecker::vectorize_node_impl(IfExpression *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+BuiltinTypeName      *Typechecker::vectorize_node_impl(BuiltinTypeName *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Expression           *Typechecker::vectorize_node_impl(Binary *original) {
+	switch (original->operation) {
+		case BinaryOperation::add: {
+			auto result = Binary::create();
+			result->operation = original->operation;
+			result->left = vectorize_node(original->left);
+			result->right = vectorize_node(original->right);
+			return as<Expression>(typecheck((Node *)result, true));
+		}
+	}
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Match                *Typechecker::vectorize_node_impl(Match *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Unary                *Typechecker::vectorize_node_impl(Unary *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Struct               *Typechecker::vectorize_node_impl(Struct *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+ArrayType            *Typechecker::vectorize_node_impl(ArrayType *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Enum                 *Typechecker::vectorize_node_impl(Enum *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Subscript            *Typechecker::vectorize_node_impl(Subscript *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+ArrayConstructor     *Typechecker::vectorize_node_impl(ArrayConstructor *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+ZeroInitialized      *Typechecker::vectorize_node_impl(ZeroInitialized *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+CallerLocation       *Typechecker::vectorize_node_impl(CallerLocation *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+CallerArgumentString *Typechecker::vectorize_node_impl(CallerArgumentString *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+IfStatement          *Typechecker::vectorize_node_impl(IfStatement *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Return               *Typechecker::vectorize_node_impl(Return *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+While                *Typechecker::vectorize_node_impl(While *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+For                  *Typechecker::vectorize_node_impl(For *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Continue             *Typechecker::vectorize_node_impl(Continue *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Break                *Typechecker::vectorize_node_impl(Break *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Import               *Typechecker::vectorize_node_impl(Import *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Defer                *Typechecker::vectorize_node_impl(Defer *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+Use                  *Typechecker::vectorize_node_impl(Use *original) {
+	reporter.warning(original->location, "not implemented: {}", original->kind);
+	fail();
+}
+VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *original_lambda, u64 vector_size, String instantiation_location) {
+	return locked_use_ret(vectorized_lambdas) -> VectorizedLambda {
+		if (auto found = vectorized_lambdas.find({ original_lambda, vector_size })) {
+			return *found.value;
+		}
+		assert(original_lambda->definition, "Lambda requires a name to be vectorizable. Assign it to a definition.");
+
+		String lambda_name = {};
+		if (original_lambda->definition) {
+			lambda_name = format(u8"__v_{}_{}"s, original_lambda->definition->name, vector_size);
+		} else {
+			auto location = get_source_location(original_lambda->location);
+			lambda_name = format(u8"__v_{}_{}_{}_{}"s, Nameable(location.file), location.location_line_number, original_lambda->uid, vector_size);
+		}
+
+		Reporter reason_reporter;
+
+		// The dumbest implementation that just performs operations one by one.
+		// Use this when can't vectorize an operation.
+		auto instantiate_fallback_vectorized_lambda = [&] () -> VectorizedLambda {
+			reporter.warning(instantiation_location, "Could not generate vectorized lambda. Falling back on array of scalar operations.");
+			for (auto &report : reason_reporter.reports)
+				report.indentation += 1;
+			reporter.reports.add(reason_reporter.reports);
+			reporter.info(original_lambda->location, "Here is the original lambda:");
 
 			StringBuilder source_builder;
 			append(source_builder, Repeat{'\0', LEXER_PADDING_SIZE});
@@ -950,14 +1182,16 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 				};
 			});
 
-			can_generate_vectorized_lambdas = false;
-			success &= with_unwind_strategy {
-				scoped_replace(current_block, &context->global_block.unprotected);
-				scoped_replace(current_container, 0);
-				scoped_replace(current_loop, 0);
-				return typecheck(&definition_node);
-			};
-			can_generate_vectorized_lambdas = true;
+			if (success) {
+				can_generate_vectorized_lambdas = false;
+				success = with_unwind_strategy {
+					scoped_replace(current_block, &context->global_block.unprotected);
+					scoped_replace(current_container, 0);
+					scoped_replace(current_loop, 0);
+					return typecheck(&definition_node);
+				};
+				can_generate_vectorized_lambdas = true;
+			}
 
 			{
 				with(temporary_storage_checkpoint);
@@ -968,13 +1202,86 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 					fail();
 				}
 			}
-							
+
+			VectorizedLambda vectorized = {};
+
 			vectorized.instantiated_definition = as<Definition>(definition_node);
 			assert(vectorized.instantiated_definition);
 			vectorized.instantiated_lambda = as<Lambda>(vectorized.instantiated_definition->initial_value);
 			assert(vectorized.instantiated_lambda);
-		}
 
+			return vectorized;
+		};
+
+		// returns null on failure
+		auto instantiate_proper_vectorized_lambda = [&]() -> Lambda * {
+			scoped_exchange(reporter, reason_reporter);
+
+			return with_unwind_strategy {
+				if (original_lambda->is_extern) {
+					reporter.warning(original_lambda->location, "Lambda is extern");
+					fail();
+				}
+
+				if (original_lambda->is_intrinsic) {
+					reporter.warning(original_lambda->location, "Lambda is intrinsic");
+					fail();
+				}
+
+				auto instantiated_lambda = Lambda::create();
+				auto instantiated_definition = Definition::create();
+
+				auto &original_parameters = original_lambda->head.parameters_block.definition_list;
+				auto &instantiated_parameters = instantiated_lambda->head.parameters_block.definition_list;
+				
+				Copier{}.deep_copy(&original_lambda->head, &instantiated_lambda->head);
+				instantiated_lambda->head.return_type = make_array_type(instantiated_lambda->head.return_type, vector_size);
+				for (umm i = 0; i < instantiated_parameters.count; ++i) {
+					auto &instantiated_parameter = instantiated_parameters[i];
+
+					instantiated_parameter->type = make_array_type(instantiated_parameter->type, vector_size);
+				}
+				calculate_parameter_offsets(&instantiated_lambda->head);
+
+				instantiated_lambda->inline_status = original_lambda->inline_status;
+				instantiated_lambda->definition = instantiated_definition;
+				instantiated_lambda->type = &instantiated_lambda->head;
+
+				instantiated_definition->initial_value = instantiated_lambda;
+				instantiated_definition->container = 0;
+				instantiated_definition->mutability = Mutability::constant;
+				instantiated_definition->constant_value = Value(instantiated_lambda);
+				instantiated_definition->name = lambda_name;
+				instantiated_definition->type = instantiated_lambda->type;
+				locked_use_expr(global_block, context->global_block) {
+					global_block.add(instantiated_definition);
+				};
+			
+				vc.instantiated_definition = instantiated_definition;
+				vc.instantiated_lambda = instantiated_lambda;
+				vc.original_lambda = original_lambda;
+				vc.instantiation_location = instantiation_location;
+				vc.vector_size = vector_size;
+
+				instantiated_lambda->body = vectorize_node(original_lambda->body);
+
+				return instantiated_lambda;
+			};
+		};
+
+		VectorizedLambda vectorized;
+		if (auto instantiated_lambda = instantiate_proper_vectorized_lambda()) {
+			vectorized = {
+				.original_lambda = original_lambda,
+				.instantiated_lambda = instantiated_lambda,
+				.instantiated_definition = instantiated_lambda->definition,
+				.vector_size = vector_size,
+			};
+		} else {
+			vectorized = instantiate_fallback_vectorized_lambda();
+		}
+		
+		vectorized_lambdas.insert({ original_lambda, vector_size }, vectorized);
 		return vectorized;
 
 
@@ -1897,15 +2204,7 @@ LambdaHead       *Typechecker::typecheck_impl(LambdaHead *head, bool can_substit
 		scoped_replace(current_block, &head->template_parameters_block);
 		typecheck(head->parameters_block);
 		
-		u64 total_parameters_size = 0;
-		for (auto parameter : head->parameters_block.definition_list) {
-			parameter->offset = total_parameters_size;
-			auto parameter_size = get_size(parameter->type);
-			parameter_size = max((u64)1, parameter_size);
-			total_parameters_size += parameter_size;
-			total_parameters_size = ceil(total_parameters_size, (u64)8);
-		}
-		head->total_parameters_size = total_parameters_size;
+		calculate_parameter_offsets(head);
 
 		if (head->parsed_return_type) {
 			typecheck(&head->parsed_return_type);

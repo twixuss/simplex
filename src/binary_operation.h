@@ -7,9 +7,12 @@
 constexpr u32 custom_precedence = 4;
 
 enum class BinaryOperation : u8 {
+	unknown,
 #define x(name, token, precedence) name,
 	ENUMERATE_BINARY_OPERATIONS(x)
 #undef x
+	_count_plus_one,
+	count = _count_plus_one - 1,
 };
 
 void append(StringBuilder &builder, BinaryOperation operation);
