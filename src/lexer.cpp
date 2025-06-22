@@ -87,8 +87,6 @@ Token Lexer::next_token() {
 	auto end = source.end();
 
 	Token token;
-	token.kind = Token_eof;
-	token.string = {end - 1, end};
 	
 	auto parse_string = [&]<char closing_char, bool decode = false>(auto on_char) {
 		using Char = std::conditional_t<decode, utf32, utf8>;
@@ -254,6 +252,9 @@ Token Lexer::next_token() {
 
 
 restart:
+
+	token.kind = Token_eof;
+	token.string = {end - 1, end};
 	
 	#if 1
 	// SIMD

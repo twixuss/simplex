@@ -327,7 +327,7 @@ private:
 	[[nodiscard]] Lambda               *vectorize_node_impl(Lambda *node);
 	[[nodiscard]] LambdaHead           *vectorize_node_impl(LambdaHead *node);
 	[[nodiscard]] Name                 *vectorize_node_impl(Name *node);
-	[[nodiscard]] IfExpression         *vectorize_node_impl(IfExpression *node);
+	[[nodiscard]] Expression           *vectorize_node_impl(IfExpression *node);
 	[[nodiscard]] BuiltinTypeName      *vectorize_node_impl(BuiltinTypeName *node);
 	[[nodiscard]] Expression           *vectorize_node_impl(Binary *node);
 	[[nodiscard]] Match                *vectorize_node_impl(Match *node);

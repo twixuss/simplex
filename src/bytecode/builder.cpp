@@ -112,6 +112,7 @@ void Builder::append_lambda(Lambda *lambda) {
 	scoped_replace(current_location, lambda->location);
 	scoped_replace(locals_size, 0);
 	scoped_replace(max_temporary_size, 0);
+	scoped_replace(current_size_reserved_for_arguments, 0);
 	scoped_replace(max_size_reserved_for_arguments, 0);
 	scoped_replace(current_lambda, lambda);
 	assert(available_registers.count() == (umm)Register::base);
@@ -332,8 +333,12 @@ Address Builder::allocate_temporary(u64 size) {
 	return result;
 }
 
-void Builder::reserve_space_for_arguments(u64 size) {
-	max_size_reserved_for_arguments = max(max_size_reserved_for_arguments, size);
+void Builder::push_space_for_arguments(u64 size) {
+	current_size_reserved_for_arguments += size;
+	max_size_reserved_for_arguments = max(max_size_reserved_for_arguments, current_size_reserved_for_arguments);
+}
+void Builder::pop_space_for_arguments(u64 size) {
+	current_size_reserved_for_arguments -= size;
 }
 
 Site Builder::create_destination(u64 size) {
@@ -551,8 +556,13 @@ void Builder::output_impl(Site destination, Call *call) {
 	switch (call->call_kind) {
 		case CallKind::lambda: {
 			assert(head);
-
+			
 			s64 return_value_size = get_size(head->return_type);
+
+			u64 space_for_arguments = head->total_parameters_size + align_size(return_value_size);
+
+			push_space_for_arguments(space_for_arguments);
+			defer { pop_space_for_arguments(space_for_arguments); };
 
 			auto registers_to_save = ~available_registers & initialized_registers;
 			if (destination.is_register())
@@ -568,15 +578,30 @@ void Builder::output_impl(Site destination, Call *call) {
 			});
 			assert(debug == registers_to_save.count());
 
+			// Output args into temporary space first, then put em before stack pointer.
+			// Avoids corruption of old arguments by nested call.
+			tmpaddr(tmp_args, space_for_arguments);
 			for (umm i = 0; i < call->arguments.count; ++i) {
 				auto argument = call->arguments[i];
 				assert(argument.parameter);
 				auto offset = (s64)argument.parameter->offset;
 				assert(offset != Definition::invalid_offset);
 
-				Site destination = Address{.base = Register::stack, .offset = offset};
+				Address destination = tmp_args;
+				destination.offset += offset;
 
 				output(destination, argument.expression);
+			}
+
+			for (umm i = 0; i < call->arguments.count; ++i) {
+				auto argument = call->arguments[i];
+				auto offset = (s64)argument.parameter->offset;
+
+				Address source = tmp_args;
+				source.offset += offset;
+
+				Address destination = Address{.base = Register::stack, .offset = offset};
+				I(copy, destination, source, get_size(argument.expression->type));
 			}
 
 			if (lambda) {
@@ -627,7 +652,6 @@ void Builder::output_impl(Site destination, Call *call) {
 				I(copy, (Register)r, saved_registers, 8);
 			});
 
-			reserve_space_for_arguments(head->total_parameters_size + align_size(return_value_size));
 			I(copy, .d = destination, .s = Address{.base = Register::stack, .offset = (s64)head->total_parameters_size}, .size = (u64)return_value_size);
 
 			break;
@@ -1331,7 +1355,9 @@ void Builder::output_impl(Site destination, Match *match) {
 		output_case(*match->default_case);
 	} else {
 		if (!types_match(match->type, BuiltinType::None)) {
-			reserve_space_for_arguments(16);
+			push_space_for_arguments(16);
+			defer { pop_space_for_arguments(16); };
+
 			StringLiteral message;
 			message.value = tformat(u8"{}: failed to execute `match` expression with no default case", get_source_location(match->location));
 			message.location = match->location;

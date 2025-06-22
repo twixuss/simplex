@@ -996,15 +996,76 @@ Name                 *Typechecker::vectorize_node_impl(Name *original) {
 			result->possible_definitions.set(instantiated_definition);
 			result->type = instantiated_definition->type;
 			result->location = original->location;
+			result->name = original->name;
 			return result;
 		}
 	}
 	reporter.warning(original->location, "not implemented: {}", original->kind);
 	fail();
 }
-IfExpression         *Typechecker::vectorize_node_impl(IfExpression *original) {
-	reporter.warning(original->location, "not implemented: {}", original->kind);
-	fail();
+Expression           *Typechecker::vectorize_node_impl(IfExpression *original) {
+	/*
+	
+	Convert this:
+	
+		if c then a else b
+
+	To a vectorized variant. If all conditions are true, it should only evaluate true branch.
+	If they are all false - only false branch. Otherwise evaluate both branches and blend the result.
+
+		{
+			let __c = c
+			if all_true(__c) {
+				a
+			} else if all_false(__c) {
+				b
+			} else {
+				select(__c, a, b)
+			}
+		}
+	*/
+	auto block = Block::create();
+	auto __c = Definition::create();
+	auto if_all_condition = Call::create();
+	auto if_all = IfExpression::create();
+	auto if_none_condition = Call::create();
+	auto if_none = IfExpression::create();
+	auto select = Call::create();
+
+	block->container = current_container;
+	block->parent = current_block;
+
+	__c->mutability = Mutability::readonly;
+	__c->container = current_container;
+	__c->initial_value = vectorize_node(original->condition);
+	__c->name = u8"__c"s;
+	__c->location = original->condition->location;
+	block->add(__c);
+	
+	if_all_condition->callable = make_name(u8"all_true"s, original->condition->location);
+	if_all_condition->arguments.add({.expression = make_name(u8"__c"s, original->condition->location)});
+	if_all_condition->location = original->condition->location;
+
+	if_all->condition = if_all_condition;
+	if_all->true_branch = vectorize_node(original->true_branch);
+	if_all->false_branch = if_none;
+	block->add(if_all);
+
+	if_none_condition->callable = make_name(u8"all_false"s, original->condition->location);
+	if_none_condition->arguments.add({.expression = make_name(u8"__c"s, original->condition->location)});
+	if_none_condition->location = original->condition->location;
+
+	if_none->condition = if_none_condition;
+	if_none->true_branch = vectorize_node(original->false_branch);
+	if_none->false_branch = select;
+	
+	select->callable = make_name(u8"select"s, original->location);
+	select->arguments.add({.expression = make_name(u8"__c"s, original->location)});
+	select->arguments.add({.expression = vectorize_node(original->true_branch)});
+	select->arguments.add({.expression = vectorize_node(original->false_branch)});
+	select->location = original->location;
+
+	return block;
 }
 BuiltinTypeName      *Typechecker::vectorize_node_impl(BuiltinTypeName *original) {
 	reporter.warning(original->location, "not implemented: {}", original->kind);
@@ -1012,12 +1073,13 @@ BuiltinTypeName      *Typechecker::vectorize_node_impl(BuiltinTypeName *original
 }
 Expression           *Typechecker::vectorize_node_impl(Binary *original) {
 	switch (original->operation) {
-		case BinaryOperation::add: {
+		case BinaryOperation::add:
+		case BinaryOperation::mul: {
 			auto result = Binary::create();
 			result->operation = original->operation;
 			result->left = vectorize_node(original->left);
 			result->right = vectorize_node(original->right);
-			return as<Expression>(typecheck((Node *)result, true));
+			return result;
 		}
 	}
 	reporter.warning(original->location, "not implemented: {}", original->kind);
@@ -1119,12 +1181,6 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 		// The dumbest implementation that just performs operations one by one.
 		// Use this when can't vectorize an operation.
 		auto instantiate_fallback_vectorized_lambda = [&] () -> VectorizedLambda {
-			reporter.warning(instantiation_location, "Could not generate vectorized lambda. Falling back on array of scalar operations.");
-			for (auto &report : reason_reporter.reports)
-				report.indentation += 1;
-			reporter.reports.add(reason_reporter.reports);
-			reporter.info(original_lambda->location, "Here is the original lambda:");
-
 			StringBuilder source_builder;
 			append(source_builder, Repeat{'\0', LEXER_PADDING_SIZE});
 			append_format(source_builder, "const {} = fn ("s, lambda_name);
@@ -1164,7 +1220,7 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 
 			auto source = (Span<utf8>)to_string(source_builder);
 			source = source.skip(LEXER_PADDING_SIZE).skip(-LEXER_PADDING_SIZE);
-				
+
 			auto path = format(u8"{}\\{}.sp", context_base->generated_source_directory, lambda_name);
 
 			auto &content_start_to_file_name = context_base->content_start_to_file_name;
@@ -1214,10 +1270,15 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 		};
 
 		// returns null on failure
-		auto instantiate_proper_vectorized_lambda = [&]() -> Lambda * {
+		auto instantiate_proper_vectorized_lambda = [&]() -> std::pair<Lambda *, bool> {
 			scoped_exchange(reporter, reason_reporter);
+			scoped_replace(current_block, &context->global_block.unprotected);
+			scoped_replace(current_container, 0);
+			scoped_replace(current_loop, 0);
 
-			return with_unwind_strategy {
+			auto instantiated_lambda = Lambda::create();
+
+			bool success = with_unwind_strategy {
 				if (original_lambda->is_extern) {
 					reporter.warning(original_lambda->location, "Lambda is extern");
 					fail();
@@ -1228,7 +1289,6 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 					fail();
 				}
 
-				auto instantiated_lambda = Lambda::create();
 				auto instantiated_definition = Definition::create();
 
 				auto &original_parameters = original_lambda->head.parameters_block.definition_list;
@@ -1245,32 +1305,38 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 
 				instantiated_lambda->inline_status = original_lambda->inline_status;
 				instantiated_lambda->definition = instantiated_definition;
-				instantiated_lambda->type = &instantiated_lambda->head;
 
 				instantiated_definition->initial_value = instantiated_lambda;
 				instantiated_definition->container = 0;
 				instantiated_definition->mutability = Mutability::constant;
-				instantiated_definition->constant_value = Value(instantiated_lambda);
 				instantiated_definition->name = lambda_name;
-				instantiated_definition->type = instantiated_lambda->type;
-				locked_use_expr(global_block, context->global_block) {
-					global_block.add(instantiated_definition);
-				};
-			
+
 				vc.instantiated_definition = instantiated_definition;
 				vc.instantiated_lambda = instantiated_lambda;
 				vc.original_lambda = original_lambda;
 				vc.instantiation_location = instantiation_location;
 				vc.vector_size = vector_size;
+				
+				current_container = instantiated_lambda;
 
 				instantiated_lambda->body = vectorize_node(original_lambda->body);
 
+				typecheck(&instantiated_lambda);
+				
+				locked_use_expr(global_block, context->global_block) {
+					global_block.add(instantiated_definition);
+				};
+			
 				return instantiated_lambda;
 			};
+
+			return {instantiated_lambda, success};
 		};
 
 		VectorizedLambda vectorized;
-		if (auto instantiated_lambda = instantiate_proper_vectorized_lambda()) {
+		auto [instantiated_lambda, success] = instantiate_proper_vectorized_lambda();
+
+		if (success) {
 			vectorized = {
 				.original_lambda = original_lambda,
 				.instantiated_lambda = instantiated_lambda,
@@ -1278,6 +1344,29 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 				.vector_size = vector_size,
 			};
 		} else {
+			StringBuilder builder;
+			{
+				// TODO: print to builder directly?
+
+				scoped_replace(current_printer, (Printer{
+					[](Span<utf8> string, void *data) {
+						append(*(StringBuilder *)data, string);
+					},
+					&builder,
+				}));
+
+				print_ast(instantiated_lambda->definition);
+			}
+			auto generated_source_path = tformat(u8"{}\\{}.failed.sp", context_base->generated_source_directory, lambda_name);
+			write_entire_file(generated_source_path, builder);
+
+			reporter.warning(instantiation_location, "Could not generate vectorized lambda. Falling back on array of scalar operations.");
+			for (auto &report : reason_reporter.reports)
+				report.indentation += 1;
+			reporter.reports.add(reason_reporter.reports);
+			reporter.info("Source of instantiated lambda can be seen in {}", generated_source_path);
+			reporter.info(original_lambda->location, "Here is the original lambda:");
+
 			vectorized = instantiate_fallback_vectorized_lambda();
 		}
 		
@@ -2430,7 +2519,7 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 	return lambda;
 }
 Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
-	if (name->name == "t") {
+	if (name->name == "all_true") {
 		int x = 42;
 	}
 
@@ -3546,7 +3635,9 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 						VectorizedBinaryValue vectorized = {};
 
 						locked_use(vectorized_binarys) {
-							auto found = vectorized_binarys.find({ dleft_element, dright_element, binary->operation, element_count });
+							VectorizedBinaryKey key = { dleft_element, dright_element, binary->operation, element_count };
+
+							auto found = vectorized_binarys.find(key);
 							if (found) {
 								vectorized = *found.value;
 							} else {
@@ -3603,8 +3694,9 @@ c
 								assert(vectorized.definition);
 								vectorized.lambda = as<Lambda>(vectorized.definition->initial_value);
 								assert(vectorized.lambda);
+								
+								vectorized_binarys.insert(key, vectorized);
 							}
-							return 0;
 						};
 
 

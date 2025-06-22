@@ -103,6 +103,7 @@ struct Builder {
 
 	u64 temporary_offset = 0;
 	u64 max_temporary_size = 0;
+	u64 current_size_reserved_for_arguments = 0;
 	u64 max_size_reserved_for_arguments = 0;
 	umm locals_size = 0;
 
@@ -154,7 +155,8 @@ struct Builder {
 
 	Address allocate_temporary(u64 size);
 
-	void reserve_space_for_arguments(u64 size);
+	void push_space_for_arguments(u64 size);
+	void pop_space_for_arguments(u64 size);
 
 	Site create_destination(u64 size);
 	void deallocate(Site d);
