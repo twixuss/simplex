@@ -7,6 +7,8 @@
 #include "../../src/type.h"
 #include "../../src/compiler_context.h"
 #include "../../src/cmd_args.h"
+#include "../../src/copier.h" // :COPY_HACK:
+#include "../../src/copier.cpp"  // :COPY_HACK:
 
 #include <tl/process.h>
 #include <tl/linear_set.h>
@@ -730,17 +732,44 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			}
 		},
 		[&](IfExpression *If) {
-			append_node(code, If->condition);
-			append_line(code, "if (_{})", If->condition->uid);
-			{tabbed_block;
-				append_node(code, If->true_branch);
-				append_line(code, "_{} = _{};", node->uid, If->true_branch->uid);
-			}
-			if (If->false_branch) {
-				append_line(code, "else");
+			if (If->is_array) {
+				append_node(code, If->condition);
+				auto arr = as<ArrayType>(If->true_branch->type);
+				auto count = arr->count.value();
+				append_line(code, "uint64_t _msk{} = __movmsk(&_{}, {}, {});", If->uid, If->condition->uid, 1, count);
+				append_line(code, "if (_msk{} == {})", If->uid, slln(1, count) - 1);
+				{tabbed_block;
+					append_node(code, If->true_branch);
+					append_line(code, "_{} = _{};", node->uid, If->true_branch->uid);
+				}
+				append_line(code, "else if (_msk{} == 0)", If->uid);
 				{tabbed_block;
 					append_node(code, If->false_branch);
 					append_line(code, "_{} = _{};", node->uid, If->false_branch->uid);
+				}
+				append_line(code, "else");
+				{tabbed_block;
+					// :COPY_HACK:
+					// I don't wanna deal with giving unique labels to blocks that are appended multiple times.
+					auto t = Copier{}.deep_copy(If->true_branch);
+					auto f = Copier{}.deep_copy(If->false_branch);
+					append_node(code, t);
+					append_node(code, f);
+					append_line(code, "__blend(&_{}, _msk{}, &_{}, &_{}, {}, {});", node->uid, If->uid, t->uid, f->uid, get_size(arr->element_type), count);
+				}
+			} else {
+				append_node(code, If->condition);
+				append_line(code, "if (_{})", If->condition->uid);
+				{tabbed_block;
+					append_node(code, If->true_branch);
+					append_line(code, "_{} = _{};", node->uid, If->true_branch->uid);
+				}
+				if (If->false_branch) {
+					append_line(code, "else");
+					{tabbed_block;
+						append_node(code, If->false_branch);
+						append_line(code, "_{} = _{};", node->uid, If->false_branch->uid);
+					}
 				}
 			}
 		},
@@ -754,12 +783,12 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				append_node(code, e);
 			}
 
-			tabs();
+			tabs(code);
 			append_format(code, "_{} = ({}){{", node->uid, ctype(constructor->type));
 			for (auto e : constructor->elements) {
 				append_format(code, "_{}, ", e->uid);
 			}
-			append(code, "};");
+			append_line(code, "};");
 		},
 		[&](Use *Use) {
 			// nothing to do
@@ -853,7 +882,7 @@ void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_de
 		[&](LambdaHead *head) {
 			add_dependencies(head->return_type, types_to_declare);
 			for (auto &parameter : head->parameters_block.definition_list) {
-				add_dependencies(parameter, types_to_declare);
+				add_dependencies(parameter->type, types_to_declare);
 			}
 			types_to_declare.add(head);
 		},
@@ -870,6 +899,8 @@ void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_de
 	
 extern "C" __declspec(dllexport)
 bool convert_ast(Block *global_block, Lambda *main_lambda, Definition *main_lambda_definition) {
+	node_arena = AtomicArenaAllocator::create(1*MiB); // :COPY_HACK:
+
 	StringBuilder builder;
 	StringBuilder code;
 	
@@ -989,6 +1020,8 @@ R"(typedef struct {{
 _{} __make_string(char const *str);
 void print_String(_{} x);
 void print_S64(int64_t v);
+uint64_t __movmsk(void const *msk, uint64_t size, uint64_t count);
+void __blend(void *dest, uint64_t msk, void const *a, void const *b, uint64_t size, uint64_t count);
 )", context->builtin_structs.String->uid, context->builtin_structs.String->uid);
 	
 	append(builder, R"(
@@ -1219,6 +1252,17 @@ void print_S64(int64_t v) {
 	}
 	WriteFile(GetStdHandle(-11), c, buf + sizeof(buf) - c, 0, 0);
 
+}
+
+uint64_t __movmsk(uint8_t const *msk, uint64_t size, uint64_t count) {
+	uint64_t result = 0;
+	for (uint64_t i = 0; i < count; ++i)
+		result |= (uint64_t)(msk[i * size] & 1) << i;
+	return result;
+}
+void __blend(uint8_t *d, uint64_t msk, uint8_t const *a, uint8_t const *b, uint64_t size, uint64_t count) {
+	for (uint64_t i = 0; i < count; ++i)
+		memcpy(d + i*size, ((msk >> i) & 1 ? a : b) + i*size, size);
 }
 
 void debug_break() {

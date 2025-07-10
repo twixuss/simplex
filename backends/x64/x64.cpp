@@ -389,6 +389,8 @@ struct Emitter {
 	void emit_instruction_impl(b::Instruction::neg2_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::neg4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::neg8_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::movmsk_t i) { not_implemented(); }
+	void emit_instruction_impl(b::Instruction::blend_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::fadd4_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::fadd8_t i) { not_implemented(); }
 	void emit_instruction_impl(b::Instruction::fsub4_t i) { not_implemented(); }

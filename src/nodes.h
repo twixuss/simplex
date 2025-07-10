@@ -293,6 +293,7 @@ DEFINE_EXPRESSION(IfExpression) {
 	Expression *condition = 0;
 	Expression *true_branch = 0;
 	Expression *false_branch = 0;
+	bool is_array : 1 = false;
 };
 DEFINE_EXPRESSION(BuiltinTypeName) {
 	BuiltinType type_kind = {};

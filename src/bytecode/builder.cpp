@@ -333,6 +333,19 @@ Address Builder::allocate_temporary(u64 size) {
 	return result;
 }
 
+Builder::AllocatedTemporary Builder::allocate_temporary2(u64 size) {
+	Address result;
+	result.base = Register::temporary;
+	result.offset = temporary_offset;
+	temporary_offset += size;
+	max_temporary_size = max(max_temporary_size, temporary_offset);
+	return {result, size};
+}
+void Builder::deallocate(AllocatedTemporary &at) {
+	temporary_offset -= at.size;
+	at = {};
+}
+
 void Builder::push_space_for_arguments(u64 size) {
 	current_size_reserved_for_arguments += size;
 	max_size_reserved_for_arguments = max(max_size_reserved_for_arguments, current_size_reserved_for_arguments);
@@ -716,19 +729,77 @@ void Builder::output_impl(Site destination, Name *name) {
 	I(copy, .d = destination, .s = get_definition_address(definition), .size = get_size(name->type));
 } 
 void Builder::output_impl(Site destination, IfExpression *If) {
-	umm jf_index;
-	{
-		tmpreg(cr);
-		output(cr, If->condition);
-		jf_index = output_bytecode.instructions.count;
-		I(jf, cr, 0);
+	if (If->is_array) {
+		auto cond_array = as<ArrayType>(If->condition->type);
+		auto true_array = as<ArrayType>(If->true_branch->type);
+		auto false_array = as<ArrayType>(If->false_branch->type);
+		assert(cond_array);
+		assert(true_array);
+		assert(false_array);
+		assert(true_array->count.value() == false_array->count.value());
+		assert(get_size(true_array->element_type) == get_size(false_array->element_type));
+
+		auto count = cond_array->count.value();
+		assert(count <= 64, "Can't process more than 64 elements in IfExpression condition");
+		
+		auto cond_size = get_size(cond_array);
+		auto elem_size = get_size(true_array->element_type);
+		auto true_size = get_size(If->true_branch->type);
+		auto false_size = get_size(If->false_branch->type);
+		assert(true_size == false_size);
+
+		auto cond_val = allocate_temporary2(cond_size);
+		output(cond_val.address, If->condition);
+		
+		tmpreg(mask);
+		I(movmsk, mask, cond_val.address, {.size = 1, .count = autocast count});
+
+		deallocate(cond_val);
+		
+		tmpreg(cond);
+		
+		I(cmp8, cond, mask, (s64)slln(1, count) - 1, Comparison::equals);
+		auto over_all_true = output_bytecode.instructions.count;
+		I(jf, cond, 0);
+		output(destination, If->true_branch);
+		auto out1 = output_bytecode.instructions.count;
+		I(jmp, 0);
+		output_bytecode.instructions[over_all_true].jf().d = output_bytecode.instructions.count - over_all_true;
+
+		I(cmp8, cond, mask, 0, Comparison::equals);
+		auto over_all_false = output_bytecode.instructions.count;
+		I(jf, cond, 0);
+		output(destination, If->false_branch);
+		auto out2 = output_bytecode.instructions.count;
+		I(jmp, 0);
+		output_bytecode.instructions[over_all_false].jf().d = output_bytecode.instructions.count - over_all_false;
+		
+		auto true_val = allocate_temporary2(true_size);
+		output(true_val.address, If->true_branch);
+
+		auto false_val = allocate_temporary2(false_size);
+		output(false_val.address, If->false_branch);
+
+		assert(destination.is_address(), "not implemented");
+		I(blend, destination.get_address(), mask, true_val.address, false_val.address, {.size = autocast elem_size, .count = autocast count});
+
+		output_bytecode.instructions[out1].jmp().d = output_bytecode.instructions.count - out1;
+		output_bytecode.instructions[out2].jmp().d = output_bytecode.instructions.count - out2;
+	} else {
+		umm jf_index;
+		{
+			tmpreg(cr);
+			output(cr, If->condition);
+			jf_index = output_bytecode.instructions.count;
+			I(jf, cr, 0);
+		}
+		output(destination, If->true_branch);
+		auto jmp_index = output_bytecode.instructions.count;
+		I(jmp, 0);
+		output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count - jf_index;
+		output(destination, If->false_branch);
+		output_bytecode.instructions[jmp_index].jmp().d = output_bytecode.instructions.count - jmp_index;
 	}
-	output(destination, If->true_branch);
-	auto jmp_index = output_bytecode.instructions.count;
-	I(jmp, 0);
-	output_bytecode.instructions[jf_index].jf().d = output_bytecode.instructions.count - jf_index;
-	output(destination, If->false_branch);
-	output_bytecode.instructions[jmp_index].jmp().d = output_bytecode.instructions.count - jmp_index;
 } 
 void Builder::output_impl(Site destination, BuiltinTypeName *node) {
 	I(copy, destination, (s64)node->type_kind, 8);

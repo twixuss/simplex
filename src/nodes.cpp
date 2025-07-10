@@ -92,6 +92,23 @@ void append(StringBuilder &builder, Node *node) {
 	}
 }
 
+void Block::add(Node *child) {
+	children.add(child);
+	switch (child->kind) {
+		case NodeKind::Block: {
+			auto block = (Block *)child;
+			block->parent = this;
+			break;
+		}
+		case NodeKind::Definition: {
+			auto definition = (Definition *)child;
+			definition_list.add(definition);
+			definition_map.get_or_insert(definition->name).add(definition);
+			break;
+		}
+	}
+}
+
 bool is_substitutable(Block *block) {
 	return block->children.count == 1 && block->breaks.count == 0 && block->definition_list.count == 0;
 }

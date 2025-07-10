@@ -1004,68 +1004,14 @@ Name                 *Typechecker::vectorize_node_impl(Name *original) {
 	fail();
 }
 Expression           *Typechecker::vectorize_node_impl(IfExpression *original) {
-	/*
-	
-	Convert this:
-	
-		if c then a else b
-
-	To a vectorized variant. If all conditions are true, it should only evaluate true branch.
-	If they are all false - only false branch. Otherwise evaluate both branches and blend the result.
-
-		{
-			let __c = c
-			if all_true(__c) {
-				a
-			} else if all_false(__c) {
-				b
-			} else {
-				select(__c, a, b)
-			}
-		}
-	*/
-	auto block = Block::create();
-	auto __c = Definition::create();
-	auto if_all_condition = Call::create();
-	auto if_all = IfExpression::create();
-	auto if_none_condition = Call::create();
-	auto if_none = IfExpression::create();
-	auto select = Call::create();
-
-	block->container = current_container;
-	block->parent = current_block;
-
-	__c->mutability = Mutability::readonly;
-	__c->container = current_container;
-	__c->initial_value = vectorize_node(original->condition);
-	__c->name = u8"__c"s;
-	__c->location = original->condition->location;
-	block->add(__c);
-	
-	if_all_condition->callable = make_name(u8"all_true"s, original->condition->location);
-	if_all_condition->arguments.add({.expression = make_name(u8"__c"s, original->condition->location)});
-	if_all_condition->location = original->condition->location;
-
-	if_all->condition = if_all_condition;
-	if_all->true_branch = vectorize_node(original->true_branch);
-	if_all->false_branch = if_none;
-	block->add(if_all);
-
-	if_none_condition->callable = make_name(u8"all_false"s, original->condition->location);
-	if_none_condition->arguments.add({.expression = make_name(u8"__c"s, original->condition->location)});
-	if_none_condition->location = original->condition->location;
-
-	if_none->condition = if_none_condition;
-	if_none->true_branch = vectorize_node(original->false_branch);
-	if_none->false_branch = select;
-	
-	select->callable = make_name(u8"select"s, original->location);
-	select->arguments.add({.expression = make_name(u8"__c"s, original->location)});
-	select->arguments.add({.expression = vectorize_node(original->true_branch)});
-	select->arguments.add({.expression = vectorize_node(original->false_branch)});
-	select->location = original->location;
-
-	return block;
+	auto result = IfExpression::create();
+	result->location = original->location;
+	result->condition = vectorize_node(original->condition);
+	result->true_branch = vectorize_node(original->true_branch);
+	result->false_branch = vectorize_node(original->false_branch);
+	result->type = result->true_branch->type;
+	result->is_array = true;
+	return result;
 }
 BuiltinTypeName      *Typechecker::vectorize_node_impl(BuiltinTypeName *original) {
 	reporter.warning(original->location, "not implemented: {}", original->kind);
@@ -2901,57 +2847,71 @@ Node             *Typechecker::typecheck_impl(IfStatement *If, bool can_substitu
 	return If;
 }
 Expression       *Typechecker::typecheck_impl(IfExpression *If, bool can_substitute) {
-	If->condition = make_cast(If->condition, get_builtin_type(BuiltinType::Bool));
-	If->condition->type = 0;
-
 	typecheck(&If->condition);
 
-	typecheck(&If->true_branch);
-	typecheck(&If->false_branch);
+	auto condition_array_type = direct_as<ArrayType>(If->condition->type);
+	if (!condition_array_type) {
+		// Not array. Must be scalar.
+		If->condition = make_cast(If->condition, get_builtin_type(BuiltinType::Bool));
+		If->condition->type = 0;
 
-	if (types_match(If->true_branch->type, If->false_branch->type)) {
-		If->type = If->true_branch->type;
-	} else {
-		defer {
-			If->true_branch = If->true_branch;
-			If->false_branch = If->false_branch;
-		};
+		typecheck(&If->condition);
 
-		Reporter cast_reporter;
-		cast_reporter.reports.allocator = current_temporary_allocator;
-		auto t2f = implicitly_cast(&If->true_branch, If->false_branch->type, &cast_reporter);
-		auto f2t = implicitly_cast(&If->false_branch, If->true_branch->type, &cast_reporter);
+		typecheck(&If->true_branch);
+		typecheck(&If->false_branch);
 
-		if (!t2f && !f2t) {
-			reporter.error(If->location, "Branch types {} and {} don't match in any way.", If->true_branch->type, If->false_branch->type);
-			reporter.reports.add(cast_reporter.reports);
-			cast_reporter.reports.clear();
-			fail();
-		} else if (t2f && f2t) {
-			reporter.error(If->location, "Branch types {} and {} are both implicitly convertible to each other.", If->true_branch->type, If->false_branch->type);
-			reporter.reports.add(cast_reporter.reports);
-			cast_reporter.reports.clear();
-			fail();
-		} else if (t2f) {
-			t2f.apply();
+		if (types_match(If->true_branch->type, If->false_branch->type)) {
 			If->type = If->true_branch->type;
 		} else {
-			f2t.apply();
-			If->type = If->false_branch->type;
+			defer {
+				If->true_branch = If->true_branch;
+				If->false_branch = If->false_branch;
+			};
+
+			Reporter cast_reporter;
+			cast_reporter.reports.allocator = current_temporary_allocator;
+			auto t2f = implicitly_cast(&If->true_branch, If->false_branch->type, &cast_reporter);
+			auto f2t = implicitly_cast(&If->false_branch, If->true_branch->type, &cast_reporter);
+
+			if (!t2f && !f2t) {
+				reporter.error(If->location, "Branch types {} and {} don't match in any way.", If->true_branch->type, If->false_branch->type);
+				reporter.reports.add(cast_reporter.reports);
+				cast_reporter.reports.clear();
+				fail();
+			} else if (t2f && f2t) {
+				reporter.error(If->location, "Branch types {} and {} are both implicitly convertible to each other.", If->true_branch->type, If->false_branch->type);
+				reporter.reports.add(cast_reporter.reports);
+				cast_reporter.reports.clear();
+				fail();
+			} else if (t2f) {
+				t2f.apply();
+				If->type = If->true_branch->type;
+			} else {
+				f2t.apply();
+				If->type = If->false_branch->type;
+			}
 		}
+
+		if (auto value_ = get_constant_value(If->condition)) {
+
+			NOTE_LEAK(If);
+
+			auto value = value_.value();
+			assert(value.kind == ValueKind::Bool);
+			return value.Bool ? If->true_branch : If->false_branch;
+		}
+	} else {
+		If->is_array = true;
+		typecheck(&If->true_branch);
+		typecheck(&If->false_branch);
+		if (!types_match(If->true_branch->type, If->false_branch->type)) {
+			reporter.error(If->location, "Branch types of `array if` must match");
+			reporter.info(If->true_branch->location, "Type of true branch is {}", If->true_branch->type);
+			reporter.info(If->false_branch->location, "Type of false branch is {}", If->false_branch->type);
+			fail();
+		}
+		If->type = If->true_branch->type;
 	}
-
-	if (auto value_ = get_constant_value(If->condition)) {
-
-		NOTE_LEAK(If);
-
-		auto value = value_.value();
-		assert(value.kind == ValueKind::Bool);
-		return value.Bool ? If->true_branch : If->false_branch;
-	}
-
-	if (!If->type)
-		If->type = get_builtin_type(BuiltinType::None);
 
 	return If;
 }

@@ -119,7 +119,7 @@ fn next(use l: *var Lexer): Bool => {
 }
 
 fn main() {
-    current_allocator = dyn_page_allocator
+    current_allocator = page_allocator
 
     //var source_path = "F:\\projects\\simplex\\self\\simplex.sp"
     var source_path = "F:\\projects\\simplex\\a.sp"

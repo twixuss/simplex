@@ -156,23 +156,6 @@ auto chars_as_int(utf8 const *chars) {
 	return result;
 }
 
-void Block::add(Node *child) {
-	children.add(child);
-	switch (child->kind) {
-		case NodeKind::Block: {
-			auto block = (Block *)child;
-			block->parent = this;
-			break;
-		}
-		case NodeKind::Definition: {
-			auto definition = (Definition *)child;
-			definition_list.add(definition);
-			definition_map.get_or_insert(definition->name).add(definition);
-			break;
-		}
-	}
-}
-
 bool is_expression(Node *node) {
 	if (auto block = as<Block>(node)) {
 		if (block->children.count == 0)

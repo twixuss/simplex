@@ -974,6 +974,23 @@ void Interpreter::execute(Instruction::neg1_t i) { val1(i.d) = -val1(i.a); }
 void Interpreter::execute(Instruction::neg2_t i) { val2(i.d) = -val2(i.a); }
 void Interpreter::execute(Instruction::neg4_t i) { val4(i.d) = -val4(i.a); }
 void Interpreter::execute(Instruction::neg8_t i) { val8(i.d) = -val8(i.a); }
+void Interpreter::execute(Instruction::movmsk_t i) {
+	u64 result = 0;
+	u8 *addr = (u8 *)&val1(i.s);
+	for (umm j = 0; j < i.layout.count; ++j) {
+		result |= (u64)(addr[j * i.layout.size] & 1) << j;
+	}
+	val8(i.d) = result;
+}
+void Interpreter::execute(Instruction::blend_t i) {
+	u64 mask = val8(i.m);
+	u8 *a = (u8 *)&val1(i.a);
+	u8 *b = (u8 *)&val1(i.b);
+	u8 *d = (u8 *)&val1(i.d);
+	for (umm j = 0; j < i.layout.count; ++j) {
+		memcpy(d + j*i.layout.size, ((mask >> j) & 1 ? a : b) + j*i.layout.size, i.layout.size);
+	}
+}
 void Interpreter::execute(Instruction::fadd4_t i) { *(f32 *)&val4(i.d) = std::bit_cast<f32>(val4(i.a)) + std::bit_cast<f32>(val4(i.b)); }
 void Interpreter::execute(Instruction::fadd8_t i) { *(f64 *)&val8(i.d) = std::bit_cast<f64>(val8(i.a)) + std::bit_cast<f64>(val8(i.b)); }
 void Interpreter::execute(Instruction::fsub4_t i) { *(f32 *)&val4(i.d) = std::bit_cast<f32>(val4(i.a)) - std::bit_cast<f32>(val4(i.b)); }

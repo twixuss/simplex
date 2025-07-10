@@ -166,6 +166,18 @@ inline void append(StringBuilder &builder, InputValue v) {
 		append(builder, v.get_constant());
 }
 
+// TODO: encode as exponents of two for compression?
+struct ArrayLayout {
+	u8 size  = 0; // size of one element
+	u8 count = 0; // count of elements
+
+	[[nodiscard]] inline constexpr auto operator<=>(ArrayLayout const &) const noexcept = default;
+};
+
+inline void append(StringBuilder &builder, ArrayLayout p) {
+	append_format(builder, "{}x{}", p.size, p.count);
+}
+
 /*
 #define x(name)
 ENUMERATE_INTRINSICS
@@ -278,6 +290,8 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(neg2, (y(Site, d) y(InputValue, a))) \
 	x(neg4, (y(Site, d) y(InputValue, a))) \
 	x(neg8, (y(Site, d) y(InputValue, a))) \
+	x(movmsk, (y(Site, d) y(Address, s) y(ArrayLayout, layout))) \
+	x(blend, (y(Address, d) y(Register, m) y(Address, a) y(Address, b) y(ArrayLayout, layout))) \
 	x(fadd4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(fadd8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(fsub4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
@@ -488,11 +502,11 @@ inline void print_instruction(umm index, Instruction instruction) {
 	umm c = 0;
 	c += print("{}: ", index);
 	c += print_instruction(instruction);
-	while (c <= 32) {
+	while (c <= 48) {
 		print(' ');
 		c++;
 	}
-	with(ConsoleColor::gray, println("{}:{}", instruction.file, instruction.line));
+	with(ConsoleColor::dark_gray, println("{}:{}", instruction.file, instruction.line));
 }
 
 inline void print_instructions(Span<Instruction> instructions) {

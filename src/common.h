@@ -2,6 +2,8 @@
 #undef BUILD_DEBUG
 #define BUILD_DEBUG 1
 
+#pragma warning(4: 4996)
+
 #include <type_traits>
 #include <concepts>
 
@@ -233,3 +235,6 @@ extern CompilerContext *context;
 
 LockProtected<struct Block, RecursiveSpinLock> *get_global_block();
 struct Block *get_global_block_unprotected();
+
+// Shift Left Logical Normal (not modulo)
+inline u64 slln(u64 a, u64 b) { return b < 64 ? a << b : 0; }

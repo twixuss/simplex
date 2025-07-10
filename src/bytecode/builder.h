@@ -153,7 +153,15 @@ struct Builder {
 	Register allocate_register();
 	void deallocate(Register r);
 
+	// [[deprecated("Use allocate_temporary2 instead")]]
 	Address allocate_temporary(u64 size);
+	
+	struct AllocatedTemporary {
+		Address address = {};
+		u64 size = {};
+	};
+	AllocatedTemporary allocate_temporary2(u64 size);
+	void deallocate(AllocatedTemporary &at);
 
 	void push_space_for_arguments(u64 size);
 	void pop_space_for_arguments(u64 size);
