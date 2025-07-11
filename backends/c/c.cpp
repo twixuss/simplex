@@ -7,8 +7,6 @@
 #include "../../src/type.h"
 #include "../../src/compiler_context.h"
 #include "../../src/cmd_args.h"
-#include "../../src/copier.h" // :COPY_HACK:
-#include "../../src/copier.cpp"  // :COPY_HACK:
 
 #include <tl/process.h>
 #include <tl/linear_set.h>
@@ -18,6 +16,31 @@
 CompilerContext *context;
 
 Node *debug_current_node;
+
+#define tto_string to_string<TemporaryAllocator>
+
+
+// An extra string to append to labels.
+// Appending a node multiple times might introduce name collisions.
+// Use this to make unique names.
+GList<utf8> label_extension;
+
+#define scoped_label_extension(str)          \
+	auto prev_count = label_extension.count; \
+	label_extension.add(str);                \
+	defer { label_extension.count = prev_count; }
+
+template <class T>
+struct ExtLabel {
+	T value;
+};
+
+template <class T>
+inline void append(StringBuilder &builder, ExtLabel<T> const &id) {
+	append_format(builder, "{}{}", id.value, label_extension);
+}
+
+
 
 template <class T>
 struct CName {
@@ -104,6 +127,8 @@ void append(StringBuilder &builder, CName<Statement *> t) {
 	}
 	invalid_code_path();
 }
+
+
 
 struct CType {
 	Type type;
@@ -457,7 +482,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 					}
 				}
 			
-				append_line(code, "end_{}:;", block->uid);
+				append_line(code, "end_{}:;", ExtLabel{block->uid});
 
 				for (auto Defer : block->defers) {
 					{tabbed_block;
@@ -652,16 +677,16 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 						append_line(code, "if (_{} == _{}) goto take_case_{};", match->expression->uid, from->uid, c.to->uid);
 					}
 
-					append_line(code, "goto skip_case_{};", c.to->uid);
-					append_line(code, "take_case_{}:;", c.to->uid);
+					append_line(code, "goto skip_case_{};", ExtLabel{c.to->uid});
+					append_line(code, "take_case_{}:;", ExtLabel{c.to->uid});
 					{tabbed_block;
 						append_node(code, c.to);
 						if (is_expression) {
 							append_line(code, "_{} = _{};", node->uid, c.to->uid);
 						}
-						append_line(code, "goto endmatch{};", match->uid);
+						append_line(code, "goto endmatch{};", ExtLabel{match->uid});
 					}
-					append_line(code, "skip_case_{}:;", c.to->uid);
+					append_line(code, "skip_case_{}:;", ExtLabel{c.to->uid});
 				}
 				if (is_expression) {
 					if (match->default_case) {
@@ -675,7 +700,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 						append_node(code, match->default_case->to);
 					}
 				}
-				append_line(code, "endmatch{}:;", match->uid);
+				append_line(code, "endmatch{}:;", ExtLabel{match->uid});
 			}
 		},
 		[&](While *While) {
@@ -685,9 +710,9 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				append_line(code, "if (!_{}) break;", While->condition->uid);
 
 				append_node(code, While->body);
-				append_line(code, "continue_{}:;", While->uid);
+				append_line(code, "continue_{}:;", ExtLabel{While->uid});
 			}
-			append_line(code, "break_{}:;", While->uid);
+			append_line(code, "break_{}:;", ExtLabel{While->uid});
 		},
 		[&](Continue *Continue) {
 			for (auto Defer : Continue->defers) {
@@ -695,7 +720,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 					append_node(code, Defer->body, false);
 				}
 			}
-			append_line(code, "goto continue_{};", Continue->loop->uid);
+			append_line(code, "goto continue_{};", ExtLabel{Continue->loop->uid});
 		},
 		[&](Break *Break) {
 			if (Break->loop) {
@@ -704,7 +729,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 						append_node(code, Defer->body, false);
 					}
 				}
-				append_line(code, "goto break_{};", Break->loop->uid);
+				append_line(code, "goto break_{};", ExtLabel{Break->loop->uid});
 			} else {
 				assert(Break->tag_block);
 				append_node(code, Break->value);
@@ -715,7 +740,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 						append_node(code, Defer->body, false);
 					}
 				}
-				append_line(code, "goto end_{};", Break->tag_block->uid);
+				append_line(code, "goto end_{};", ExtLabel{Break->tag_block->uid});
 			}
 		},
 		[&](IfStatement *If) {
@@ -749,13 +774,11 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				}
 				append_line(code, "else");
 				{tabbed_block;
-					// :COPY_HACK:
-					// I don't wanna deal with giving unique labels to blocks that are appended multiple times.
-					auto t = Copier{}.deep_copy(If->true_branch);
-					auto f = Copier{}.deep_copy(If->false_branch);
-					append_node(code, t);
-					append_node(code, f);
-					append_line(code, "__blend(&_{}, _msk{}, &_{}, &_{}, {}, {});", node->uid, If->uid, t->uid, f->uid, get_size(arr->element_type), count);
+					scoped_label_extension(tto_string(If->uid));
+
+					append_node(code, If->true_branch);
+					append_node(code, If->false_branch);
+					append_line(code, "__blend(&_{}, _msk{}, &_{}, &_{}, {}, {});", node->uid, If->uid, If->true_branch->uid, If->false_branch->uid, get_size(arr->element_type), count);
 				}
 			} else {
 				append_node(code, If->condition);
@@ -899,8 +922,6 @@ void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_de
 	
 extern "C" __declspec(dllexport)
 bool convert_ast(Block *global_block, Lambda *main_lambda, Definition *main_lambda_definition) {
-	node_arena = AtomicArenaAllocator::create(1*MiB); // :COPY_HACK:
-
 	StringBuilder builder;
 	StringBuilder code;
 	
