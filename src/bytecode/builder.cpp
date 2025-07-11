@@ -133,7 +133,7 @@ void Builder::append_lambda(Lambda *lambda) {
 
 	auto return_value_destination = Address { .base = Register::returns };
 
-	I(set, .d = return_value_destination, .value = 0, .size = return_value_size);
+	I(set, .d = return_value_destination, .value = 0, .size = 1, .count = return_value_size);
 
 	output(return_value_destination, lambda->body);
 
@@ -467,7 +467,7 @@ void Builder::output_local_definition(Optional<Site> destination, Definition *de
 	if (definition->initial_value) {
 		output(address, definition->initial_value);
 	} else {
-		I(set, .d = address, .value = 0, .size = definition_size);
+		I(set, .d = address, .value = 0, .size = 1, .count = definition_size);
 		if (auto struct_ = direct_as<Struct>(definition->type)) {
 			for (auto member : struct_->member_list) {
 				if (member->initial_value) {
@@ -997,9 +997,9 @@ void Builder::output_impl(Site destination, Binary *binary) {
 		}
 		case LowBinaryOperation::zeroinit: {
 			if (destination.is_address()) {
-				I(set, destination.get_address(), 0, get_size(binary->right));
+				I(set, .d = destination.get_address(), .value = 0, .size = 1, .count = get_size(binary->right));
 			} else {
-				I(copy, destination.get_register(), 0, get_size(binary->right));
+				I(copy, .d = destination.get_register(), .s = 0, .size = get_size(binary->right));
 			}
 			return;
 		}
@@ -1561,9 +1561,9 @@ void Builder::output_impl(Site destination, ArrayConstructor *arr) {
 }
 void Builder::output_impl(Site destination, ZeroInitialized *zi) {
 	if (destination.is_register()) {
-		I(copy, destination, 0, get_size(zi->type));
+		I(copy, .d = destination, .s = 0, .size = get_size(zi->type));
 	} else {
-		I(set, destination.get_address(), 0, get_size(zi->type));
+		I(set, .d = destination.get_address(), .value = 0, .size = 1, .count = get_size(zi->type));
 	}
 }
 void Builder::output_impl(Site destination, CallerLocation *) {

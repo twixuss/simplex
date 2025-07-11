@@ -224,7 +224,7 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(push, (y(InputValue, s))) \
 	x(pop,  (y(Site, d))) \
 	x(copy, (y(Site, d) y(InputValue, s) y(u64, size))) \
-	x(set,  (y(Address, d) y(u8, value) y(u64, size))) \
+	x(set,  (y(Address, d) y(s64, value) y(u64, size) y(u64, count))) \
 	x(lea,  (y(Site, d) y(Address, s))) \
 	x(add1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
 	x(add2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \

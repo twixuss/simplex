@@ -25,7 +25,7 @@ bool optimize_one_instruction(Instruction &i) {
 	switch (i.kind) {
 		using enum InstructionKind;
 
-		case set: if (i.set().size == 0) { i = I(nop); return true; } break;
+		case set: if (i.set().size == 0 || i.set().count == 0) { i = I(nop); return true; } break;
 		case copy: if (i.copy().size == 0) { i = I(nop); return true; } break;
 
 		case add1: 

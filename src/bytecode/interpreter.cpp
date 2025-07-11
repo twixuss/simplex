@@ -828,6 +828,16 @@ static void _checks() {
 	static_assert(all(edivmod<int>(2147483647, 3) == v2s{715827882, 1}));
 }
 
+static void memsetex(void *dst, u64 value, u64 size, u64 count) {
+	switch (size) {
+		case 1: memset(dst, value, count); break;
+		case 2: for (umm i = 0; i < count; ++i) ((u16 *)dst)[i] = value; break;
+		case 4: for (umm i = 0; i < count; ++i) ((u32 *)dst)[i] = value; break;
+		case 8: for (umm i = 0; i < count; ++i) ((u64 *)dst)[i] = value; break;
+		default: not_implemented();
+	}
+}
+
 void Interpreter::execute(Instruction::pop_t i) {
 	E(copy, .d = i.d, .s = Address{.base = Register::stack}, .size = 8);
 	E(add8, .d = Register::stack, .a = Register::stack, .b = 8);
@@ -853,7 +863,7 @@ void Interpreter::execute(Instruction::copy_t i) {
 }
 void Interpreter::execute(Instruction::set_t i) {
 	auto d = &val8(i.d);
-	memset(d, i.value, i.size);
+	memsetex(d, i.value, i.size, i.count);
 }
 void Interpreter::execute(Instruction::lea_t i) { val8(i.d) = (s64) &val8(i.s); }
 void Interpreter::execute(Instruction::add1_t i) { val1(i.d) = val1(i.a) + val1(i.b); }
