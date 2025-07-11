@@ -50,6 +50,8 @@ struct Address {
 	s64 offset = {};
 
 	constexpr auto operator<=>(Address const &) const = default;
+
+	static constexpr u8 max_element_size = 255;
 };
 
 inline void append(StringBuilder &builder, Address a) {

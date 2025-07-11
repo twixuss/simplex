@@ -1518,7 +1518,7 @@ void Builder::output_impl(Site destination, Subscript *subscript) {
 			Address element_address = {};
 			element_address.base = array_address;
 			element_address.element_index = index_reg;
-			assert(element_size < 256);
+			assert(element_size <= Address::max_element_size);
 			element_address.element_size = element_size;
 
 			I(copy, destination, element_address, element_size);
@@ -1532,7 +1532,7 @@ void Builder::output_impl(Site destination, Subscript *subscript) {
 			output_bounds_check(index_reg, get_size(subscript->index->type), array_type->count.value());
 
 			array_mem.element_index = index_reg;
-			assert(element_size < 256);
+			assert(element_size <= Address::max_element_size);
 			array_mem.element_size = element_size;
 
 			I(copy, destination, array_mem, element_size);
@@ -1543,7 +1543,7 @@ void Builder::output_impl(Site destination, Subscript *subscript) {
 		tmpreg(i);
 		output(i, subscript->index);
 		auto element_size = get_size(subscript->type);
-		assert(element_size < 256);
+		assert(element_size <= Address::max_element_size);
 		I(lea, p, Address{.base = p, .element_index = i, .element_size = (u8)element_size});
 		I(copy, destination, Address{.base = p}, element_size);
 	} else {
@@ -1734,7 +1734,7 @@ void Builder::load_address_impl(Site destination, Subscript *node) {
 		output_bounds_check(index, get_size(node->index->type), array_type->count.value());
 
 		if (destination.is_register()) {
-			assert(element_size < 256);
+			assert(element_size <= Address::max_element_size);
 			I(lea, destination, Address{.base = destination.get_register(), .element_index = index, .element_size = (u8)element_size});
 		} else {
 			I(mul8, index, index, element_size);
@@ -1746,7 +1746,7 @@ void Builder::load_address_impl(Site destination, Subscript *node) {
 		output(index, node->index);
 
 		if (destination.is_register()) {
-			assert(element_size < 256);
+			assert(element_size <= Address::max_element_size);
 			I(lea, destination, Address{.base = destination.get_register(), .element_index = index, .element_size = (u8)element_size});
 		} else {
 			I(mul8, index, index, element_size);
