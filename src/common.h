@@ -141,7 +141,13 @@ inline bool operator==(char const *a, Span<char> b) { return as_span(a) == b; }
 #define PASTE_CASE(x) case x:
 #define PASTE_CASE_0(x) case x[0]:
 
-#define __FILE_NAME__ ([]{auto e = __FILE__;while (*e) ++e;while (*e != '\\') --e;return e + 1;}())
+static constexpr char const *extract_file_name(char const *e) {
+	while (*e) ++e;
+	while (*e != '\\') --e;
+	return e + 1;
+}
+
+#define __FILE_NAME__ extract_file_name(__FILE__)
 
 
 inline void log_error_path(char const *file, int line, auto &&...args) {
