@@ -27,126 +27,35 @@ bool optimize_one_instruction(Instruction &i) {
 
 		case set: if (i.set().size == 0 || i.set().count == 0) { i = I(nop); return true; } break;
 		case copy: if (i.copy().size == 0) { i = I(nop); return true; } break;
-
-		case add1: 
-			if (i.add1().a.as_constant() == (s64)0) { i = I(copy, i.add1().d, i.add1().b, 1); return true; }
-			if (i.add1().b.as_constant() == (s64)0) { i = I(copy, i.add1().d, i.add1().a, 1); return true; }
+		case add: 
+			if (i.add().a.as_constant() == (s64)0) { i = I(copy, i.add().d, i.add().b, (u64)i.add().layout.total_size()); return true; }
+			if (i.add().b.as_constant() == (s64)0) { i = I(copy, i.add().d, i.add().a, (u64)i.add().layout.total_size()); return true; }
 			break;
-		case add2: 
-			if (i.add2().a.as_constant() == (s64)0) { i = I(copy, i.add2().d, i.add2().b, 2); return true; }
-			if (i.add2().b.as_constant() == (s64)0) { i = I(copy, i.add2().d, i.add2().a, 2); return true; }
+		case sub: if (i.sub().b.as_constant() == (s64)0) { i = I(copy, i.sub().d, i.sub().a, (u64)i.sub().layout.total_size()); return true; } break;
+		case mul: 
+			if (i.mul().a.as_constant() == (s64)1) { i = I(copy, i.mul().d, i.mul().b, (u64)i.mul().layout.total_size()); return true; }
+			if (i.mul().b.as_constant() == (s64)1) { i = I(copy, i.mul().d, i.mul().a, (u64)i.mul().layout.total_size()); return true; }
 			break;
-		case add4: 
-			if (i.add4().a.as_constant() == (s64)0) { i = I(copy, i.add4().d, i.add4().b, 4); return true; }
-			if (i.add4().b.as_constant() == (s64)0) { i = I(copy, i.add4().d, i.add4().a, 4); return true; }
+		case divu: if (i.divu().b.as_constant() == (s64)1) { i = I(copy, i.divu().d, i.divu().a, (u64)i.divu().layout.total_size()); return true; } break;
+		case divs: if (i.divs().b.as_constant() == (s64)1) { i = I(copy, i.divs().d, i.divs().a, (u64)i.divs().layout.total_size()); return true; } break;
+		case bxor:
+			if (i.bxor().b.as_constant() == (s64)0) { i = I(copy, i.bxor().d, i.bxor().a, (u64)i.bxor().layout.total_size()); return true; }
+			if (i.bxor().a.as_constant() == (s64)0) { i = I(copy, i.bxor().d, i.bxor().b, (u64)i.bxor().layout.total_size()); return true; }
+			if (i.bxor().a == i.bxor().b)           { i = I(copy, i.bxor().d,          0, (u64)i.bxor().layout.total_size()); return true; }
 			break;
-		case add8: 
-			if (i.add8().a.as_constant() == (s64)0) { i = I(copy, i.add8().d, i.add8().b, 8); return true; }
-			if (i.add8().b.as_constant() == (s64)0) { i = I(copy, i.add8().d, i.add8().a, 8); return true; }
+		case band:
+			if (i.band().b.as_constant() == (s64)0)                  { i = I(copy, i.band().d,          0, (u64)i.band().layout.total_size()); return true; }
+			if (i.band().a.as_constant() == (s64)0)                  { i = I(copy, i.band().d,          0, (u64)i.band().layout.total_size()); return true; }
+			if (i.band().b.as_constant() == (s64)0xffffffffffffffff) { i = I(copy, i.band().d, i.band().a, (u64)i.band().layout.total_size()); return true; }
+			if (i.band().a.as_constant() == (s64)0xffffffffffffffff) { i = I(copy, i.band().d, i.band().b, (u64)i.band().layout.total_size()); return true; }
+			if (i.band().a == i.band().b)                            { i = I(copy, i.band().d, i.band().a, (u64)i.band().layout.total_size()); return true; }
 			break;
-		case sub1: if (i.sub1().b.as_constant() == (s64)0) { i = I(copy, i.sub1().d, i.sub1().a, 1); return true; } break;
-		case sub2: if (i.sub2().b.as_constant() == (s64)0) { i = I(copy, i.sub2().d, i.sub2().a, 2); return true; } break;
-		case sub4: if (i.sub4().b.as_constant() == (s64)0) { i = I(copy, i.sub4().d, i.sub4().a, 4); return true; } break;
-		case sub8: if (i.sub8().b.as_constant() == (s64)0) { i = I(copy, i.sub8().d, i.sub8().a, 8); return true; } break;
-		case mul1: 
-			if (i.mul1().a.as_constant() == (s64)1) { i = I(copy, i.mul1().d, i.mul1().b, 1); return true; }
-			if (i.mul1().b.as_constant() == (s64)1) { i = I(copy, i.mul1().d, i.mul1().a, 1); return true; }
-			break;
-		case mul2: 
-			if (i.mul2().a.as_constant() == (s64)1) { i = I(copy, i.mul2().d, i.mul2().b, 2); return true; }
-			if (i.mul2().b.as_constant() == (s64)1) { i = I(copy, i.mul2().d, i.mul2().a, 2); return true; }
-			break;
-		case mul4: 
-			if (i.mul4().a.as_constant() == (s64)1) { i = I(copy, i.mul4().d, i.mul4().b, 4); return true; }
-			if (i.mul4().b.as_constant() == (s64)1) { i = I(copy, i.mul4().d, i.mul4().a, 4); return true; }
-			break;
-		case mul8: 
-			if (i.mul8().a.as_constant() == (s64)1) { i = I(copy, i.mul8().d, i.mul8().b, 8); return true; }
-			if (i.mul8().b.as_constant() == (s64)1) { i = I(copy, i.mul8().d, i.mul8().a, 8); return true; }
-			break;
-		case divu1: if (i.divu1().b.as_constant() == (s64)1) { i = I(copy, i.divu1().d, i.divu1().a, 1); return true; } break;
-		case divu2: if (i.divu2().b.as_constant() == (s64)1) { i = I(copy, i.divu2().d, i.divu2().a, 2); return true; } break;
-		case divu4: if (i.divu4().b.as_constant() == (s64)1) { i = I(copy, i.divu4().d, i.divu4().a, 4); return true; } break;
-		case divu8: if (i.divu8().b.as_constant() == (s64)1) { i = I(copy, i.divu8().d, i.divu8().a, 8); return true; } break;
-		case divs1: if (i.divs1().b.as_constant() == (s64)1) { i = I(copy, i.divs1().d, i.divs1().a, 1); return true; } break;
-		case divs2: if (i.divs2().b.as_constant() == (s64)1) { i = I(copy, i.divs2().d, i.divs2().a, 2); return true; } break;
-		case divs4: if (i.divs4().b.as_constant() == (s64)1) { i = I(copy, i.divs4().d, i.divs4().a, 4); return true; } break;
-		case divs8: if (i.divs8().b.as_constant() == (s64)1) { i = I(copy, i.divs8().d, i.divs8().a, 8); return true; } break;
-		case xor1:
-			if (i.xor1().b.as_constant() == (s64)0) { i = I(copy, i.xor1().d, i.xor1().a, 1); return true; }
-			if (i.xor1().a.as_constant() == (s64)0) { i = I(copy, i.xor1().d, i.xor1().b, 1); return true; }
-			if (i.xor1().a == i.xor1().b)           { i = I(copy, i.xor1().d, 0, 1); return true; }
-			break;
-		case xor2:
-			if (i.xor2().b.as_constant() == (s64)0) { i = I(copy, i.xor2().d, i.xor2().a, 2); return true; }
-			if (i.xor2().a.as_constant() == (s64)0) { i = I(copy, i.xor2().d, i.xor2().b, 2); return true; }
-			if (i.xor2().a == i.xor2().b)           { i = I(copy, i.xor2().d, 0, 2); return true; }
-			break;
-		case xor4:
-			if (i.xor4().b.as_constant() == (s64)0) { i = I(copy, i.xor4().d, i.xor4().a, 4); return true; }
-			if (i.xor4().a.as_constant() == (s64)0) { i = I(copy, i.xor4().d, i.xor4().b, 4); return true; }
-			if (i.xor4().a == i.xor4().b)           { i = I(copy, i.xor4().d, 0, 4); return true; }
-			break;
-		case xor8:
-			if (i.xor8().b.as_constant() == (s64)0) { i = I(copy, i.xor8().d, i.xor8().a, 8); return true; }
-			if (i.xor8().a.as_constant() == (s64)0) { i = I(copy, i.xor8().d, i.xor8().b, 8); return true; }
-			if (i.xor8().a == i.xor8().b)           { i = I(copy, i.xor8().d, 0, 8); return true; }
-			break;
-		case and1:
-			if (i.and1().b.as_constant() == (s64)0)    { i = I(copy, i.and1().d, 0, 1); return true; }
-			if (i.and1().a.as_constant() == (s64)0)    { i = I(copy, i.and1().d, 0, 1); return true; }
-			if (i.and1().b.as_constant() == (s64)0xff) { i = I(copy, i.and1().d, i.and1().a, 1); return true; }
-			if (i.and1().a.as_constant() == (s64)0xff) { i = I(copy, i.and1().d, i.and1().b, 1); return true; }
-			if (i.and1().a == i.and1().b)              { i = I(copy, i.and1().d, i.and1().a, 1); return true; }
-			break;
-		case and2:
-			if (i.and2().b.as_constant() == (s64)0)      { i = I(copy, i.and2().d, 0, 2); return true; }
-			if (i.and2().a.as_constant() == (s64)0)      { i = I(copy, i.and2().d, 0, 2); return true; }
-			if (i.and2().b.as_constant() == (s64)0xffff) { i = I(copy, i.and2().d, i.and2().a, 2); return true; }
-			if (i.and2().a.as_constant() == (s64)0xffff) { i = I(copy, i.and2().d, i.and2().b, 2); return true; }
-			if (i.and2().a == i.and2().b)                { i = I(copy, i.and2().d, i.and2().a, 2); return true; }
-			break;
-		case and4:
-			if (i.and4().b.as_constant() == (s64)0)          { i = I(copy, i.and4().d, 0, 4); return true; }
-			if (i.and4().a.as_constant() == (s64)0)          { i = I(copy, i.and4().d, 0, 4); return true; }
-			if (i.and4().b.as_constant() == (s64)0xffffffff) { i = I(copy, i.and4().d, i.and4().a, 4); return true; }
-			if (i.and4().a.as_constant() == (s64)0xffffffff) { i = I(copy, i.and4().d, i.and4().b, 4); return true; }
-			if (i.and4().a == i.and4().b)                    { i = I(copy, i.and4().d, i.and4().a, 4); return true; }
-			break;
-		case and8:
-			if (i.and8().b.as_constant() == (s64)0)                  { i = I(copy, i.and8().d, 0, 8); return true; }
-			if (i.and8().a.as_constant() == (s64)0)                  { i = I(copy, i.and8().d, 0, 8); return true; }
-			if (i.and8().b.as_constant() == (s64)0xffffffffffffffff) { i = I(copy, i.and8().d, i.and8().a, 8); return true; }
-			if (i.and8().a.as_constant() == (s64)0xffffffffffffffff) { i = I(copy, i.and8().d, i.and8().b, 8); return true; }
-			if (i.and8().a == i.and8().b)                            { i = I(copy, i.and8().d, i.and8().a, 8); return true; }
-			break;
-		case or1:
-			if (i.or1().b.as_constant() == (s64)0)    { i = I(copy, i.or1().d, i.or1().a, 1); return true; }
-			if (i.or1().a.as_constant() == (s64)0)    { i = I(copy, i.or1().d, i.or1().b, 1); return true; }
-			if (i.or1().b.as_constant() == (s64)0xff) { i = I(copy, i.or1().d, 0xff, 1); return true; }
-			if (i.or1().a.as_constant() == (s64)0xff) { i = I(copy, i.or1().d, 0xff, 1); return true; }
-			if (i.or1().a == i.or1().b)               { i = I(copy, i.or1().d, i.or1().a, 1); return true; }
-			break;
-		case or2:
-			if (i.or2().b.as_constant() == (s64)0)      { i = I(copy, i.or2().d, i.or2().a, 2); return true; }
-			if (i.or2().a.as_constant() == (s64)0)      { i = I(copy, i.or2().d, i.or2().b, 2); return true; }
-			if (i.or2().b.as_constant() == (s64)0xffff) { i = I(copy, i.or2().d, 0xffff, 2); return true; }
-			if (i.or2().a.as_constant() == (s64)0xffff) { i = I(copy, i.or2().d, 0xffff, 2); return true; }
-			if (i.or2().a == i.or2().b)                 { i = I(copy, i.or2().d, i.or2().a, 2); return true; }
-			break;
-		case or4:
-			if (i.or4().b.as_constant() == (s64)0)          { i = I(copy, i.or4().d, i.or4().a, 4); return true; }
-			if (i.or4().a.as_constant() == (s64)0)          { i = I(copy, i.or4().d, i.or4().b, 4); return true; }
-			if (i.or4().b.as_constant() == (s64)0xffffffff) { i = I(copy, i.or4().d, 0xffffffff, 4); return true; }
-			if (i.or4().a.as_constant() == (s64)0xffffffff) { i = I(copy, i.or4().d, 0xffffffff, 4); return true; }
-			if (i.or4().a == i.or4().b)                     { i = I(copy, i.or4().d, i.or4().a, 4); return true; }
-			break;
-		case or8:
-			if (i.or8().b.as_constant() == (s64)0)                  { i = I(copy, i.or8().d, i.or8().a, 8); return true; }
-			if (i.or8().a.as_constant() == (s64)0)                  { i = I(copy, i.or8().d, i.or8().b, 8); return true; }
-			if (i.or8().b.as_constant() == (s64)0xffffffffffffffff) { i = I(copy, i.or8().d, (s64)0xffffffffffffffff, 8); return true; }
-			if (i.or8().a.as_constant() == (s64)0xffffffffffffffff) { i = I(copy, i.or8().d, (s64)0xffffffffffffffff, 8); return true; }
-			if (i.or8().a == i.or8().b)                             { i = I(copy, i.or8().d, i.or8().a, 8); return true; }
+		case bor:
+			if (i.bor().b.as_constant() == (s64)0)                  { i = I(copy, i.bor().d,               i.bor().a, (u64)i.bor().layout.total_size()); return true; }
+			if (i.bor().a.as_constant() == (s64)0)                  { i = I(copy, i.bor().d,               i.bor().b, (u64)i.bor().layout.total_size()); return true; }
+			if (i.bor().b.as_constant() == (s64)0xffffffffffffffff) { i = I(copy, i.bor().d, (s64)0xffffffffffffffff, (u64)i.bor().layout.total_size()); return true; }
+			if (i.bor().a.as_constant() == (s64)0xffffffffffffffff) { i = I(copy, i.bor().d, (s64)0xffffffffffffffff, (u64)i.bor().layout.total_size()); return true; }
+			if (i.bor().a == i.bor().b)                             { i = I(copy, i.bor().d,               i.bor().a, (u64)i.bor().layout.total_size()); return true; }
 			break;
 
 		case jmp: if (i.jmp().d == 1) { i = I(nop); return true; } break;

@@ -43,7 +43,7 @@ Builder::Builder() {
 
 Bytecode Builder::build(Expression *expression) {
 	output_bytecode.entry_point_instruction_index = output_bytecode.instructions.count;
-	I(sub8, Register::stack, Register::stack, 8);
+	I(sub, Register::stack, Register::stack, 8, r64);
 	tmpval(destination, get_size(expression->type));
 	output(destination, expression);
 	for (auto [index, lambda] : calls_to_patch) {
@@ -127,7 +127,7 @@ void Builder::append_lambda(Lambda *lambda) {
 	I(push, Register::base);
 	I(copy, Register::base, Register::stack, register_size);
 	auto reserver_index = output_bytecode.instructions.count;
-	I(sub8, Register::stack, Register::stack, 0);
+	I(sub, Register::stack, Register::stack, 0, r64);
 
 	u64 return_value_size = get_size(head->return_type);
 
@@ -145,9 +145,9 @@ void Builder::append_lambda(Lambda *lambda) {
 	u64 reserved_stack_size = locals_size + max_temporary_size;
 	reserved_stack_size += max_size_reserved_for_arguments;
 
-	output_bytecode.instructions[reserver_index].sub8().b = reserved_stack_size;
+	output_bytecode.instructions[reserver_index].sub().b = reserved_stack_size;
 	auto ret_destination = output_bytecode.instructions.count;
-	I(add8, Register::stack, Register::stack, (s64)reserved_stack_size);
+	I(add, Register::stack, Register::stack, (s64)reserved_stack_size, {8, 1});
 	I(pop, Register::base);
 	I(ret);
 
@@ -214,6 +214,10 @@ void Builder::append_lambda(Lambda *lambda) {
 		dbgln(get_source_location(lambda->location));
 	}
 	if (context_base->is_debugging || lambda->print_bytecode) {
+		if (lambda->definition)
+			println("---- {} ----", lambda->definition->name);
+		else
+			println("---- {} ----", get_source_location(lambda->location));
 		println("    locals_size: {}, temporary_size: {}, total_parameters_size: {}, return_value_size: {}", locals_size, max_temporary_size, head->total_parameters_size, return_value_size);
 		print_instructions(lambda_instructions);
 	}
@@ -376,41 +380,43 @@ void Builder::output_integer_conversion(Site destination, Expression *expression
 		// Sign or zero extend
 		if (source_signed) {
 			switch (target_size) {
-				case 2: 
-					I(sex21, destination, destination);
-					break;
+				case 2: I(sex2, destination, destination, {1, 1}); break;
 				case 4:
 					switch (source_size) {
-						case 1: I(sex41, destination, destination); break;
-						case 2: I(sex42, destination, destination); break;
+						case 1: I(sex4, destination, destination, {1, 1}); break;
+						case 2: I(sex4, destination, destination, {2, 1}); break;
+						default: not_implemented();
 					}
 					break;
 				case 8:
 					switch (source_size) {
-						case 1: I(sex81, destination, destination); break;
-						case 2: I(sex82, destination, destination); break;
-						case 4: I(sex84, destination, destination); break;
+						case 1: I(sex8, destination, destination, {1, 1}); break;
+						case 2: I(sex8, destination, destination, {2, 1}); break;
+						case 4: I(sex8, destination, destination, {4, 1}); break;
+						default: not_implemented();
 					}
 					break;
+				default: not_implemented();
 			}
 		} else {
 			switch (target_size) {
-				case 2: 
-					I(and2, destination, destination, 0x00ff);
-					break;
+				case 2: I(band, destination, destination, 0x00ff, r16); break;
 				case 4:
 					switch (source_size) {
-						case 1: I(and4, destination, destination, 0x000000ff); break;
-						case 2: I(and4, destination, destination, 0x0000ffff); break;
+						case 1: I(band, destination, destination, 0x000000ff, r32); break;
+						case 2: I(band, destination, destination, 0x0000ffff, r32); break;
+						default: not_implemented();
 					}
 					break;
 				case 8:
 					switch (source_size) {
-						case 1: I(and8, destination, destination, 0x00000000000000ff); break;
-						case 2: I(and8, destination, destination, 0x000000000000ffff); break;
-						case 4: I(and8, destination, destination, 0x00000000ffffffff); break;
+						case 1: I(band, destination, destination, 0x00000000000000ff, r64); break;
+						case 2: I(band, destination, destination, 0x000000000000ffff, r64); break;
+						case 4: I(band, destination, destination, 0x00000000ffffffff, r64); break;
+						default: not_implemented();
 					}
 					break;
+				default: not_implemented();
 			}
 		}
 	} else {
@@ -517,9 +523,9 @@ u64 get_mask_for_size(umm size) {
 	return ((u64)1 << (size * 8)) - 1;
 }
 void Builder::output_bounds_check(Register index_reg, umm index_size, umm count) {
-	I(and8, index_reg, index_reg, (s64)get_mask_for_size(index_size));
+	I(band, index_reg, index_reg, (s64)get_mask_for_size(index_size), r64);
 	tmpreg(check);
-	I(cmp8, check, index_reg, (s64)count, Comparison::unsigned_less);
+	I(cmp, check, index_reg, (s64)count, Comparison::unsigned_less, r64);
 
 	I(jt, check, 2);
 	I(intrinsic, Intrinsic::panic, u8"bounds check failed"s);
@@ -758,7 +764,7 @@ void Builder::output_impl(Site destination, IfExpression *If) {
 		
 		tmpreg(cond);
 		
-		I(cmp8, cond, mask, (s64)slln(1, count) - 1, Comparison::equals);
+		I(cmp, cond, mask, (s64)slln(1, count) - 1, Comparison::equals, r64);
 		auto over_all_true = output_bytecode.instructions.count;
 		I(jf, cond, 0);
 		output(destination, If->true_branch);
@@ -766,7 +772,7 @@ void Builder::output_impl(Site destination, IfExpression *If) {
 		I(jmp, 0);
 		output_bytecode.instructions[over_all_true].jf().d = output_bytecode.instructions.count - over_all_true;
 
-		I(cmp8, cond, mask, 0, Comparison::equals);
+		I(cmp, cond, mask, 0, Comparison::equals, r64);
 		auto over_all_false = output_bytecode.instructions.count;
 		I(jf, cond, 0);
 		output(destination, If->false_branch);
@@ -882,86 +888,86 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			tmpreg(right);
 			output(right, binary->right);
 			switch (binary->low_operation) {
-				case LowBinaryOperation::add8:  I(add1, destination, left, right); break;
-				case LowBinaryOperation::add16: I(add2, destination, left, right); break;
-				case LowBinaryOperation::add32: I(add4, destination, left, right); break;
-				case LowBinaryOperation::add64: I(add8, destination, left, right); break;
-				case LowBinaryOperation::sub8:  I(sub1, destination, left, right); break;
-				case LowBinaryOperation::sub16: I(sub2, destination, left, right); break;
-				case LowBinaryOperation::sub32: I(sub4, destination, left, right); break;
-				case LowBinaryOperation::sub64: I(sub8, destination, left, right); break;
-				case LowBinaryOperation::mul8:  I(mul1, destination, left, right); break;
-				case LowBinaryOperation::mul16: I(mul2, destination, left, right); break;
-				case LowBinaryOperation::mul32: I(mul4, destination, left, right); break;
-				case LowBinaryOperation::mul64: I(mul8, destination, left, right); break;
-				case LowBinaryOperation::divu8:  I(divu1, destination, left, right); break;
-				case LowBinaryOperation::divu16: I(divu2, destination, left, right); break;
-				case LowBinaryOperation::divu32: I(divu4, destination, left, right); break;
-				case LowBinaryOperation::divu64: I(divu8, destination, left, right); break;
-				case LowBinaryOperation::divs8:  I(divs1, destination, left, right); break;
-				case LowBinaryOperation::divs16: I(divs2, destination, left, right); break;
-				case LowBinaryOperation::divs32: I(divs4, destination, left, right); break;
-				case LowBinaryOperation::divs64: I(divs8, destination, left, right); break;
-				case LowBinaryOperation::modu8:  I(modu1, destination, left, right); break;
-				case LowBinaryOperation::modu16: I(modu2, destination, left, right); break;
-				case LowBinaryOperation::modu32: I(modu4, destination, left, right); break;
-				case LowBinaryOperation::modu64: I(modu8, destination, left, right); break;
-				case LowBinaryOperation::mods8:  I(mods1, destination, left, right); break;
-				case LowBinaryOperation::mods16: I(mods2, destination, left, right); break;
-				case LowBinaryOperation::mods32: I(mods4, destination, left, right); break;
-				case LowBinaryOperation::mods64: I(mods8, destination, left, right); break;
-				case LowBinaryOperation::bxor8:  I(xor1, destination, left, right); break;
-				case LowBinaryOperation::bxor16: I(xor2, destination, left, right); break;
-				case LowBinaryOperation::bxor32: I(xor4, destination, left, right); break;
-				case LowBinaryOperation::bxor64: I(xor8, destination, left, right); break;
-				case LowBinaryOperation::band8:  I(and1, destination, left, right); break;
-				case LowBinaryOperation::band16: I(and2, destination, left, right); break;
-				case LowBinaryOperation::band32: I(and4, destination, left, right); break;
-				case LowBinaryOperation::band64: I(and8, destination, left, right); break;
-				case LowBinaryOperation::bor8:  I(or1, destination, left, right); break;
-				case LowBinaryOperation::bor16: I(or2, destination, left, right); break;
-				case LowBinaryOperation::bor32: I(or4, destination, left, right); break;
-				case LowBinaryOperation::bor64: I(or8, destination, left, right); break;
-				case LowBinaryOperation::equ8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
-				case LowBinaryOperation::equ16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
-				case LowBinaryOperation::equ32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
-				case LowBinaryOperation::equ64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::equals); break;
-				case LowBinaryOperation::neq8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
-				case LowBinaryOperation::neq16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
-				case LowBinaryOperation::neq32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
-				case LowBinaryOperation::neq64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::not_equals); break;
-				case LowBinaryOperation::lts8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less); break;
-				case LowBinaryOperation::lts16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less); break;
-				case LowBinaryOperation::lts32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less); break;
-				case LowBinaryOperation::lts64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less); break;
-				case LowBinaryOperation::les8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less_equals); break;
-				case LowBinaryOperation::les16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less_equals); break;
-				case LowBinaryOperation::les32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less_equals); break;
-				case LowBinaryOperation::les64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_less_equals); break;
-				case LowBinaryOperation::gts8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater); break;
-				case LowBinaryOperation::gts16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater); break;
-				case LowBinaryOperation::gts32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater); break;
-				case LowBinaryOperation::gts64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater); break;
-				case LowBinaryOperation::ges8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater_equals); break;
-				case LowBinaryOperation::ges16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater_equals); break;
-				case LowBinaryOperation::ges32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater_equals); break;
-				case LowBinaryOperation::ges64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::signed_greater_equals); break;
-				case LowBinaryOperation::ltu8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less); break;
-				case LowBinaryOperation::ltu16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less); break;
-				case LowBinaryOperation::ltu32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less); break;
-				case LowBinaryOperation::ltu64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less); break;
-				case LowBinaryOperation::leu8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less_equals); break;
-				case LowBinaryOperation::leu16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less_equals); break;
-				case LowBinaryOperation::leu32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less_equals); break;
-				case LowBinaryOperation::leu64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_less_equals); break;
-				case LowBinaryOperation::gtu8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater); break;
-				case LowBinaryOperation::gtu16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater); break;
-				case LowBinaryOperation::gtu32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater); break;
-				case LowBinaryOperation::gtu64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater); break;
-				case LowBinaryOperation::geu8:  I(cmp1, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater_equals); break;
-				case LowBinaryOperation::geu16: I(cmp2, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater_equals); break;
-				case LowBinaryOperation::geu32: I(cmp4, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater_equals); break;
-				case LowBinaryOperation::geu64: I(cmp8, .d = destination, .a = left, .b = right, .cmp = Comparison::unsigned_greater_equals); break;
+				case LowBinaryOperation::add8:  I(add, destination, left, right, r8 ); break;
+				case LowBinaryOperation::add16: I(add, destination, left, right, r16); break;
+				case LowBinaryOperation::add32: I(add, destination, left, right, r32); break;
+				case LowBinaryOperation::add64: I(add, destination, left, right, r64); break;
+				case LowBinaryOperation::sub8:  I(sub, destination, left, right, r8 ); break;
+				case LowBinaryOperation::sub16: I(sub, destination, left, right, r16); break;
+				case LowBinaryOperation::sub32: I(sub, destination, left, right, r32); break;
+				case LowBinaryOperation::sub64: I(sub, destination, left, right, r64); break;
+				case LowBinaryOperation::mul8:  I(mul, destination, left, right, r8 ); break;
+				case LowBinaryOperation::mul16: I(mul, destination, left, right, r16); break;
+				case LowBinaryOperation::mul32: I(mul, destination, left, right, r32); break;
+				case LowBinaryOperation::mul64: I(mul, destination, left, right, r64); break;
+				case LowBinaryOperation::divu8:  I(divu, destination, left, right, r8 ); break;
+				case LowBinaryOperation::divu16: I(divu, destination, left, right, r16); break;
+				case LowBinaryOperation::divu32: I(divu, destination, left, right, r32); break;
+				case LowBinaryOperation::divu64: I(divu, destination, left, right, r64); break;
+				case LowBinaryOperation::divs8:  I(divs, destination, left, right, r8 ); break;
+				case LowBinaryOperation::divs16: I(divs, destination, left, right, r16); break;
+				case LowBinaryOperation::divs32: I(divs, destination, left, right, r32); break;
+				case LowBinaryOperation::divs64: I(divs, destination, left, right, r64); break;
+				case LowBinaryOperation::modu8:  I(modu, destination, left, right, r8 ); break;
+				case LowBinaryOperation::modu16: I(modu, destination, left, right, r16); break;
+				case LowBinaryOperation::modu32: I(modu, destination, left, right, r32); break;
+				case LowBinaryOperation::modu64: I(modu, destination, left, right, r64); break;
+				case LowBinaryOperation::mods8:  I(mods, destination, left, right, r8 ); break;
+				case LowBinaryOperation::mods16: I(mods, destination, left, right, r16); break;
+				case LowBinaryOperation::mods32: I(mods, destination, left, right, r32); break;
+				case LowBinaryOperation::mods64: I(mods, destination, left, right, r64); break;
+				case LowBinaryOperation::bxor8:  I(bxor, destination, left, right, r8 ); break;
+				case LowBinaryOperation::bxor16: I(bxor, destination, left, right, r16); break;
+				case LowBinaryOperation::bxor32: I(bxor, destination, left, right, r32); break;
+				case LowBinaryOperation::bxor64: I(bxor, destination, left, right, r64); break;
+				case LowBinaryOperation::band8:  I(band, destination, left, right, r8 ); break;
+				case LowBinaryOperation::band16: I(band, destination, left, right, r16); break;
+				case LowBinaryOperation::band32: I(band, destination, left, right, r32); break;
+				case LowBinaryOperation::band64: I(band, destination, left, right, r64); break;
+				case LowBinaryOperation::bor8:  I(bor, destination, left, right, r8 ); break;
+				case LowBinaryOperation::bor16: I(bor, destination, left, right, r16); break;
+				case LowBinaryOperation::bor32: I(bor, destination, left, right, r32); break;
+				case LowBinaryOperation::bor64: I(bor, destination, left, right, r64); break;
+				case LowBinaryOperation::equ8:  I(cmp, destination, left, right, Comparison::equals, r8 ); break;
+				case LowBinaryOperation::equ16: I(cmp, destination, left, right, Comparison::equals, r16); break;
+				case LowBinaryOperation::equ32: I(cmp, destination, left, right, Comparison::equals, r32); break;
+				case LowBinaryOperation::equ64: I(cmp, destination, left, right, Comparison::equals, r64); break;
+				case LowBinaryOperation::neq8:  I(cmp, destination, left, right, Comparison::not_equals, r8 ); break;
+				case LowBinaryOperation::neq16: I(cmp, destination, left, right, Comparison::not_equals, r16); break;
+				case LowBinaryOperation::neq32: I(cmp, destination, left, right, Comparison::not_equals, r32); break;
+				case LowBinaryOperation::neq64: I(cmp, destination, left, right, Comparison::not_equals, r64); break;
+				case LowBinaryOperation::lts8:  I(cmp, destination, left, right, Comparison::signed_less, r8 ); break;
+				case LowBinaryOperation::lts16: I(cmp, destination, left, right, Comparison::signed_less, r16); break;
+				case LowBinaryOperation::lts32: I(cmp, destination, left, right, Comparison::signed_less, r32); break;
+				case LowBinaryOperation::lts64: I(cmp, destination, left, right, Comparison::signed_less, r64); break;
+				case LowBinaryOperation::les8:  I(cmp, destination, left, right, Comparison::signed_less_equals, r8 ); break;
+				case LowBinaryOperation::les16: I(cmp, destination, left, right, Comparison::signed_less_equals, r16); break;
+				case LowBinaryOperation::les32: I(cmp, destination, left, right, Comparison::signed_less_equals, r32); break;
+				case LowBinaryOperation::les64: I(cmp, destination, left, right, Comparison::signed_less_equals, r64); break;
+				case LowBinaryOperation::gts8:  I(cmp, destination, left, right, Comparison::signed_greater, r8 ); break;
+				case LowBinaryOperation::gts16: I(cmp, destination, left, right, Comparison::signed_greater, r16); break;
+				case LowBinaryOperation::gts32: I(cmp, destination, left, right, Comparison::signed_greater, r32); break;
+				case LowBinaryOperation::gts64: I(cmp, destination, left, right, Comparison::signed_greater, r64); break;
+				case LowBinaryOperation::ges8:  I(cmp, destination, left, right, Comparison::signed_greater_equals, r8 ); break;
+				case LowBinaryOperation::ges16: I(cmp, destination, left, right, Comparison::signed_greater_equals, r16); break;
+				case LowBinaryOperation::ges32: I(cmp, destination, left, right, Comparison::signed_greater_equals, r32); break;
+				case LowBinaryOperation::ges64: I(cmp, destination, left, right, Comparison::signed_greater_equals, r64); break;
+				case LowBinaryOperation::ltu8:  I(cmp, destination, left, right, Comparison::unsigned_less, r8 ); break;
+				case LowBinaryOperation::ltu16: I(cmp, destination, left, right, Comparison::unsigned_less, r16); break;
+				case LowBinaryOperation::ltu32: I(cmp, destination, left, right, Comparison::unsigned_less, r32); break;
+				case LowBinaryOperation::ltu64: I(cmp, destination, left, right, Comparison::unsigned_less, r64); break;
+				case LowBinaryOperation::leu8:  I(cmp, destination, left, right, Comparison::unsigned_less_equals, r8 ); break;
+				case LowBinaryOperation::leu16: I(cmp, destination, left, right, Comparison::unsigned_less_equals, r16); break;
+				case LowBinaryOperation::leu32: I(cmp, destination, left, right, Comparison::unsigned_less_equals, r32); break;
+				case LowBinaryOperation::leu64: I(cmp, destination, left, right, Comparison::unsigned_less_equals, r64); break;
+				case LowBinaryOperation::gtu8:  I(cmp, destination, left, right, Comparison::unsigned_greater, r8 ); break;
+				case LowBinaryOperation::gtu16: I(cmp, destination, left, right, Comparison::unsigned_greater, r16); break;
+				case LowBinaryOperation::gtu32: I(cmp, destination, left, right, Comparison::unsigned_greater, r32); break;
+				case LowBinaryOperation::gtu64: I(cmp, destination, left, right, Comparison::unsigned_greater, r64); break;
+				case LowBinaryOperation::geu8:  I(cmp, destination, left, right, Comparison::unsigned_greater_equals, r8 ); break;
+				case LowBinaryOperation::geu16: I(cmp, destination, left, right, Comparison::unsigned_greater_equals, r16); break;
+				case LowBinaryOperation::geu32: I(cmp, destination, left, right, Comparison::unsigned_greater_equals, r32); break;
+				case LowBinaryOperation::geu64: I(cmp, destination, left, right, Comparison::unsigned_greater_equals, r64); break;
 			}
 			return;
 		}
@@ -985,14 +991,11 @@ void Builder::output_impl(Site destination, Binary *binary) {
 						invalid_code_path();
 					}();
 
-					switch (size) {
-						case 1: I(cmp1, .d = destination, .a = left, .b = right, .cmp = cmp); break;
-						case 2: I(cmp2, .d = destination, .a = left, .b = right, .cmp = cmp); break;
-						case 4: I(cmp4, .d = destination, .a = left, .b = right, .cmp = cmp); break;
-						case 8: I(cmp8, .d = destination, .a = left, .b = right, .cmp = cmp); break;
-					}
+					I(cmp, .d = destination, .a = left, .b = right, .cmp = cmp, .layout = {(u8)size, 1});
 					return;
 				}
+				default:
+					not_implemented();
 			}
 		}
 		case LowBinaryOperation::zeroinit: {
@@ -1013,26 +1016,21 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			tmpreg(value);
 			output(value, selected);
 			auto size = get_size(selected->type);
-			switch (size) {
-				case 1: I(cmp1, .d = destination, .a = value, .b = 0, .cmp = is_not ? Comparison::equals : Comparison::not_equals); break;
-				case 2: I(cmp2, .d = destination, .a = value, .b = 0, .cmp = is_not ? Comparison::equals : Comparison::not_equals); break;
-				case 4: I(cmp4, .d = destination, .a = value, .b = 0, .cmp = is_not ? Comparison::equals : Comparison::not_equals); break;
-				case 8: I(cmp8, .d = destination, .a = value, .b = 0, .cmp = is_not ? Comparison::equals : Comparison::not_equals); break;
-			}
+			I(cmp, destination, value, 0, is_not ? Comparison::equals : Comparison::not_equals, {(u8)size, 1});
 			return;
 		}
-		case LowBinaryOperation::zex8to16:  { output(destination, binary->left); I(and2, destination, destination, 0xff      ); return; }
-		case LowBinaryOperation::zex8to32:  { output(destination, binary->left); I(and4, destination, destination, 0xff      ); return; }
-		case LowBinaryOperation::zex16to32: { output(destination, binary->left); I(and4, destination, destination, 0xffff    ); return; }
-		case LowBinaryOperation::zex8to64:  { output(destination, binary->left); I(and8, destination, destination, 0xff      ); return; }
-		case LowBinaryOperation::zex16to64: { output(destination, binary->left); I(and8, destination, destination, 0xffff    ); return; }
-		case LowBinaryOperation::zex32to64: { output(destination, binary->left); I(and8, destination, destination, 0xffffffff); return; }
-		case LowBinaryOperation::sex8to16:  { output(destination, binary->left); I(sex21, destination, destination); return; }
-		case LowBinaryOperation::sex8to32:  { output(destination, binary->left); I(sex41, destination, destination); return; }
-		case LowBinaryOperation::sex16to32: { output(destination, binary->left); I(sex42, destination, destination); return; }
-		case LowBinaryOperation::sex8to64:  { output(destination, binary->left); I(sex81, destination, destination); return; }
-		case LowBinaryOperation::sex16to64: { output(destination, binary->left); I(sex82, destination, destination); return; }
-		case LowBinaryOperation::sex32to64: { output(destination, binary->left); I(sex84, destination, destination); return; }
+		case LowBinaryOperation::zex8to16:  { output(destination, binary->left); I(band, destination, destination, 0xff      , {2, 1}); return; }
+		case LowBinaryOperation::zex8to32:  { output(destination, binary->left); I(band, destination, destination, 0xff      , {4, 1}); return; }
+		case LowBinaryOperation::zex16to32: { output(destination, binary->left); I(band, destination, destination, 0xffff    , {4, 1}); return; }
+		case LowBinaryOperation::zex8to64:  { output(destination, binary->left); I(band, destination, destination, 0xff      , {8, 1}); return; }
+		case LowBinaryOperation::zex16to64: { output(destination, binary->left); I(band, destination, destination, 0xffff    , {8, 1}); return; }
+		case LowBinaryOperation::zex32to64: { output(destination, binary->left); I(band, destination, destination, 0xffffffff, {8, 1}); return; }
+		case LowBinaryOperation::sex8to16:  { output(destination, binary->left); I(sex2, destination, destination, {1, 1}); return; }
+		case LowBinaryOperation::sex8to32:  { output(destination, binary->left); I(sex4, destination, destination, {1, 1}); return; }
+		case LowBinaryOperation::sex16to32: { output(destination, binary->left); I(sex4, destination, destination, {2, 1}); return; }
+		case LowBinaryOperation::sex8to64:  { output(destination, binary->left); I(sex8, destination, destination, {1, 1}); return; }
+		case LowBinaryOperation::sex16to64: { output(destination, binary->left); I(sex8, destination, destination, {2, 1}); return; }
+		case LowBinaryOperation::sex32to64: { output(destination, binary->left); I(sex8, destination, destination, {4, 1}); return; }
 		case LowBinaryOperation::left: {
 			output(destination, binary->left);
 			return;
@@ -1045,20 +1043,20 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			tmpreg(tmp);
 
 			output(tmp, binary->left);
-			I(f32_to_s32, tmp, tmp);
+			I(f32_to_s32, tmp, tmp, 1);
 			I(copy, destination, tmp, get_size(binary->right));
 			return;
 		}
 		case LowBinaryOperation::f32_to_u32: 
 		case LowBinaryOperation::f32_to_s32: 
 			output(destination, binary->left);
-			I(f32_to_s32, destination, destination);
+			I(f32_to_s32, destination, destination, 1);
 			return;
 		case LowBinaryOperation::f32_to_u64: 
 		case LowBinaryOperation::f32_to_s64: 
 			output(destination, binary->left);
-			I(f32_to_s32, destination, destination);
-			I(and8, destination, destination, 0xffff'ffff);
+			I(f32_to_s32, destination, destination, 1);
+			I(band, destination, destination, 0xffff'ffff, {8,1});
 			return;
 			
 		case LowBinaryOperation::f64_to_u8:
@@ -1071,14 +1069,14 @@ void Builder::output_impl(Site destination, Binary *binary) {
 			tmpreg(tmp);
 
 			output(tmp, binary->left);
-			I(f64_to_s64, tmp, tmp);
+			I(f64_to_s64, tmp, tmp, 1);
 			I(copy, destination, tmp, get_size(binary->right));
 			return;
 		}
 		case LowBinaryOperation::f64_to_u64:
 		case LowBinaryOperation::f64_to_s64:
 			output(destination, binary->left);
-			I(f64_to_s64, destination, destination);
+			I(f64_to_s64, destination, destination, 1);
 			return;
 	}
 		
@@ -1149,45 +1147,37 @@ void Builder::output_impl(Site destination, Binary *binary) {
 				tmpreg(right);
 				output(right, binary->right);
 
-
-				switch (result_size) {
-					#define x(n)                                                                                       \
-						case n: {                                                                                      \
-							switch (binary->operation) {                                                               \
-								case BinaryOperation::add: I(add##n, .d = destination, .a = left, .b = right);  break; \
-								case BinaryOperation::sub: I(sub##n, .d = destination, .a = left, .b = right);  break; \
-								case BinaryOperation::mul: I(mul##n, .d = destination, .a = left, .b = right);  break; \
-								case BinaryOperation::div:                                                             \
-									if (is_signed_integer(dleft)) {                                                    \
-										I(divs##n, .d = destination, .a = left, .b = right);                           \
-									} else {                                                                           \
-										I(divu##n, .d = destination, .a = left, .b = right);                           \
-									}                                                                                  \
-									break;                                                                             \
-								case BinaryOperation::mod:                                                             \
-									if (is_signed_integer(dleft)) {                                                    \
-										I(mods##n, .d = destination, .a = left, .b = right);                           \
-									} else {                                                                           \
-										I(modu##n, .d = destination, .a = left, .b = right);                           \
-									}                                                                                  \
-									break;                                                                             \
-								case BinaryOperation::bxo: I(xor##n, .d = destination, .a = left, .b = right);  break; \
-								case BinaryOperation::ban: I(and##n, .d = destination, .a = left, .b = right);  break; \
-								case BinaryOperation::bor: I(or##n,  .d = destination, .a = left, .b = right);  break; \
-								case BinaryOperation::bsl: I(sll##n, .d = destination, .a = left, .b = right);  break; \
-								case BinaryOperation::bsr: {                                                           \
-									if (is_signed_integer(dleft))                                                      \
-										I(sra##n, .d = destination, .a = left, .b = right);                            \
-									else                                                                               \
-										I(srl##n, .d = destination, .a = left, .b = right);                            \
-									break;                                                                             \
-								}                                                                                      \
-								default: not_implemented();                                                            \
-							}                                                                                          \
-							break;                                                                                     \
+				u8 n = result_size;
+				switch (binary->operation) {
+					case BinaryOperation::add: I(add, destination, left, right, {n,1});  break;
+					case BinaryOperation::sub: I(sub, destination, left, right, {n,1});  break;
+					case BinaryOperation::mul: I(mul, destination, left, right, {n,1});  break;
+					case BinaryOperation::div:
+						if (is_signed_integer(dleft)) {
+							I(divs, destination, left, right, {n,1});
+						} else {
+							I(divu, destination, left, right, {n,1});
 						}
-					ENUMERATE_1248
-					#undef x
+						break;
+					case BinaryOperation::mod:
+						if (is_signed_integer(dleft)) {
+							I(mods, destination, left, right, {n,1});
+						} else {
+							I(modu, destination, left, right, {n,1});
+						}
+						break;
+					case BinaryOperation::bxo: I(bxor, destination, left, right, {n,1});  break;
+					case BinaryOperation::ban: I(band, destination, left, right, {n,1});  break;
+					case BinaryOperation::bor: I(bor , destination, left, right, {n,1});  break;
+					case BinaryOperation::bsl: I(sll, destination, left, right, {n,1});  break;
+					case BinaryOperation::bsr: {
+						if (is_signed_integer(dleft))
+							I(sra, destination, left, right, {n,1});
+						else
+							I(srl, destination, left, right, {n,1});
+						break;
+					}
+					default: not_implemented();
 				}
 
 				return;
@@ -1204,21 +1194,14 @@ void Builder::output_impl(Site destination, Binary *binary) {
 				tmpreg(right);
 				output(right, binary->right);
 
-				switch (result_size) {
-					#define x(n)                                                                                       \
-						case n: {                                                                                      \
-							switch (binary->operation) {                                                               \
-								case BinaryOperation::add: I(fadd##n, .d = destination, .a = left, .b = right); break; \
-								case BinaryOperation::sub: I(fsub##n, .d = destination, .a = left, .b = right); break; \
-								case BinaryOperation::mul: I(fmul##n, .d = destination, .a = left, .b = right); break; \
-								case BinaryOperation::div: I(fdiv##n, .d = destination, .a = left, .b = right); break; \
-								case BinaryOperation::mod: I(fmod##n, .d = destination, .a = left, .b = right); break; \
-								default: not_implemented();                                                            \
-							}                                                                                          \
-							break;                                                                                     \
-						}
-					ENUMERATE_48
-					#undef x
+				u8 n = result_size;
+				switch (binary->operation) {
+					case BinaryOperation::add: I(fadd, destination, left, right, {n,1}); break;
+					case BinaryOperation::sub: I(fsub, destination, left, right, {n,1}); break;
+					case BinaryOperation::mul: I(fmul, destination, left, right, {n,1}); break;
+					case BinaryOperation::div: I(fdiv, destination, left, right, {n,1}); break;
+					case BinaryOperation::mod: I(fmod, destination, left, right, {n,1}); break;
+					default: not_implemented();
 				}
 				return;
 			}
@@ -1252,13 +1235,7 @@ void Builder::output_impl(Site destination, Binary *binary) {
 					default: not_implemented();
 				}
 
-				switch (left_size) {
-					case 1: I(cmp1, .d = destination, .a = left, .b = right, .cmp = c); break;
-					case 2: I(cmp2, .d = destination, .a = left, .b = right, .cmp = c); break;
-					case 4: I(cmp4, .d = destination, .a = left, .b = right, .cmp = c); break;
-					case 8: I(cmp8, .d = destination, .a = left, .b = right, .cmp = c); break;
-					default: not_implemented();
-				}
+				I(cmp, destination, left, right, c, {(u8)left_size,1});
 				return;
 			}
 			switch (binary->operation) {
@@ -1267,7 +1244,7 @@ void Builder::output_impl(Site destination, Binary *binary) {
 					if (auto pointer_expr = is_pointer_to_none_comparison(binary->left, binary->right)) {
 						tmpreg(ptr);
 						output(ptr, pointer_expr);
-						I(cmp8, .d = destination, .a = ptr, .b = 0, .cmp = binary->operation == BinaryOperation::equ ? Comparison::equals : Comparison::not_equals);
+						I(cmp, destination, ptr, 0, binary->operation == BinaryOperation::equ ? Comparison::equals : Comparison::not_equals, {8,1});
 					}
 					break;
 				}
@@ -1398,13 +1375,7 @@ void Builder::output_impl(Site destination, Match *match) {
 			output(f, from);
 			scoped_replace(current_location, from->location);
 			auto size = get_size(match->expression->type);
-			switch (size) {
-				case 1: I(cmp1, f, matchee, f, Comparison::equals); break;
-				case 2: I(cmp2, f, matchee, f, Comparison::equals); break;
-				case 4: I(cmp4, f, matchee, f, Comparison::equals); break;
-				case 8: I(cmp8, f, matchee, f, Comparison::equals); break;
-				default: invalid_code_path("`match` only works on sizes 1, 2, 4 or 8, but not {}", size);
-			}
+			I(cmp, f, matchee, f, Comparison::equals, {(u8)size,1});
 			jumps_to_case.add(output_bytecode.instructions.count);
 			I(jt, f, 0);
 		}
@@ -1435,7 +1406,7 @@ void Builder::output_impl(Site destination, Match *match) {
 			message.type = make_name(context->builtin_structs.String->definition);
 			output(Address{.base = Register::stack}, &message);
 			I(intrinsic, Intrinsic::print_String, {});
-			I(add8, Register::stack, Register::stack, 16);
+			I(add, Register::stack, Register::stack, 16, r64);
 			I(intrinsic, Intrinsic::panic, {});
 		}
 	}
@@ -1458,28 +1429,19 @@ void Builder::output_impl(Site destination, Unary *unary) {
 		}
 		case UnaryOperation::lnot: {
 			output(destination, unary->expression);
-			I(cmp1, destination, 1, destination, Comparison::not_equals);
+			I(cmp, destination, 1, destination, Comparison::not_equals, {1,1});
 			return;
 		}
 		case UnaryOperation::minus: {
 			if (is_concrete_integer(unary->type)) {
 				output(destination, unary->expression);
-				switch (get_size(unary->type)) {
-					case 1: I(neg1, destination, destination); break;
-					case 2: I(neg2, destination, destination); break;
-					case 4: I(neg4, destination, destination); break;
-					case 8: I(neg8, destination, destination); break;
-					default: invalid_code_path();
-				}
+				I(neg, destination, destination, {(u8)get_size(unary->type),1});
 				return;
 			}
 			if (is_concrete_float(unary->type)) {
 				output(destination, unary->expression);
-				switch (get_size(unary->type)) {
-					case 4: I(xor4, destination, destination, (s64)0x8000'0000); break;
-					case 8: I(xor8, destination, destination, (s64)0x8000'0000'0000'0000); break;
-					default: invalid_code_path();
-				}
+				u8 size = get_size(unary->type);
+				I(bxor, destination, destination, (s64)1 << (size*8 - 1), {size,1});
 				return;
 			}
 			break;
@@ -1487,13 +1449,7 @@ void Builder::output_impl(Site destination, Unary *unary) {
 		case UnaryOperation::bnot: {
 			assert(is_concrete_integer(unary->type));
 			output(destination, unary->expression);
-			switch (get_size(unary->type)) {
-				case 1: I(xor1, destination, destination, ~0); break;
-				case 2: I(xor2, destination, destination, ~0); break;
-				case 4: I(xor4, destination, destination, ~0); break;
-				case 8: I(xor8, destination, destination, ~0); break;
-				default: invalid_code_path();
-			}
+			I(bxor, destination, destination, ~0, {(u8)get_size(unary->type), 1});
 			return;
 		}
 	}
@@ -1708,7 +1664,7 @@ void Builder::load_address_impl(Site destination, Binary *binary) {
 		assert(as_pointer(binary->left->type));
 		output(destination, binary->left);
 	}
-	I(add8, destination, destination, (s64)member->offset);
+	I(add, destination, destination, (s64)member->offset, r64);
 }
 void Builder::load_address_impl(Site destination, Match *node) { not_implemented(); }
 void Builder::load_address_impl(Site destination, Unary *unary) {
@@ -1737,8 +1693,8 @@ void Builder::load_address_impl(Site destination, Subscript *node) {
 			assert(element_size <= Address::max_element_size);
 			I(lea, destination, Address{.base = destination.get_register(), .element_index = index, .element_size = (u8)element_size});
 		} else {
-			I(mul8, index, index, element_size);
-			I(add8, destination, destination, index);
+			I(mul, index, index, element_size, r64);
+			I(add, destination, destination, index, r64);
 		}
 	} else if (auto pointer = as_pointer(direct(node->subscriptable->type))) {
 		output(destination, node->subscriptable);
@@ -1749,8 +1705,8 @@ void Builder::load_address_impl(Site destination, Subscript *node) {
 			assert(element_size <= Address::max_element_size);
 			I(lea, destination, Address{.base = destination.get_register(), .element_index = index, .element_size = (u8)element_size});
 		} else {
-			I(mul8, index, index, element_size);
-			I(add8, destination, destination, index);
+			I(mul, index, index, element_size, r64);
+			I(add, destination, destination, index, r64);
 		}
 	} else {
 		invalid_code_path();

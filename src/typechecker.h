@@ -312,6 +312,7 @@ private:
 		Definition *instantiated_definition;
 		u64 vector_size;
 		String instantiation_location;
+		GHashMap<Definition *, Definition *> original_to_copy_definitions;
 	};
 
 	VectorizeContext vc;

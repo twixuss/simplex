@@ -126,8 +126,16 @@ struct Interpreter {
 	int print_value(Address address, Type type, PrintValueOptions options = current_print_options);
 
 	umm current_instruction_index = (umm)-1;
-	Array<s64, 256> registers = {};
-	Array<s64, 256> previous_registers = {};
+
+	union RegisterValue {
+		s8  v1[64];
+		s16 v2[32];
+		s32 v4[16];
+		s64 v8[ 8];
+	};
+
+	Array<RegisterValue, 256> registers = {};
+	Array<RegisterValue, 256> previous_registers = {};
 	u8 *stack = 0;
 	List<u64> debug_stack;
 	List<s64> debug_call_stack;
@@ -140,23 +148,29 @@ struct Interpreter {
 	};
 	HashMap<String, Library> libraries;
 
-	s64 &reg(Register r);
-	s64 &val8(Register r);
-	s64 &val8(Address a);
-	s64 &val8(Site s);
-	s64  val8(InputValue v);
-	s32 &val4(Register   x);
-	s32 &val4(Address    x);
-	s32 &val4(Site       x);
-	s32  val4(InputValue x);
-	s16 &val2(Register   x);
-	s16 &val2(Address    x);
-	s16 &val2(Site       x);
-	s16  val2(InputValue x);
-	s8  &val1(Register   x);
-	s8  &val1(Address    x);
-	s8  &val1(Site       x);
-	s8   val1(InputValue x);
+	RegisterValue &reg(Register r);
+	u8 *addr(Address a);
+	u8 *addr(Site s);
+	
+	s64 &val8(Register r, u8 index = 0);
+	s32 &val4(Register r, u8 index = 0);
+	s16 &val2(Register r, u8 index = 0);
+	s8  &val1(Register r, u8 index = 0);
+
+	s64 &val8(Address a, u8 index = 0);
+	s32 &val4(Address a, u8 index = 0);
+	s16 &val2(Address a, u8 index = 0);
+	s8  &val1(Address a, u8 index = 0);
+
+	s64 &val8(Site s, u8 index = 0);
+	s32 &val4(Site s, u8 index = 0);
+	s16 &val2(Site s, u8 index = 0);
+	s8  &val1(Site s, u8 index = 0);
+
+	s64  val8(InputValue v, u8 index = 0);
+	s32  val4(InputValue v, u8 index = 0);
+	s16  val2(InputValue v, u8 index = 0);
+	s8   val1(InputValue v, u8 index = 0);
 
 	void *load_extern_function(String libname, String name);
 	

@@ -171,10 +171,19 @@ inline void append(StringBuilder &builder, InputValue v) {
 // TODO: encode as exponents of two for compression?
 struct ArrayLayout {
 	u8 size  = 0; // size of one element
-	u8 count = 0; // count of elements
+	u8 count = 1; // count of elements
 
 	[[nodiscard]] inline constexpr auto operator<=>(ArrayLayout const &) const noexcept = default;
+
+	inline constexpr u16 total_size() {
+		return size * count;
+	}
 };
+
+inline constexpr ArrayLayout r8  = {1, 1};
+inline constexpr ArrayLayout r16 = {2, 1};
+inline constexpr ArrayLayout r32 = {4, 1};
+inline constexpr ArrayLayout r64 = {8, 1};
 
 inline void append(StringBuilder &builder, ArrayLayout p) {
 	append_format(builder, "{}x{}", p.size, p.count);
@@ -226,88 +235,35 @@ ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	x(copy, (y(Site, d) y(InputValue, s) y(u64, size))) \
 	x(set,  (y(Address, d) y(s64, value) y(u64, size) y(u64, count))) \
 	x(lea,  (y(Site, d) y(Address, s))) \
-	x(add1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(add2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(add4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(add8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sub1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sub2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sub4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sub8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mul1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mul2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mul4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mul8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divu1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divu2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divu4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divu8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divs1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divs2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divs4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(divs8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(modu1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(modu2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(modu4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(modu8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mods1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mods2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mods4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(mods8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(xor1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(xor2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(xor4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(xor8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(and1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(and2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(and4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(and8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(or1,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(or2,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(or4,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(or8,  (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sll1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sll2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sll4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sll8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(srl1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(srl2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(srl4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(srl8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sra1, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sra2, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sra4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(sra8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(cmp1, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
-	x(cmp2, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
-	x(cmp4, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
-	x(cmp8, (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp))) \
-	x(sex21,  (y(Site, d) y(InputValue, a))) \
-	x(sex41,  (y(Site, d) y(InputValue, a))) \
-	x(sex42,  (y(Site, d) y(InputValue, a))) \
-	x(sex81,  (y(Site, d) y(InputValue, a))) \
-	x(sex82,  (y(Site, d) y(InputValue, a))) \
-	x(sex84,  (y(Site, d) y(InputValue, a))) \
-	x(neg1, (y(Site, d) y(InputValue, a))) \
-	x(neg2, (y(Site, d) y(InputValue, a))) \
-	x(neg4, (y(Site, d) y(InputValue, a))) \
-	x(neg8, (y(Site, d) y(InputValue, a))) \
+	x(add,  (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(sub,  (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(mul,  (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(divu, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(divs, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(modu, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(mods, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(bxor, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(band, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(bor,  (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(sll,  (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(srl,  (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(sra,  (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(cmp,  (y(Site, d) y(InputValue, a) y(InputValue, b) y(Comparison, cmp) y(ArrayLayout, layout))) \
+	x(sex2, (y(Site, d) y(InputValue, a) y(ArrayLayout, layout))) \
+	x(sex4, (y(Site, d) y(InputValue, a) y(ArrayLayout, layout))) \
+	x(sex8, (y(Site, d) y(InputValue, a) y(ArrayLayout, layout))) \
+	x(neg,  (y(Site, d) y(InputValue, a) y(ArrayLayout, layout))) \
 	x(movmsk, (y(Site, d) y(Address, s) y(ArrayLayout, layout))) \
 	x(blend, (y(Address, d) y(Register, m) y(Address, a) y(Address, b) y(ArrayLayout, layout))) \
-	x(fadd4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(fadd8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(fsub4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(fsub8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(fmul4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(fmul8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(fdiv4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(fdiv8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(fmod4, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(fmod8, (y(Site, d) y(InputValue, a) y(InputValue, b))) \
-	x(f32_to_s32, (y(Site, d) y(InputValue, a))) \
-	x(f32_to_f64, (y(Site, d) y(InputValue, a))) \
-	x(f64_to_s64, (y(Site, d) y(InputValue, a))) \
-	x(f64_to_f32, (y(Site, d) y(InputValue, a))) \
+	x(fadd, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(fsub, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(fmul, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(fdiv, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(fmod, (y(Site, d) y(InputValue, a) y(InputValue, b) y(ArrayLayout, layout))) \
+	x(f32_to_s32, (y(Site, d) y(InputValue, a) y(u64, count))) \
+	x(f32_to_f64, (y(Site, d) y(InputValue, a) y(u64, count))) \
+	x(f64_to_s64, (y(Site, d) y(InputValue, a) y(u64, count))) \
+	x(f64_to_f32, (y(Site, d) y(InputValue, a) y(u64, count))) \
 	x(call, (y(InputValue, d))) \
 	x(callext, (y(Lambda *, lambda) y(String, lib) y(String, name))) \
 	x(copyext, (y(Site, d) y(String, lib) y(String, name))) \

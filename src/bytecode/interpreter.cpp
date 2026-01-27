@@ -121,9 +121,9 @@ Optional<u64> Interpreter::run(Bytecode *bytecode, umm entry_index, bool interac
 	stack[0] = 0;
 	stack[stack_size-1] = 0;
 
-	reg(Register::stack) = (s64)(stack + stack_size);
-	reg(Register::global_mutable) = (s64)bytecode->global_mutable_data.data;
-	reg(Register::global_readonly) = (s64)bytecode->global_readonly_data.data;
+	val8(Register::stack) = (s64)(stack + stack_size);
+	val8(Register::global_mutable) = (s64)bytecode->global_mutable_data.data;
+	val8(Register::global_readonly) = (s64)bytecode->global_readonly_data.data;
 
 	//
 	// Preload all extern references
@@ -343,8 +343,8 @@ void Interpreter::run_one_instruction() {
 				else if (debug_window_index == (int)DebugWindowKind::registers && header("Registers"s, DebugWindowFlag::registers)) {
 					auto print_register = [&] (String name, Register r) {
 						print("{}: ", name);
-						u64 current = registers[(int)r];
-						u64 previous = previous_registers[(int)r];
+						u64 current = registers[(int)r].v8[0];
+						u64 previous = previous_registers[(int)r].v8[0];
 						if (current == previous) {
 							print("0x{}", format_hex(current));
 						} else {
@@ -379,7 +379,7 @@ void Interpreter::run_one_instruction() {
 				else if (debug_window_index == (int)DebugWindowKind::stack && header("Stack"s, DebugWindowFlag::stack)) {
 					if (lambda) {
 						for (s64 i = lambda->stack_frame_size - 8; i >= 0; i -= 8) {
-							s64 addr = reg(Register::stack) + i;
+							s64 addr = val8(Register::stack) + i;
 							print("0x{}: ", format_hex(addr));
 							print_value(Address{.offset = addr}, get_builtin_type(BuiltinType::U64), {.base = PrintIntBase::hex});
 							if (i == 0)
@@ -651,51 +651,46 @@ int Interpreter::print_value(Address address, Type type, PrintValueOptions optio
 	return print_value_inner(address, type, options);
 }
 
-s64 &Interpreter::reg(Register r) {
+Interpreter::RegisterValue &Interpreter::reg(Register r) {
 	return registers[to_underlying(r)];
 }
-s64 &Interpreter::val8(Register r) {
-	return registers[to_underlying(r)];
-}
-s64 &Interpreter::val8(Address a) {
+s64 &Interpreter::val8(Register r, u8 index) { return registers[to_underlying(r)].v8[index]; }
+s32 &Interpreter::val4(Register r, u8 index) { return registers[to_underlying(r)].v4[index]; }
+s16 &Interpreter::val2(Register r, u8 index) { return registers[to_underlying(r)].v2[index]; }
+s8  &Interpreter::val1(Register r, u8 index) { return registers[to_underlying(r)].v1[index]; }
+
+u8 *Interpreter::addr(Address a) {
 	s64 x = a.offset;
 	if (a.base) {
-		x += reg(a.base.value());
+		x += reg(a.base.value()).v8[0];
 	}
 	if (a.element_size) {
-		x += reg(a.element_index) * a.element_size;
+		x += reg(a.element_index).v8[0] * a.element_size;
 	}
 
-	return *(s64 *)x;
+	return (u8 *)x;
 }
-s64 &Interpreter::val8(Site s) {
+s64 &Interpreter::val8(Address a, u8 index) { return ((s64 *)addr(a))[index]; }
+s32 &Interpreter::val4(Address a, u8 index) { return ((s32 *)addr(a))[index]; }
+s16 &Interpreter::val2(Address a, u8 index) { return ((s16 *)addr(a))[index]; }
+s8  &Interpreter::val1(Address a, u8 index) { return ((s8  *)addr(a))[index]; }
+
+u8 *Interpreter::addr(Site s) {
 	if (s.is_register()) {
-		return reg(s.get_register());
+		return (u8 *)&reg(s.get_register());
 	} else {
-		return val8(s.get_address());
+		return addr(s.get_address());
 	}
 }
-s64 Interpreter::val8(InputValue v) {
-	if (v.is_register()) {
-		return reg(v.get_register());
-	} else if (v.is_address()) {
-		return val8(v.get_address());
-	} else {
-		return v.get_constant();
-	}
-}
-s32 &Interpreter::val4(Register   x) { return (s32 &)val8(x); }
-s32 &Interpreter::val4(Address    x) { return (s32 &)val8(x); }
-s32 &Interpreter::val4(Site       x) { return (s32 &)val8(x); }
-s32  Interpreter::val4(InputValue x) { return (s32  )val8(x); }
-s16 &Interpreter::val2(Register   x) { return (s16 &)val8(x); }
-s16 &Interpreter::val2(Address    x) { return (s16 &)val8(x); }
-s16 &Interpreter::val2(Site       x) { return (s16 &)val8(x); }
-s16  Interpreter::val2(InputValue x) { return (s16  )val8(x); }
-s8  &Interpreter::val1(Register   x) { return (s8  &)val8(x); }
-s8  &Interpreter::val1(Address    x) { return (s8  &)val8(x); }
-s8  &Interpreter::val1(Site       x) { return (s8  &)val8(x); }
-s8   Interpreter::val1(InputValue x) { return (s8   )val8(x); }
+s64 &Interpreter::val8(Site s, u8 index) { return ((s64 *)addr(s))[index]; }
+s32 &Interpreter::val4(Site s, u8 index) { return ((s32 *)addr(s))[index]; }
+s16 &Interpreter::val2(Site s, u8 index) { return ((s16 *)addr(s))[index]; }
+s8  &Interpreter::val1(Site s, u8 index) { return ((s8  *)addr(s))[index]; }
+
+s64 Interpreter::val8(InputValue v, u8 index) { return v.is_register() ? val8(v.get_register(), index) : v.is_address() ? val8(v.get_address(), index) : v.get_constant(); }
+s32 Interpreter::val4(InputValue v, u8 index) { return v.is_register() ? val4(v.get_register(), index) : v.is_address() ? val4(v.get_address(), index) : v.get_constant(); }
+s16 Interpreter::val2(InputValue v, u8 index) { return v.is_register() ? val2(v.get_register(), index) : v.is_address() ? val2(v.get_address(), index) : v.get_constant(); }
+s8  Interpreter::val1(InputValue v, u8 index) { return v.is_register() ? val1(v.get_register(), index) : v.is_address() ? val1(v.get_address(), index) : v.get_constant(); }
 
 #define E(name, ...) execute(Instruction{.kind = InstructionKind::name, .v_##name = { __VA_ARGS__ }}.v_##name)
 	
@@ -840,11 +835,11 @@ static void memsetex(void *dst, u64 value, u64 size, u64 count) {
 
 void Interpreter::execute(Instruction::pop_t i) {
 	E(copy, .d = i.d, .s = Address{.base = Register::stack}, .size = 8);
-	E(add8, .d = Register::stack, .a = Register::stack, .b = 8);
+	E(add, .d = Register::stack, .a = Register::stack, .b = 8, .layout={8,1});
 }
 void Interpreter::execute(Instruction::nop_t i) {}
 void Interpreter::execute(Instruction::push_t i) {
-	E(sub8, .d = Register::stack, .a = Register::stack, .b = 8);
+	E(sub, .d = Register::stack, .a = Register::stack, .b = 8, .layout = {8,1});
 	E(copy, .d = Address{.base = Register::stack}, .s = i.s, .size = 8);
 }
 void Interpreter::execute(Instruction::copy_t i) {
@@ -866,124 +861,199 @@ void Interpreter::execute(Instruction::set_t i) {
 	memsetex(d, i.value, i.size, i.count);
 }
 void Interpreter::execute(Instruction::lea_t i) { val8(i.d) = (s64) &val8(i.s); }
-void Interpreter::execute(Instruction::add1_t i) { val1(i.d) = val1(i.a) + val1(i.b); }
-void Interpreter::execute(Instruction::add2_t i) { val2(i.d) = val2(i.a) + val2(i.b); }
-void Interpreter::execute(Instruction::add4_t i) { val4(i.d) = val4(i.a) + val4(i.b); }
-void Interpreter::execute(Instruction::add8_t i) { val8(i.d) = val8(i.a) + val8(i.b); }
-void Interpreter::execute(Instruction::sub1_t i) { val1(i.d) = val1(i.a) - val1(i.b); }
-void Interpreter::execute(Instruction::sub2_t i) { val2(i.d) = val2(i.a) - val2(i.b); }
-void Interpreter::execute(Instruction::sub4_t i) { val4(i.d) = val4(i.a) - val4(i.b); }
-void Interpreter::execute(Instruction::sub8_t i) { val8(i.d) = val8(i.a) - val8(i.b); }
-void Interpreter::execute(Instruction::mul1_t i) { val1(i.d) = val1(i.a) * val1(i.b); }
-void Interpreter::execute(Instruction::mul2_t i) { val2(i.d) = val2(i.a) * val2(i.b); }
-void Interpreter::execute(Instruction::mul4_t i) { val4(i.d) = val4(i.a) * val4(i.b); }
-void Interpreter::execute(Instruction::mul8_t i) { val8(i.d) = val8(i.a) * val8(i.b); }
-void Interpreter::execute(Instruction::divu1_t i) { val1(i.d) = (u8 )val1(i.a) / (u8 )val1(i.b); }
-void Interpreter::execute(Instruction::divu2_t i) { val2(i.d) = (u16)val2(i.a) / (u16)val2(i.b); }
-void Interpreter::execute(Instruction::divu4_t i) { val4(i.d) = (u32)val4(i.a) / (u32)val4(i.b); }
-void Interpreter::execute(Instruction::divu8_t i) { val8(i.d) = (u64)val8(i.a) / (u64)val8(i.b); }
-void Interpreter::execute(Instruction::divs1_t i) { val1(i.d) = edivmod((s8 )val1(i.a), (s8 )val1(i.b)).x; }
-void Interpreter::execute(Instruction::divs2_t i) { val2(i.d) = edivmod((s16)val2(i.a), (s16)val2(i.b)).x; }
-void Interpreter::execute(Instruction::divs4_t i) { val4(i.d) = edivmod((s32)val4(i.a), (s32)val4(i.b)).x; }
-void Interpreter::execute(Instruction::divs8_t i) { val8(i.d) = edivmod((s64)val8(i.a), (s64)val8(i.b)).x; }
-void Interpreter::execute(Instruction::modu1_t i) { val1(i.d) = (u8 )val1(i.a) % (u8 )val1(i.b); }
-void Interpreter::execute(Instruction::modu2_t i) { val2(i.d) = (u16)val2(i.a) % (u16)val2(i.b); }
-void Interpreter::execute(Instruction::modu4_t i) { val4(i.d) = (u32)val4(i.a) % (u32)val4(i.b); }
-void Interpreter::execute(Instruction::modu8_t i) { val8(i.d) = (u64)val8(i.a) % (u64)val8(i.b); }
-void Interpreter::execute(Instruction::mods1_t i) { val1(i.d) = edivmod((s8 )val1(i.a), (s8 )val1(i.b)).y; }
-void Interpreter::execute(Instruction::mods2_t i) { val2(i.d) = edivmod((s16)val2(i.a), (s16)val2(i.b)).y; }
-void Interpreter::execute(Instruction::mods4_t i) { val4(i.d) = edivmod((s32)val4(i.a), (s32)val4(i.b)).y; }
-void Interpreter::execute(Instruction::mods8_t i) { val8(i.d) = edivmod((s64)val8(i.a), (s64)val8(i.b)).y; }
-void Interpreter::execute(Instruction::xor1_t i) { val1(i.d) = val1(i.a) ^ val1(i.b); }
-void Interpreter::execute(Instruction::xor2_t i) { val2(i.d) = val2(i.a) ^ val2(i.b); }
-void Interpreter::execute(Instruction::xor4_t i) { val4(i.d) = val4(i.a) ^ val4(i.b); }
-void Interpreter::execute(Instruction::xor8_t i) { val8(i.d) = val8(i.a) ^ val8(i.b); }
-void Interpreter::execute(Instruction::and1_t i) { val1(i.d) = val1(i.a) & val1(i.b); }
-void Interpreter::execute(Instruction::and2_t i) { val2(i.d) = val2(i.a) & val2(i.b); }
-void Interpreter::execute(Instruction::and4_t i) { val4(i.d) = val4(i.a) & val4(i.b); }
-void Interpreter::execute(Instruction::and8_t i) { val8(i.d) = val8(i.a) & val8(i.b); }
-void Interpreter::execute(Instruction::or1_t i)  { val1(i.d) = val1(i.a) | val1(i.b); }
-void Interpreter::execute(Instruction::or2_t i)  { val2(i.d) = val2(i.a) | val2(i.b); }
-void Interpreter::execute(Instruction::or4_t i)  { val4(i.d) = val4(i.a) | val4(i.b); }
-void Interpreter::execute(Instruction::or8_t i)  { val8(i.d) = val8(i.a) | val8(i.b); }
-void Interpreter::execute(Instruction::sll1_t i) { val1(i.d) = val1(i.a) << (u8)(val1(i.b) &  7); }
-void Interpreter::execute(Instruction::sll2_t i) { val2(i.d) = val2(i.a) << (u8)(val1(i.b) & 15); }
-void Interpreter::execute(Instruction::sll4_t i) { val4(i.d) = val4(i.a) << (u8)(val1(i.b) & 31); }
-void Interpreter::execute(Instruction::sll8_t i) { val8(i.d) = val8(i.a) << (u8)(val1(i.b) & 63); }
-void Interpreter::execute(Instruction::srl1_t i) { val1(i.d) = (u8 )val1(i.a) >> (u8)(val1(i.b) &  7); }
-void Interpreter::execute(Instruction::srl2_t i) { val2(i.d) = (u16)val2(i.a) >> (u8)(val1(i.b) & 15); }
-void Interpreter::execute(Instruction::srl4_t i) { val4(i.d) = (u32)val4(i.a) >> (u8)(val1(i.b) & 31); }
-void Interpreter::execute(Instruction::srl8_t i) { val8(i.d) = (u64)val8(i.a) >> (u8)(val1(i.b) & 63); }
-void Interpreter::execute(Instruction::sra1_t i) { val1(i.d) = (s8 )val1(i.a) >> (u8)(val1(i.b) &  7); }
-void Interpreter::execute(Instruction::sra2_t i) { val2(i.d) = (s16)val2(i.a) >> (u8)(val1(i.b) & 15); }
-void Interpreter::execute(Instruction::sra4_t i) { val4(i.d) = (s32)val4(i.a) >> (u8)(val1(i.b) & 31); }
-void Interpreter::execute(Instruction::sra8_t i) { val8(i.d) = (s64)val8(i.a) >> (u8)(val1(i.b) & 63); }
-void Interpreter::execute(Instruction::cmp1_t i) {
-	switch (i.cmp) {
-		case Comparison::equals:                  val1(i.d) = (u8)val1(i.a) == (u8)val1(i.b); break;
-		case Comparison::not_equals:              val1(i.d) = (u8)val1(i.a) != (u8)val1(i.b); break;
-		case Comparison::signed_less:             val1(i.d) = (s8)val1(i.a) <  (s8)val1(i.b); break;
-		case Comparison::signed_greater:          val1(i.d) = (s8)val1(i.a) >  (s8)val1(i.b); break;
-		case Comparison::signed_less_equals:      val1(i.d) = (s8)val1(i.a) <= (s8)val1(i.b); break;
-		case Comparison::signed_greater_equals:   val1(i.d) = (s8)val1(i.a) >= (s8)val1(i.b); break;
-		case Comparison::unsigned_less:           val1(i.d) = (u8)val1(i.a) <  (u8)val1(i.b); break;
-		case Comparison::unsigned_greater:        val1(i.d) = (u8)val1(i.a) >  (u8)val1(i.b); break;
-		case Comparison::unsigned_less_equals:    val1(i.d) = (u8)val1(i.a) <= (u8)val1(i.b); break;
-		case Comparison::unsigned_greater_equals: val1(i.d) = (u8)val1(i.a) >= (u8)val1(i.b); break;
+void Interpreter::execute(Instruction::add_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = val1(i.a, j) + val1(i.b, j); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = val2(i.a, j) + val2(i.b, j); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = val4(i.a, j) + val4(i.b, j); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = val8(i.a, j) + val8(i.b, j); break;
+		default: invalid_code_path();
 	}
 }
-void Interpreter::execute(Instruction::cmp2_t i) {
-	switch (i.cmp) {
-		case Comparison::equals:                  val1(i.d) = (u16)val2(i.a) == (u16)val2(i.b); break;
-		case Comparison::not_equals:              val1(i.d) = (u16)val2(i.a) != (u16)val2(i.b); break;
-		case Comparison::signed_less:             val1(i.d) = (s16)val2(i.a) <  (s16)val2(i.b); break;
-		case Comparison::signed_greater:          val1(i.d) = (s16)val2(i.a) >  (s16)val2(i.b); break;
-		case Comparison::signed_less_equals:      val1(i.d) = (s16)val2(i.a) <= (s16)val2(i.b); break;
-		case Comparison::signed_greater_equals:   val1(i.d) = (s16)val2(i.a) >= (s16)val2(i.b); break;
-		case Comparison::unsigned_less:           val1(i.d) = (u16)val2(i.a) <  (u16)val2(i.b); break;
-		case Comparison::unsigned_greater:        val1(i.d) = (u16)val2(i.a) >  (u16)val2(i.b); break;
-		case Comparison::unsigned_less_equals:    val1(i.d) = (u16)val2(i.a) <= (u16)val2(i.b); break;
-		case Comparison::unsigned_greater_equals: val1(i.d) = (u16)val2(i.a) >= (u16)val2(i.b); break;
+void Interpreter::execute(Instruction::sub_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = val1(i.a, j) - val1(i.b, j); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = val2(i.a, j) - val2(i.b, j); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = val4(i.a, j) - val4(i.b, j); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = val8(i.a, j) - val8(i.b, j); break;
+		default: invalid_code_path();
 	}
 }
-void Interpreter::execute(Instruction::cmp4_t i) {
-	switch (i.cmp) {
-		case Comparison::equals:                  val1(i.d) = (u16)val4(i.a) == (u16)val4(i.b); break;
-		case Comparison::not_equals:              val1(i.d) = (u16)val4(i.a) != (u16)val4(i.b); break;
-		case Comparison::signed_less:             val1(i.d) = (s32)val4(i.a) <  (s32)val4(i.b); break;
-		case Comparison::signed_greater:          val1(i.d) = (s32)val4(i.a) >  (s32)val4(i.b); break;
-		case Comparison::signed_less_equals:      val1(i.d) = (s32)val4(i.a) <= (s32)val4(i.b); break;
-		case Comparison::signed_greater_equals:   val1(i.d) = (s32)val4(i.a) >= (s32)val4(i.b); break;
-		case Comparison::unsigned_less:           val1(i.d) = (u32)val4(i.a) <  (u32)val4(i.b); break;
-		case Comparison::unsigned_greater:        val1(i.d) = (u32)val4(i.a) >  (u32)val4(i.b); break;
-		case Comparison::unsigned_less_equals:    val1(i.d) = (u32)val4(i.a) <= (u32)val4(i.b); break;
-		case Comparison::unsigned_greater_equals: val1(i.d) = (u32)val4(i.a) >= (u32)val4(i.b); break;
+void Interpreter::execute(Instruction::mul_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = val1(i.a, j) * val1(i.b, j); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = val2(i.a, j) * val2(i.b, j); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = val4(i.a, j) * val4(i.b, j); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = val8(i.a, j) * val8(i.b, j); break;
+		default: invalid_code_path();
 	}
 }
-void Interpreter::execute(Instruction::cmp8_t i) {
-	switch (i.cmp) {
-		case Comparison::equals:                  val1(i.d) = (u64)val8(i.a) == (u64)val8(i.b); break;
-		case Comparison::not_equals:              val1(i.d) = (u64)val8(i.a) != (u64)val8(i.b); break;
-		case Comparison::signed_less:             val1(i.d) = (s64)val8(i.a) <  (s64)val8(i.b); break;
-		case Comparison::signed_greater:          val1(i.d) = (s64)val8(i.a) >  (s64)val8(i.b); break;
-		case Comparison::signed_less_equals:      val1(i.d) = (s64)val8(i.a) <= (s64)val8(i.b); break;
-		case Comparison::signed_greater_equals:   val1(i.d) = (s64)val8(i.a) >= (s64)val8(i.b); break;
-		case Comparison::unsigned_less:           val1(i.d) = (u64)val8(i.a) <  (u64)val8(i.b); break;
-		case Comparison::unsigned_greater:        val1(i.d) = (u64)val8(i.a) >  (u64)val8(i.b); break;
-		case Comparison::unsigned_less_equals:    val1(i.d) = (u64)val8(i.a) <= (u64)val8(i.b); break;
-		case Comparison::unsigned_greater_equals: val1(i.d) = (u64)val8(i.a) >= (u64)val8(i.b); break;
+void Interpreter::execute(Instruction::divu_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (u8 )val1(i.a, j) / (u8 )val1(i.b, j); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (u16)val2(i.a, j) / (u16)val2(i.b, j); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (u32)val4(i.a, j) / (u32)val4(i.b, j); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (u64)val8(i.a, j) / (u64)val8(i.b, j); break;
+		default: invalid_code_path();
 	}
 }
-void Interpreter::execute(Instruction::sex21_t i) { val8(i.d) = (s16)(s8 )val1(i.a); }
-void Interpreter::execute(Instruction::sex41_t i) { val8(i.d) = (s32)(s8 )val1(i.a); }
-void Interpreter::execute(Instruction::sex42_t i) { val8(i.d) = (s32)(s16)val2(i.a); }
-void Interpreter::execute(Instruction::sex81_t i) { val8(i.d) = (s64)(s8 )val1(i.a); }
-void Interpreter::execute(Instruction::sex82_t i) { val8(i.d) = (s64)(s16)val2(i.a); }
-void Interpreter::execute(Instruction::sex84_t i) { val8(i.d) = (s64)(s32)val4(i.a); }
-void Interpreter::execute(Instruction::neg1_t i) { val1(i.d) = -val1(i.a); }
-void Interpreter::execute(Instruction::neg2_t i) { val2(i.d) = -val2(i.a); }
-void Interpreter::execute(Instruction::neg4_t i) { val4(i.d) = -val4(i.a); }
-void Interpreter::execute(Instruction::neg8_t i) { val8(i.d) = -val8(i.a); }
+void Interpreter::execute(Instruction::divs_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = val1(i.d) = edivmod((s8 )val1(i.a), (s8 )val1(i.b)).x; break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = val2(i.d) = edivmod((s16)val2(i.a), (s16)val2(i.b)).x; break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = val4(i.d) = edivmod((s32)val4(i.a), (s32)val4(i.b)).x; break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = val8(i.d) = edivmod((s64)val8(i.a), (s64)val8(i.b)).x; break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::modu_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (u8 )val1(i.a, j) % (u8 )val1(i.b, j); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (u16)val2(i.a, j) % (u16)val2(i.b, j); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (u32)val4(i.a, j) % (u32)val4(i.b, j); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (u64)val8(i.a, j) % (u64)val8(i.b, j); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::mods_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = val1(i.d) = edivmod((s8 )val1(i.a), (s8 )val1(i.b)).y; break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = val2(i.d) = edivmod((s16)val2(i.a), (s16)val2(i.b)).y; break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = val4(i.d) = edivmod((s32)val4(i.a), (s32)val4(i.b)).y; break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = val8(i.d) = edivmod((s64)val8(i.a), (s64)val8(i.b)).y; break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::bxor_t i) {
+	for (umm j = 0; j < i.layout.total_size(); ++j)
+		val1(i.d, j) = val1(i.a, j) ^ val1(i.b, j);
+}
+void Interpreter::execute(Instruction::band_t i) {
+	for (umm j = 0; j < i.layout.total_size(); ++j)
+		val1(i.d, j) = val1(i.a, j) & val1(i.b, j);
+}
+void Interpreter::execute(Instruction::bor_t i) {
+	for (umm j = 0; j < i.layout.total_size(); ++j)
+		val1(i.d, j) = val1(i.a, j) | val1(i.b, j);
+}
+void Interpreter::execute(Instruction::sll_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = val1(i.a, j) << (val1(i.b, j) &  7); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = val2(i.a, j) << (val2(i.b, j) & 15); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = val4(i.a, j) << (val4(i.b, j) & 31); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = val8(i.a, j) << (val8(i.b, j) & 63); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::srl_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (u8 )val1(i.a, j) >> (val1(i.b, j) &  7); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (u16)val2(i.a, j) >> (val2(i.b, j) & 15); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (u32)val4(i.a, j) >> (val4(i.b, j) & 31); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (u64)val8(i.a, j) >> (val8(i.b, j) & 63); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::sra_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (s8 )val1(i.a, j) >> (val1(i.b, j) &  7); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (s16)val2(i.a, j) >> (val2(i.b, j) & 15); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (s32)val4(i.a, j) >> (val4(i.b, j) & 31); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (s64)val8(i.a, j) >> (val8(i.b, j) & 63); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::cmp_t i) {
+	switch (i.layout.size) {
+		case 1:
+			switch (i.cmp) {
+				case Comparison::equals:                  for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (u8)val1(i.a, j) == (u8)val1(i.b, j); break;
+				case Comparison::not_equals:              for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (u8)val1(i.a, j) != (u8)val1(i.b, j); break;
+				case Comparison::signed_less:             for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (s8)val1(i.a, j) <  (s8)val1(i.b, j); break;
+				case Comparison::signed_greater:          for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (s8)val1(i.a, j) >  (s8)val1(i.b, j); break;
+				case Comparison::signed_less_equals:      for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (s8)val1(i.a, j) <= (s8)val1(i.b, j); break;
+				case Comparison::signed_greater_equals:   for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (s8)val1(i.a, j) >= (s8)val1(i.b, j); break;
+				case Comparison::unsigned_less:           for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (u8)val1(i.a, j) <  (u8)val1(i.b, j); break;
+				case Comparison::unsigned_greater:        for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (u8)val1(i.a, j) >  (u8)val1(i.b, j); break;
+				case Comparison::unsigned_less_equals:    for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (u8)val1(i.a, j) <= (u8)val1(i.b, j); break;
+				case Comparison::unsigned_greater_equals: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = (u8)val1(i.a, j) >= (u8)val1(i.b, j); break;
+			}
+			break;
+		case 2:
+			switch (i.cmp) {
+				case Comparison::equals:                  for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (u16)val2(i.a, j) == (u16)val2(i.b, j); break;
+				case Comparison::not_equals:              for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (u16)val2(i.a, j) != (u16)val2(i.b, j); break;
+				case Comparison::signed_less:             for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (s16)val2(i.a, j) <  (s16)val2(i.b, j); break;
+				case Comparison::signed_greater:          for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (s16)val2(i.a, j) >  (s16)val2(i.b, j); break;
+				case Comparison::signed_less_equals:      for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (s16)val2(i.a, j) <= (s16)val2(i.b, j); break;
+				case Comparison::signed_greater_equals:   for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (s16)val2(i.a, j) >= (s16)val2(i.b, j); break;
+				case Comparison::unsigned_less:           for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (u16)val2(i.a, j) <  (u16)val2(i.b, j); break;
+				case Comparison::unsigned_greater:        for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (u16)val2(i.a, j) >  (u16)val2(i.b, j); break;
+				case Comparison::unsigned_less_equals:    for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (u16)val2(i.a, j) <= (u16)val2(i.b, j); break;
+				case Comparison::unsigned_greater_equals: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = (u16)val2(i.a, j) >= (u16)val2(i.b, j); break;
+			}
+			break;
+		case 4:
+			switch (i.cmp) {
+				case Comparison::equals:                  for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (u32)val4(i.a, j) == (u32)val4(i.b, j); break;
+				case Comparison::not_equals:              for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (u32)val4(i.a, j) != (u32)val4(i.b, j); break;
+				case Comparison::signed_less:             for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (s32)val4(i.a, j) <  (s32)val4(i.b, j); break;
+				case Comparison::signed_greater:          for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (s32)val4(i.a, j) >  (s32)val4(i.b, j); break;
+				case Comparison::signed_less_equals:      for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (s32)val4(i.a, j) <= (s32)val4(i.b, j); break;
+				case Comparison::signed_greater_equals:   for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (s32)val4(i.a, j) >= (s32)val4(i.b, j); break;
+				case Comparison::unsigned_less:           for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (u32)val4(i.a, j) <  (u32)val4(i.b, j); break;
+				case Comparison::unsigned_greater:        for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (u32)val4(i.a, j) >  (u32)val4(i.b, j); break;
+				case Comparison::unsigned_less_equals:    for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (u32)val4(i.a, j) <= (u32)val4(i.b, j); break;
+				case Comparison::unsigned_greater_equals: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = (u32)val4(i.a, j) >= (u32)val4(i.b, j); break;
+			}
+			break;
+		case 8:
+			switch (i.cmp) {
+				case Comparison::equals:                  for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (u64)val8(i.a, j) == (u64)val8(i.b, j); break;
+				case Comparison::not_equals:              for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (u64)val8(i.a, j) != (u64)val8(i.b, j); break;
+				case Comparison::signed_less:             for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (s64)val8(i.a, j) <  (s64)val8(i.b, j); break;
+				case Comparison::signed_greater:          for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (s64)val8(i.a, j) >  (s64)val8(i.b, j); break;
+				case Comparison::signed_less_equals:      for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (s64)val8(i.a, j) <= (s64)val8(i.b, j); break;
+				case Comparison::signed_greater_equals:   for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (s64)val8(i.a, j) >= (s64)val8(i.b, j); break;
+				case Comparison::unsigned_less:           for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (u64)val8(i.a, j) <  (u64)val8(i.b, j); break;
+				case Comparison::unsigned_greater:        for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (u64)val8(i.a, j) >  (u64)val8(i.b, j); break;
+				case Comparison::unsigned_less_equals:    for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (u64)val8(i.a, j) <= (u64)val8(i.b, j); break;
+				case Comparison::unsigned_greater_equals: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = (u64)val8(i.a, j) >= (u64)val8(i.b, j); break;
+			}
+			break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::sex2_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val2(i.d) = (s16)(s8)val1(i.a); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::sex4_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val4(i.d) = (s32)(s8 )val1(i.a); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val4(i.d) = (s32)(s16)val2(i.a); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::sex8_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val8(i.d) = (s64)(s8 )val1(i.a); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val8(i.d) = (s64)(s16)val2(i.a); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val8(i.d) = (s64)(s32)val4(i.a); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::neg_t i) {
+	switch (i.layout.size) {
+		case 1: for (umm j = 0; j < i.layout.count; ++j) val1(i.d, j) = -val1(i.a, j); break;
+		case 2: for (umm j = 0; j < i.layout.count; ++j) val2(i.d, j) = -val2(i.a, j); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = -val4(i.a, j); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = -val8(i.a, j); break;
+		default: invalid_code_path();
+	}
+}
 void Interpreter::execute(Instruction::movmsk_t i) {
 	u64 result = 0;
 	u8 *addr = (u8 *)&val1(i.s);
@@ -1001,20 +1071,57 @@ void Interpreter::execute(Instruction::blend_t i) {
 		memcpy(d + j*i.layout.size, ((mask >> j) & 1 ? a : b) + j*i.layout.size, i.layout.size);
 	}
 }
-void Interpreter::execute(Instruction::fadd4_t i) { *(f32 *)&val4(i.d) = std::bit_cast<f32>(val4(i.a)) + std::bit_cast<f32>(val4(i.b)); }
-void Interpreter::execute(Instruction::fadd8_t i) { *(f64 *)&val8(i.d) = std::bit_cast<f64>(val8(i.a)) + std::bit_cast<f64>(val8(i.b)); }
-void Interpreter::execute(Instruction::fsub4_t i) { *(f32 *)&val4(i.d) = std::bit_cast<f32>(val4(i.a)) - std::bit_cast<f32>(val4(i.b)); }
-void Interpreter::execute(Instruction::fsub8_t i) { *(f64 *)&val8(i.d) = std::bit_cast<f64>(val8(i.a)) - std::bit_cast<f64>(val8(i.b)); }
-void Interpreter::execute(Instruction::fmul4_t i) { *(f32 *)&val4(i.d) = std::bit_cast<f32>(val4(i.a)) * std::bit_cast<f32>(val4(i.b)); }
-void Interpreter::execute(Instruction::fmul8_t i) { *(f64 *)&val8(i.d) = std::bit_cast<f64>(val8(i.a)) * std::bit_cast<f64>(val8(i.b)); }
-void Interpreter::execute(Instruction::fdiv4_t i) { *(f32 *)&val4(i.d) = std::bit_cast<f32>(val4(i.a)) / std::bit_cast<f32>(val4(i.b)); }
-void Interpreter::execute(Instruction::fdiv8_t i) { *(f64 *)&val8(i.d) = std::bit_cast<f64>(val8(i.a)) / std::bit_cast<f64>(val8(i.b)); }
-void Interpreter::execute(Instruction::fmod4_t i) { *(f32 *)&val4(i.d) = mod(std::bit_cast<f32>(val4(i.a)), std::bit_cast<f32>(val4(i.b))); }
-void Interpreter::execute(Instruction::fmod8_t i) { *(f64 *)&val8(i.d) = mod(std::bit_cast<f64>(val8(i.a)), std::bit_cast<f64>(val8(i.b))); }
-void Interpreter::execute(Instruction::f32_to_s32_t i) { val4(i.d) = (s32)std::bit_cast<f32>(val4(i.a)); }
-void Interpreter::execute(Instruction::f64_to_s64_t i) { val8(i.d) = (s64)std::bit_cast<f64>(val8(i.a)); }
-void Interpreter::execute(Instruction::f32_to_f64_t i) { *(f64 *)&val8(i.d) = (f64)std::bit_cast<f32>(val4(i.a)); }
-void Interpreter::execute(Instruction::f64_to_f32_t i) { *(f32 *)&val4(i.d) = (f32)std::bit_cast<f64>(val8(i.a)); }
+void Interpreter::execute(Instruction::fadd_t i) {
+	switch (i.layout.size) {
+		case 4: for (umm j = 0; j < i.layout.count; ++j) *(f32 *)&val4(i.d, j) = std::bit_cast<f32>(val4(i.a, j)) + std::bit_cast<f32>(val4(i.b, j)); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) *(f64 *)&val8(i.d, j) = std::bit_cast<f64>(val8(i.a, j)) + std::bit_cast<f64>(val8(i.b, j)); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::fsub_t i) {
+	switch (i.layout.size) {
+		case 4: for (umm j = 0; j < i.layout.count; ++j) *(f32 *)&val4(i.d, j) = std::bit_cast<f32>(val4(i.a, j)) - std::bit_cast<f32>(val4(i.b, j)); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) *(f64 *)&val8(i.d, j) = std::bit_cast<f64>(val8(i.a, j)) - std::bit_cast<f64>(val8(i.b, j)); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::fmul_t i) {
+	switch (i.layout.size) {
+		case 4: for (umm j = 0; j < i.layout.count; ++j) *(f32 *)&val4(i.d, j) = std::bit_cast<f32>(val4(i.a, j)) * std::bit_cast<f32>(val4(i.b, j)); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) *(f64 *)&val8(i.d, j) = std::bit_cast<f64>(val8(i.a, j)) * std::bit_cast<f64>(val8(i.b, j)); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::fdiv_t i) {
+	switch (i.layout.size) {
+		case 4: for (umm j = 0; j < i.layout.count; ++j) *(f32 *)&val4(i.d, j) = std::bit_cast<f32>(val4(i.a, j)) / std::bit_cast<f32>(val4(i.b, j)); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) *(f64 *)&val8(i.d, j) = std::bit_cast<f64>(val8(i.a, j)) / std::bit_cast<f64>(val8(i.b, j)); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::fmod_t i) {
+	switch (i.layout.size) {
+		case 4: for (umm j = 0; j < i.layout.count; ++j) *(f32 *)&val4(i.d, j) = mod(std::bit_cast<f32>(val4(i.a, j)), std::bit_cast<f32>(val4(i.b, j))); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) *(f64 *)&val8(i.d, j) = mod(std::bit_cast<f64>(val8(i.a, j)), std::bit_cast<f64>(val8(i.b, j))); break;
+		default: invalid_code_path();
+	}
+}
+void Interpreter::execute(Instruction::f32_to_s32_t i) { 
+	for (umm j = 0; j < i.count; ++j) 
+		val4(i.d, j) = (s32)std::bit_cast<f32>(val4(i.a, j));
+}
+void Interpreter::execute(Instruction::f64_to_s64_t i) {
+	for (umm j = 0; j < i.count; ++j) 
+		val8(i.d, j) = (s64)std::bit_cast<f64>(val8(i.a, j));
+}
+void Interpreter::execute(Instruction::f32_to_f64_t i) {
+	for (umm j = 0; j < i.count; ++j) 
+		*(f64 *)&val8(i.d, j) = std::bit_cast<f32>(val4(i.a, j));
+}
+void Interpreter::execute(Instruction::f64_to_f32_t i) {
+	for (umm j = 0; j < i.count; ++j) 
+		*(f32 *)&val4(i.d, j) = std::bit_cast<f64>(val8(i.a, j));
+}
 void Interpreter::execute(Instruction::call_t i) {
 	E(push, (s64)current_instruction_index);
 
@@ -1263,7 +1370,7 @@ void Interpreter::execute(Instruction::ret_t i) {
 
 	auto prev_instruction_index = current_instruction_index;
 	current_instruction_index = val8(Address{.base = Register::stack});
-	E(add8, .d = Register::stack, .a = Register::stack, .b = 8);
+	E(add, .d = Register::stack, .a = Register::stack, .b = 8, .layout = {8,1});
 }
 void Interpreter::execute(Instruction::jmp_t i) { current_instruction_index += i.d - 1; }
 void Interpreter::execute(Instruction::jf_t i) { if (val1(i.s) == 0) current_instruction_index += i.d - 1; }
@@ -1334,7 +1441,7 @@ u64 Interpreter::ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *la
 	auto arg1_size = get_size(parameters[1]->type);
 	auto arg2_size = get_size(parameters[2]->type);
 	auto arg3_size = get_size(parameters[3]->type);
-	E(sub8, Register::stack, Register::stack, (s64)(ret_size + lambda->head.total_parameters_size));
+	E(sub, Register::stack, Register::stack, (s64)(ret_size + lambda->head.total_parameters_size), {8,1});
 	E(copy, .d = Address{.base = Register::stack, .offset = (s64)parameters[0]->offset}, .s = (s64)arg0, .size = arg0_size);
 	E(copy, .d = Address{.base = Register::stack, .offset = (s64)parameters[1]->offset}, .s = (s64)arg1, .size = arg1_size);
 	E(copy, .d = Address{.base = Register::stack, .offset = (s64)parameters[2]->offset}, .s = (s64)arg2, .size = arg2_size);
@@ -1351,7 +1458,7 @@ u64 Interpreter::ffi_callback(u64 arg0, u64 arg1, u64 arg2, u64 arg3, Lambda *la
 	// skip one instruction, so offset it here as well.
 	--current_instruction_index;
 
-	E(add8, Register::stack, Register::stack, (s64)(ret_size + lambda->head.total_parameters_size));
+	E(add, Register::stack, Register::stack, (s64)(ret_size + lambda->head.total_parameters_size), {8,1});
 		
 	auto result = val8(Address{.base = Register::stack, .offset = -(s64)ret_size});
 	return result;

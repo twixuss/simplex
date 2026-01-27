@@ -119,6 +119,7 @@
     <ClCompile Include="src\typechecker.cpp" />
     <ClCompile Include="src\unary_operation.cpp" />
     <ClCompile Include="src\value.cpp" />
+    <ClCompile Include="src\vectorize.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\backend.h" />
