@@ -1,0 +1,13 @@
+{
+    "C_Cpp.default.includePath": [
+        "dep/tl/include",
+        "dep/imgui",
+        "dep/x64write",
+        "dep",
+        "${default}",
+    ],
+    "C_Cpp.errorSquiggles": "enabled",
+    "notebook.output.minimalErrorRendering": true,
+    "editor.autoSurround": "never",
+    "C_Cpp.default.cppStandard": "c++23"
+}

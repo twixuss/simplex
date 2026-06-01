@@ -65,23 +65,27 @@ inline T *as(Node *node) {
 template <>
 inline Expression *as(Node *node) {
 	switch (node->kind) {
-#define x(name) case NodeKind::name:
+		#define x(name) case NodeKind::name:
 		ENUMERATE_EXPRESSION_KIND(x)
-#undef x
+		#undef x
 			return (Expression *)node;
+
+		default:
+			return 0;
 	}
-	return 0;
 }
 
 template <>
 inline Statement *as(Node *node) {
 	switch (node->kind) {
-#define x(name) case NodeKind::name:
+		#define x(name) case NodeKind::name:
 		ENUMERATE_STATEMENT_KIND(x)
-#undef x
+		#undef x
 			return (Statement *)node;
+
+		default:
+			return 0;
 	}
-	return 0;
 }
 
 struct AtomicArenaAllocator : AllocatorBase<AtomicArenaAllocator> {
@@ -304,7 +308,7 @@ DEFINE_EXPRESSION(Binary) {
 	BinaryOperation operation = {};
 
 	// Set this at typechecking stage to rid bytecode builder of redundant work.
-	LowBinaryOperation low_operation = {};
+	Optional<LowBinaryOperation> low_operation = {};
 };
 DEFINE_EXPRESSION(Match) {
 	struct Case {

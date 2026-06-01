@@ -12,6 +12,7 @@ struct LockIfBlockIsGlobal {
 	Block *block;
 };
 
+namespace tl {
 template <>
 struct Scoped<LockIfBlockIsGlobal> {
 	LockIfBlockIsGlobal x;
@@ -32,6 +33,7 @@ struct Scoped<LockIfBlockIsGlobal> {
 		}
 	}
 };
+}
 
 LockProtected<Imports, SpinLock> imports;
 
@@ -248,12 +250,12 @@ Parser::NamedLambda Parser::parse_lambda() {
 
 	if (should_expect_arrow) {
 		if (lambda->head.parsed_return_type) {
-			if (token.kind == '=>') {
+			if (token.kind == "=>"_t) {
 				next();
 				body_required = true;
 			}
 		} else {
-			if (token.kind != '=>') {
+			if (token.kind != "=>"_t) {
 				reporter.error(token.string, "Expected : or => after )");
 
 				reporter.help("Functions are written like this:\n\n    (a: Type1, b: Type2): ReturnType => BodyExpression\n\nReturnType can be omitted:\n\n    (a: Type1, b: Type2) => BodyExpression");
@@ -1041,16 +1043,16 @@ Expression *Parser::parse_expression_0() {
 				if (token.kind == Token_else) {
 					next();
 					skip_lines();
-					expect('=>');
+					expect("=>"_t);
 					next();
 				} else {
 					while (1) {
 						Case.froms.add(parse_expression());
 						skip_lines();
-						if (token.kind == 'or') {
+						if (token.kind == "or"_t) {
 							next();
 							skip_lines();
-						} else if (token.kind == '=>') {
+						} else if (token.kind == "=>"_t) {
 							Case.arrow_location = token.string;
 							next();
 							break;
@@ -1715,7 +1717,13 @@ bool read_file_and_parse_into_global_block(String import_location, String path) 
 	}
 
 	// Will be used after function exits, don't free.
-	auto source_buffer = read_entire_file(path, {.extra_space_before = LEXER_PADDING_SIZE, .extra_space_after = LEXER_PADDING_SIZE});
+	auto maybe_source_buffer = read_entire_file(path, {.extra_space_before = LEXER_PADDING_SIZE, .extra_space_after = LEXER_PADDING_SIZE});
+	if (!maybe_source_buffer) {
+		LOG_ERROR_PATH("Failed to read this file: {}", path);
+		return false;
+	}
+
+	auto source_buffer = maybe_source_buffer.value();
 
 	auto source = (String)source_buffer.skip(LEXER_PADDING_SIZE).skip(-LEXER_PADDING_SIZE);
 	

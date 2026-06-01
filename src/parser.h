@@ -15,7 +15,7 @@ struct Imports {
 
 	void add_file(Imports::FileToImport file_to_import) {
 		if (!imported_files.find(file_to_import.path)) {
-			imported_files.insert(file_to_import.path, {});
+			imported_files.get_or_insert(file_to_import.path) = {};
 			files_to_import.add(file_to_import);
 		}
 	}

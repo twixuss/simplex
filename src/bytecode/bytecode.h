@@ -70,7 +70,10 @@ inline void append(StringBuilder &builder, Address a) {
 }
 
 struct Site {
-	Site() { memset(this, 0, sizeof(*this)); }
+	Site() {
+		_is_address = false;
+		r = {};
+	}
 	Site(Register r) : _is_address(false), r(r) {}
 	Site(Address a) : _is_address(true), a(a) {}
 	~Site() {}
@@ -108,10 +111,13 @@ inline void append(StringBuilder &builder, Site s) {
 }
 
 struct InputValue {
-	InputValue() { memset(this, 0, sizeof(*this)); }
+	InputValue() {
+		kind = Kind::Constant;
+		c = 0;
+	}
+	InputValue(s64 c) : kind(Kind::Constant), c(c) {}
 	InputValue(Register r) : kind(Kind::Register), r(r) {}
 	InputValue(Address a) : kind(Kind::Address), a(a) {}
-	InputValue(s64 c) : kind(Kind::Constant), c(c) {}
 	InputValue(Site s) : kind(s.is_register() ? Kind::Register : Kind::Address) {
 		if (s.is_register())
 			r = s.get_register();
@@ -119,43 +125,43 @@ struct InputValue {
 			a = s.get_address();
 	}
 	~InputValue() {}
-
+	
+	bool is_constant() { return kind == Kind::Constant; }
 	bool is_register() { return kind == Kind::Register; }
 	bool is_address() { return kind == Kind::Address; }
-	bool is_constant() { return kind == Kind::Constant; }
 	
+	s64 &get_constant() { assert(is_constant()); return c; }
 	Register &get_register() { assert(is_register()); return r; }
 	Address &get_address() { assert(is_address()); return a; }
-	s64 &get_constant() { assert(is_constant()); return c; }
 
+	Optional<s64> as_constant() { if (is_constant()) return c; return {}; }
 	Optional<Register> as_register() { if (is_register()) return r; return {}; }
 	Optional<Address> as_address() { if (is_address()) return a; return {}; }
-	Optional<s64> as_constant() { if (is_constant()) return c; return {}; }
 
 	bool operator==(InputValue const &that) const {
 		if (kind != that.kind) {
 			return false;
 		}
 		switch (kind) {
+			case Kind::Constant: return c == that.c;
 			case Kind::Register: return r == that.r;
 			case Kind::Address:  return a == that.a;
-			case Kind::Constant: return c == that.c;
 		}
 		return false;
 	}
 
 private:
 	enum class Kind {
+		Constant,
 		Register,
 		Address,
-		Constant,
 	};
 
 	Kind kind;
 	union {
+		s64 c;
 		Register r;
 		Address a;
-		s64 c;
 	};
 };
 
@@ -307,15 +313,17 @@ struct Instruction {
 	ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	#undef x
 
-	#define x(name, fields) name##_t &name() { assert(kind == InstructionKind::name); return v_##name; }
+	#define x(name, fields) name##_t &name() { assert(kind == InstructionKind::name); return as.name; }
 	ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	#undef x
 
-	union {
-		#define x(name, fields) name##_t v_##name;
+	union As {
+		#define x(name, fields) name##_t name;
 		ENUMERATE_BYTECODE_INSTRUCTION_KIND
 		#undef x
-	};
+
+		~As() {}
+	} as;
 	
 	char const *file = 0;
 	u16 line = 0;
@@ -328,7 +336,7 @@ struct Instruction {
 			#define y(type, name) visit_register(i.name, visitor);
 			#define x(name, fields)           \
 				case InstructionKind::name: { \
-					auto &i = v_##name;       \
+					auto &i = as.name;       \
 					PASSTHROUGH fields;       \
 					break;                    \
 				}
@@ -343,7 +351,7 @@ struct Instruction {
 			#define y(type, name) visit_address(i.name, visitor);
 			#define x(name, fields)           \
 				case InstructionKind::name: { \
-					auto &i = v_##name;       \
+					auto &i = as.name;       \
 					PASSTHROUGH fields;       \
 					break;                    \
 				}
@@ -358,8 +366,9 @@ struct Instruction {
 			#define y(type, name) visitor(i.name);
 			#define x(name, fields)           \
 				case InstructionKind::name: { \
-					auto &i = self.v_##name;  \
+					auto &i = self.as.name;   \
 					PASSTHROUGH fields;       \
+					(void)i;                  \
 					break;                    \
 				}
 			ENUMERATE_BYTECODE_INSTRUCTION_KIND
@@ -376,9 +385,11 @@ struct Instruction {
 			#define y(type, name) if (i.name != j.name) return false;
 			#define x(name, fields)           \
 				case InstructionKind::name: { \
-					auto &i = v_##name;       \
-					auto &j = that.v_##name;  \
+					auto &i = as.name;        \
+					auto &j = that.as.name;   \
 					PASSTHROUGH fields;       \
+					(void)i;                  \
+					(void)j;                  \
 					break;                    \
 				}
 			ENUMERATE_BYTECODE_INSTRUCTION_KIND
@@ -390,11 +401,11 @@ struct Instruction {
 	}
 
 private:
-	static void visit_register(auto, auto &&visitor) {}
+	static void visit_register(auto, auto &&) {}
 	static void visit_register(Register &r, auto &&visitor) { visitor(r); }
 	static void visit_register(Site &s, auto &&visitor) { if (s.is_register()) visitor(s.get_register()); }
 	static void visit_register(InputValue &v, auto &&visitor) { if (v.is_register()) visitor(v.get_register()); }
-	static void visit_address(auto, auto &&visitor) {}
+	static void visit_address(auto, auto &&) {}
 	static void visit_address(Address &a, auto &&visitor) { visitor(a); }
 	static void visit_address(Site &s, auto &&visitor) { if (s.is_address()) visitor(s.get_address()); }
 	static void visit_address(InputValue &v, auto &&visitor) { if (v.is_address()) visitor(v.get_address()); }
@@ -420,19 +431,21 @@ struct Bytecode {
 	umm entry_point_instruction_index = -1;
 };
 
-#define y(type, name) \
+#define y(type, name)                          \
 	if (need_comma) { result += print(", "); } \
-	need_comma = true; \
-	result += print(i.name); \
+	need_comma = true;                         \
+	result += print(i.name);                   \
 
-#define x(name, fields) \
+#define x(name, fields)                                 \
 inline umm print_instruction(Instruction::name##_t i) { \
-	umm result = 0; \
-	result += print(InstructionKind::name); \
-	result += print(' '); \
-	bool need_comma = false; \
-	PASSTHROUGH fields; \
-	return result; \
+	umm result = 0;                                     \
+	result += print(InstructionKind::name);             \
+	result += print(' ');                               \
+	bool need_comma = false;                            \
+	PASSTHROUGH fields;                                 \
+	return result;                                      \
+	(void)i;                                            \
+	(void)need_comma;                                   \
 }
 ENUMERATE_BYTECODE_INSTRUCTION_KIND
 #undef x
@@ -443,13 +456,14 @@ inline umm print_instruction(Instruction i) {
 	switch (i.kind) {
 		case InstructionKind::callext: {
 			auto kind = i.kind;
-			REDECLARE_REF(i, i.v_callext);
+			REDECLARE_REF(i, i.as.callext);
 			return print("{} {}", kind, i.lambda->link_name);
 		}
+		default: break;
 	}
 	// Default printers
 	switch (i.kind) {
-#define x(name, fields) case InstructionKind::name: return print_instruction(i.v_##name);
+#define x(name, fields) case InstructionKind::name: return print_instruction(i.as.name);
 		ENUMERATE_BYTECODE_INSTRUCTION_KIND
 #undef x
 	}

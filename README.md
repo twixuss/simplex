@@ -473,6 +473,8 @@ fn (a: Arg1, b: Arg2): ReturnType
 ### `UnsizedInteger`
 A signed 64-bit number
 # Bag of sugar
+## Uniform Function Call Syntax (UFCS)
+`a.foo(b)` gets converted to `foo(a, b)`. They are identical semantically.
 ## Properties
 You can have member-like access for stuff that has to be computed:
 1. Define a function with a name that starts with `get_` and accepts wanted type:

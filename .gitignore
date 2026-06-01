@@ -1,6 +1,7 @@
 ﻿.vs/
 bin*/
 tmp/
+temp/
 *.args.json
 a.sp
 b.sp
@@ -24,3 +25,6 @@ examples/*
 !examples/*.sp
 coverage.config
 coverage.cov
+nob.exe
+nob.exe.old
+.vscode/c_cpp_properties.json

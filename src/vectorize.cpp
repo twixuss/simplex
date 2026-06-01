@@ -53,7 +53,7 @@ Definition           *Typechecker::vectorize_node_impl(Definition *original) {
 		reporter.warning(original->parsed_type->location, "TODO: account for parsed_type");
 	}
 
-	vc.original_to_copy_definitions.insert(original, result);
+	vc.original_to_copy_definitions.get_or_insert(original) = result;
 
 	result->type = result->initial_value->type;
 	return result;

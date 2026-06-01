@@ -98,14 +98,14 @@ ForEachDirective visit_impl(While *While, auto &&visitor) {
 	VISIT(&While->body);
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Name *name, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(IntegerLiteral *literal, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(FloatLiteral *literal, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(BooleanLiteral *literal, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(NoneLiteral *literal, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(StringLiteral  *literal, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(BuiltinTypeName *type_name, auto &&visitor) { return ForEach_continue; }
-ForEachDirective visit_impl(Continue *Continue, auto &&visitor) { return ForEach_continue; }
+ForEachDirective visit_impl(Name *name, auto &&visitor) { (void)name; (void)visitor; return ForEach_continue; }
+ForEachDirective visit_impl(IntegerLiteral *literal, auto &&visitor) { (void)literal; (void)visitor; return ForEach_continue; }
+ForEachDirective visit_impl(FloatLiteral *literal, auto &&visitor) { (void)literal; (void)visitor; return ForEach_continue; }
+ForEachDirective visit_impl(BooleanLiteral *literal, auto &&visitor) { (void)literal; (void)visitor; return ForEach_continue; }
+ForEachDirective visit_impl(NoneLiteral *literal, auto &&visitor) { (void)literal; (void)visitor; return ForEach_continue; }
+ForEachDirective visit_impl(StringLiteral  *literal, auto &&visitor) { (void)literal; (void)visitor; return ForEach_continue; }
+ForEachDirective visit_impl(BuiltinTypeName *type_name, auto &&visitor) { (void)type_name; (void)visitor; return ForEach_continue; }
+ForEachDirective visit_impl(Continue *Continue, auto &&visitor) { (void)Continue; (void)visitor; return ForEach_continue; }
 ForEachDirective visit_impl(Break *Break, auto &&visitor) {
 	if (Break->value) {
 		VISIT(&Break->value);
@@ -143,31 +143,24 @@ ForEachDirective visit_impl(ArrayConstructor *arr, auto &&visitor) {
 	}
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Import *import, auto &&visitor) {
-	return ForEach_continue;
-}
+ForEachDirective visit_impl(Import *import, auto &&visitor) { (void)import; (void)visitor; return ForEach_continue; }
 ForEachDirective visit_impl(Defer *defer_, auto &&visitor) {
 	VISIT(&defer_->body);
 	return ForEach_continue;
 }
 ForEachDirective visit_impl(ZeroInitialized *zi, auto &&visitor) {
-	// VISIT(&zi->parsed_type);
+	(void)zi;
+	(void)visitor; 
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(CallerLocation *cl, auto &&visitor) {
-	return ForEach_continue;
-}
-ForEachDirective visit_impl(CallerArgumentString *cas, auto &&visitor) {
-	return ForEach_continue;
-}
+ForEachDirective visit_impl(CallerLocation *cl, auto &&visitor) { (void)cl; (void)visitor; return ForEach_continue; }
+ForEachDirective visit_impl(CallerArgumentString *cas, auto &&visitor) { (void)cas; (void)visitor; return ForEach_continue; }
 ForEachDirective visit_impl(For *For, auto &&visitor) {
 	VISIT(&For->range);
 	VISIT(&For->body);
 	return ForEach_continue;
 }
-ForEachDirective visit_impl(Use *Use, auto &&visitor) {
-	return ForEach_continue;
-}
+ForEachDirective visit_impl(Use *Use, auto &&visitor) { (void)Use; (void)visitor; return ForEach_continue; }
 
 ForEachDirective visit(Node **node, auto &&visitor) {
 
@@ -191,14 +184,13 @@ ForEachDirective visit(Node **node, auto &&visitor) {
 
 	// Visit the actual node. It might be replaced, so do two separate switches.
 	switch ((*node)->kind) {
-		#define x(name)                                   \
-			case NodeKind::name:                          \
-				switch (visitor_wrapper((name **)node)) { \
-					case ForEach_break:                   \
-						return ForEach_break;             \
-					case ForEach_dont_recurse:            \
-						return ForEach_continue;          \
-				}                                         \
+		#define x(name)                                                 \
+			case NodeKind::name:                                        \
+				switch (visitor_wrapper((name **)node)) {               \
+					case ForEach_break: return ForEach_break;           \
+					case ForEach_dont_recurse: return ForEach_continue; \
+					default: break;                                     \
+				}                                                       \
 				break;
 
 		ENUMERATE_NODE_KIND(x)

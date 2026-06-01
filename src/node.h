@@ -4,19 +4,22 @@
 
 enum class NodeKind : u8 {
 	unknown,
-#define x(name) name,
+	#define x(name) name,
 	ENUMERATE_NODE_KIND(x)
-#undef x
+	#undef x
 	count,
 };
 
 inline void append(StringBuilder &builder, NodeKind kind) {
 	switch (kind) {
-#define x(name) case NodeKind::name: return append(builder, #name);
+		#define x(name) case NodeKind::name: return append(builder, #name);
 		ENUMERATE_NODE_KIND(x)
-#undef x
+		#undef x
+		case NodeKind::unknown:
+		case NodeKind::count:
+			break;
 	}
-	return append_format(builder, "((NodeKind){})", (u64)kind);
+	return append_format(builder, "NodeKind({})", (u64)kind);
 }
 
 inline volatile u32 uid_counter;

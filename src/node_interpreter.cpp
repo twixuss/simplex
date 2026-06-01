@@ -224,7 +224,7 @@ Value NodeInterpreter::execute_impl(Definition *definition) {
 	} else {
 		default_initialize(&value, definition->type);
 	}
-	scope_stack.back().variables.insert(definition, value);
+	scope_stack.back().variables.get_or_insert(definition) = value;
 	return value;
 }
 Value NodeInterpreter::execute_impl(Return *return_) {
@@ -363,7 +363,7 @@ Value NodeInterpreter::execute_impl(Call *call) {
 					yield(YieldResult::fail);
 				}
 
-				loaded_extern_libraries.insert(lambda->extern_library, dll);
+				loaded_extern_libraries.get_or_insert(lambda->extern_library) = dll;
 			}
 
 			assert(lambda->definition);
@@ -441,7 +441,7 @@ Value NodeInterpreter::execute_impl(Call *call) {
 		auto &param_scope = scope_stack.add();
 
 		for (umm i = 0; i < arguments.count; ++i) {
-			param_scope.variables.insert(parameters[i], argument_values[i]);
+			param_scope.variables.get_or_insert(parameters[i]) = argument_values[i];
 		}
 
 		auto result = execute(lambda->body);

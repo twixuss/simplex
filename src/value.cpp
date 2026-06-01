@@ -36,6 +36,7 @@ ValueKind to_value_kind(Type type) {
 void append(StringBuilder &builder, Value value) {
 	switch (value.kind) {
 		case ValueKind::none: return append(builder, "none");
+		case ValueKind::Bool: return append(builder, value.Bool);
 		case ValueKind::U8: return append(builder, value.U8);
 		case ValueKind::U16: return append(builder, value.U16);
 		case ValueKind::U32: return append(builder, value.U32);
@@ -44,8 +45,10 @@ void append(StringBuilder &builder, Value value) {
 		case ValueKind::S16: return append(builder, value.S16);
 		case ValueKind::S32: return append(builder, value.S32);
 		case ValueKind::S64: return append(builder, value.S64);
-		case ValueKind::UnsizedInteger: return append(builder, value.UnsizedInteger);
-		case ValueKind::Bool: return append(builder, value.Bool);
+		case ValueKind::F32: return append(builder, value.F32);
+		case ValueKind::F64: return append(builder, value.F64);
+		case ValueKind::pointer: return append(builder, value.pointer);
+		case ValueKind::String:  return append(builder, value.String);
 		case ValueKind::Type:    return append(builder, value.Type);
 		case ValueKind::lambda:  return append(builder, value.lambda);
 		case ValueKind::array: {
@@ -58,6 +61,12 @@ void append(StringBuilder &builder, Value value) {
 			append(builder, "]");
 			break;
 		}
+		case ValueKind::UnsizedInteger: return append(builder, value.UnsizedInteger);
+		case ValueKind::UnsizedFloat: return append(builder, value.UnsizedFloat);
+		case ValueKind::struct_: return append(builder, "<struct>");
+		case ValueKind::break_: return append(builder, "<break>");
+		case ValueKind::continue_: return append(builder, "<continue>");
+		case ValueKind::return_: return append(builder, "<return>");
 	}
 	return append_format(builder, "(unknown Value {})", value.kind);
 }
@@ -110,6 +119,7 @@ void default_initialize(Value *value, Type type) {
 	value->kind = to_value_kind(type);
 	switch (value->kind) {
 		case ValueKind::none: { return; }
+		case ValueKind::Bool: { value->Bool = false; return; }
 		case ValueKind::U8: { value->U8 = 0; return; }
 		case ValueKind::U16: { value->U16 = 0; return; }
 		case ValueKind::U32: { value->U32 = 0; return; }
@@ -118,7 +128,8 @@ void default_initialize(Value *value, Type type) {
 		case ValueKind::S16: { value->S16 = 0; return; }
 		case ValueKind::S32: { value->S32 = 0; return; }
 		case ValueKind::S64: { value->S64 = 0; return; }
-		case ValueKind::Bool: { value->Bool = false; return; }
+		case ValueKind::F32: { value->F32 = 0.0f; return; }
+		case ValueKind::F64: { value->F64 = 0.0f; return; }
 		case ValueKind::String: { value->String = {}; return; }
 		case ValueKind::lambda: { value->lambda = {}; return; }
 		case ValueKind::Type: { value->Type = {}; return; }
@@ -143,6 +154,14 @@ void default_initialize(Value *value, Type type) {
 			}
 			return;
 		}
+
+		case ValueKind::UnsizedInteger:
+		case ValueKind::UnsizedFloat:
+		case ValueKind::break_:
+		case ValueKind::continue_:
+		case ValueKind::return_:
+			invalid_code_path("Bad ValueKind {}", value->kind);
+			break;
 	}
 	invalid_code_path("default_initialize: invalid value kind {}", value->kind);
 }

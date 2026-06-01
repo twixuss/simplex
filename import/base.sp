@@ -2,7 +2,7 @@ const Int = S64
 const UInt = U64
 
 fn debug_break() => #intrinsic
-fn panic() => #intrinsic
+fn panic(reason := "") => #intrinsic
 fn print(value: S64) => #intrinsic #linkname "print_S64"
 fn print(value: String) => #intrinsic #linkname "print_String"
 fn println(value: S64) => { print(value); print("\n"); }
@@ -20,7 +20,7 @@ fn memcpy(dst: *var None  src: *let None size: U64): *var None => {
     var d = dst as *var U8
     var s = src as *let U8
     var e = d + size
-    while d < e {
+    while d < e { // TODO: -target c: for some reason d and e are different types
         *d = *s
         d = d + 1
         s = s + 1

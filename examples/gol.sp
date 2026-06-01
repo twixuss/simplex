@@ -20,13 +20,9 @@ fn main() {
     var r: U64 = 0
     for i in 0..N {
         for j in 0..N {
-            (*curr)[i][j] = (r >> 63) & 1
-
-            const k = 3037000507
-            r = r*k^k;
-            r = r*k^k;
-            r = r*k^k;
-            r = r*k^k;
+            const k = 11400714819323198485
+            const l = 5871781006564002452
+            (*curr)[i][j] = (((i*k ^ j*l)*k) as U64 >> 63) as U8
         }
     }
 
@@ -52,13 +48,21 @@ fn main() {
                     (*curr)[(i+1)%N][(j+0)%N] +
                     (*curr)[(i+1)%N][(j+1)%N]
 
-                let t = -((*curr)[i][j] as S16) as U16 & 3327 | 8
-
-                (*next)[i][j] = (t >> (n + (*curr)[i][j] * 8)) & 1
+                if false {
+                    if (*curr)[i][j] {
+                        (*next)[i][j] = if 2 <= n && n <= 3 then 1 else 0
+                    } else {
+                        (*next)[i][j] = if n == 3 then 1 else 0
+                    }
+                } else {
+                    let t = -((*curr)[i][j] as S16) as U16 & 3327 | 8
+                    
+                    (*next)[i][j] = (t >> (n + (*curr)[i][j] * 8)) & 1
+                }
             }
         }
 
-        Sleep(10);
+        //Sleep(10);
 
         var tmp = curr
         curr = next

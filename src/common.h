@@ -2,7 +2,9 @@
 #undef BUILD_DEBUG
 #define BUILD_DEBUG 1
 
+#if COMPILER_MSVC
 #pragma warning(4: 4996)
+#endif
 
 #include <type_traits>
 #include <concepts>
@@ -10,11 +12,11 @@
 #undef assert
 
 namespace tl {
-template <class, class Size>
+template <class>
 struct Span;
 bool debugger_attached();
 }
-using String = tl::Span<char8_t, unsigned long long>;
+using String = tl::Span<char8_t>;
 
 void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function);
 template <class ...Args>
@@ -60,7 +62,9 @@ void assertion_failure(char const *cause_string, char const *expression, char co
 #include <errno.h>
 #endif
 
+#if COMPILER_MSVC
 #pragma warning(error: 4996)
+#endif
 
 using namespace tl;
 
@@ -83,6 +87,11 @@ template <class ...Args>
 inline void assertion_failure(char const *cause_string, char const *expression, char const *file, int line, char const *function, char const *format, Args ...args) {
 	assertion_failure_impl(cause_string, expression, file, line, function, {}, tformat(format, args...));
 }
+
+// WinGDI defines PASSTHROUGH, but I wanna use it myself
+#ifdef PASSTHROUGH
+#undef PASSTHROUGH
+#endif
 
 #define PASSTHROUGH(...) __VA_ARGS__
 
@@ -147,7 +156,9 @@ static constexpr char const *extract_file_name(char const *e) {
 	return e + 1;
 }
 
+#if COMPILER_MSVC
 #define __FILE_NAME__ extract_file_name(__FILE__)
+#endif
 
 
 inline void log_error_path(char const *file, int line, auto &&...args) {

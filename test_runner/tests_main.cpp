@@ -105,6 +105,8 @@ s32 tl_main(Span<String> arguments) {
 	auto executable_directory = parse_path(executable_path).directory;
 	auto compiler_path = format(u8"{}\\simplex.exe", executable_directory);
 
+	println("compiler_path: {}", compiler_path);
+
 	auto root_directory = normalize_path(format(u8"{}\\..", executable_directory), '\\');
 
 	auto test_directory = format(u8"{}\\tests", root_directory);
@@ -218,7 +220,15 @@ reloop:
 					};
 				};
 
-				auto test_source_buffer = read_entire_file(test.path);
+				auto maybe_test_source_buffer = read_entire_file(test.path);
+				if (!maybe_test_source_buffer) {
+					do_fail([&] {
+						with(ConsoleColor::red, print("Could not read file {}\n", test.path));
+					});
+					return;
+				}
+
+				auto test_source_buffer = maybe_test_source_buffer.value();
 				defer { free(test_source_buffer); };
 
 				auto test_source = (String)test_source_buffer;

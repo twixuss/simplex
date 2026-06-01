@@ -198,7 +198,7 @@ void Copier::deep_copy_impl(Struct *from, Struct *to) {
 	LOOKUP_COPY(definition);
 	COPY_LIST(member_list, DEEP_COPY);
 	for (auto &member : to->member_list) {
-		to->member_map.insert(member->name, member);
+		to->member_map.get_or_insert(member->name) = member;
 	}
 	COPY(size);
 	COPY(must_be_fully_initialized);

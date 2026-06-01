@@ -49,20 +49,8 @@ struct Value {
 		List<Value> elements;
 	};
 	Value() {
-		memset(this, 0, sizeof(*this));
+		kind = ValueKind::none;
 	}
-	Value(const Value &that) {
-		memcpy(this, &that, sizeof(Value));
-	}
-	Value(Value &&that) { 
-		memcpy(this, &that, sizeof(Value));
-		memset(&that, 0, sizeof(Value));
-	}
-	~Value() {
-		memset(this, 0, sizeof(Value));
-	}
-	Value &operator=(const Value &that) { return this->~Value(), *new(this) Value(that); }
-	Value &operator=(Value &&that) { return this->~Value(), *new(this) Value(std::move(that)); }
 	explicit Value(ValueKind kind) : kind(kind) {
 		switch (kind) {
 			case ValueKind::return_:
@@ -101,6 +89,29 @@ struct Value {
 			case ValueKind::struct_:
 				result.elements = tl::copy(result.elements);
 				break;
+
+			case ValueKind::none:
+			case ValueKind::U8:
+			case ValueKind::U16:
+			case ValueKind::U32:
+			case ValueKind::U64:
+			case ValueKind::S8:
+			case ValueKind::S16:
+			case ValueKind::S32:
+			case ValueKind::S64:
+			case ValueKind::F32:
+			case ValueKind::F64:
+			case ValueKind::UnsizedInteger:
+			case ValueKind::UnsizedFloat:
+			case ValueKind::Bool:
+			case ValueKind::String:
+			case ValueKind::lambda:
+			case ValueKind::Type:
+			case ValueKind::pointer:
+			case ValueKind::break_:
+			case ValueKind::continue_:
+			case ValueKind::return_:
+				break;
 		}
 		return result;
 	}
@@ -109,6 +120,29 @@ struct Value {
 			case ValueKind::array:
 			case ValueKind::struct_:
 				tl::free(elements);
+				break;
+
+			case ValueKind::none:
+			case ValueKind::U8:
+			case ValueKind::U16:
+			case ValueKind::U32:
+			case ValueKind::U64:
+			case ValueKind::S8:
+			case ValueKind::S16:
+			case ValueKind::S32:
+			case ValueKind::S64:
+			case ValueKind::F32:
+			case ValueKind::F64:
+			case ValueKind::UnsizedInteger:
+			case ValueKind::UnsizedFloat:
+			case ValueKind::Bool:
+			case ValueKind::String:
+			case ValueKind::lambda:
+			case ValueKind::Type:
+			case ValueKind::pointer:
+			case ValueKind::break_:
+			case ValueKind::continue_:
+			case ValueKind::return_:
 				break;
 		}
 	}
@@ -131,11 +165,11 @@ Value zero_of_type(Type type);
 
 decltype(auto) element_at(auto &&collection, Value index) {
 	switch (index.kind) {
-		case ValueKind::U8: return collection[index.U8];
+		case ValueKind::U8:  return collection[index.U8 ];
 		case ValueKind::U16: return collection[index.U16];
 		case ValueKind::U32: return collection[index.U32];
 		case ValueKind::U64: return collection[index.U64];
-		case ValueKind::S8: return collection[index.S8];
+		case ValueKind::S8:  return collection[index.S8 ];
 		case ValueKind::S16: return collection[index.S16];
 		case ValueKind::S32: return collection[index.S32];
 		case ValueKind::S64: return collection[index.S64];

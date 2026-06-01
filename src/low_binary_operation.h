@@ -1,193 +1,220 @@
 #pragma once
 #include "common.h"
 
+/*
+#define x(name)
+ENUMERATE_LOW_BINARY_OPERATIONS(x)
+#undef x
+*/
+#define ENUMERATE_LOW_BINARY_OPERATIONS(x) \
+	/* 2s complement addition */ \
+	x(add8) \
+	x(add16) \
+	x(add32) \
+	x(add64) \
+	/* 2s complement subtraction */ \
+	x(sub8) \
+	x(sub16) \
+	x(sub32) \
+	x(sub64) \
+	/* 2s complement multiplication */ \
+	x(mul8) \
+	x(mul16) \
+	x(mul32) \
+	x(mul64) \
+	/* unsigned division */ \
+	x(divu8) \
+	x(divu16) \
+	x(divu32) \
+	x(divu64) \
+	/* signed division */ \
+	x(divs8) \
+	x(divs16) \
+	x(divs32) \
+	x(divs64) \
+	/* unsigned modision */ \
+	x(modu8) \
+	x(modu16) \
+	x(modu32) \
+	x(modu64) \
+	/* signed modision */ \
+	x(mods8) \
+	x(mods16) \
+	x(mods32) \
+	x(mods64) \
+	/* binary xor */ \
+	x(bxor8) \
+	x(bxor16) \
+	x(bxor32) \
+	x(bxor64) \
+	/* binary and */ \
+	x(band8) \
+	x(band16) \
+	x(band32) \
+	x(band64) \
+	/* binary or */ \
+	x(bor8) \
+	x(bor16) \
+	x(bor32) \
+	x(bor64) \
+	/* shift left */ \
+	x(bsl8) \
+	x(bsl16) \
+	x(bsl32) \
+	x(bsl64) \
+	/* unsigned(logical) shift right */ \
+	x(bsru8) \
+	x(bsru16) \
+	x(bsru32) \
+	x(bsru64) \
+	/* signed(arithmetic) shift right */ \
+	x(bsrs8) \
+	x(bsrs16) \
+	x(bsrs32) \
+	x(bsrs64) \
+	/* equality */ \
+	x(equ8) \
+	x(equ16) \
+	x(equ32) \
+	x(equ64) \
+	/* notequality */ \
+	x(neq8) \
+	x(neq16) \
+	x(neq32) \
+	x(neq64) \
+	/* less than signed */ \
+	x(lts8) \
+	x(lts16) \
+	x(lts32) \
+	x(lts64) \
+	/* greater than signed */ \
+	x(gts8) \
+	x(gts16) \
+	x(gts32) \
+	x(gts64) \
+	/* less-equals signed */ \
+	x(les8) \
+	x(les16) \
+	x(les32) \
+	x(les64) \
+	/* greater-equals signed */ \
+	x(ges8) \
+	x(ges16) \
+	x(ges32) \
+	x(ges64) \
+	/* less than unsigned */ \
+	x(ltu8) \
+	x(ltu16) \
+	x(ltu32) \
+	x(ltu64) \
+	/* greater than unsigned */ \
+	x(gtu8) \
+	x(gtu16) \
+	x(gtu32) \
+	x(gtu64) \
+	/* less-equals unsigned */ \
+	x(leu8) \
+	x(leu16) \
+	x(leu32) \
+	x(leu64) \
+	/* greater-equals unsigned */ \
+	x(geu8) \
+	x(geu16) \
+	x(geu32) \
+	x(geu64) \
+	/* logical and with short circuiting */ \
+	x(land) \
+	/* logical or with short circuiting */ \
+	x(lor) \
+	/* zero extension */ \
+	x(zex8to16) \
+	x(zex8to32) \
+	x(zex16to32) \
+	x(zex8to64) \
+	x(zex16to64) \
+	x(zex32to64) \
+	/* sign extension */ \
+	x(sex8to16) \
+	x(sex8to32) \
+	x(sex16to32) \
+	x(sex8to64) \
+	x(sex16to64) \
+	x(sex32to64) \
+	/* memory comparisons */ \
+	x(memcmp_equ) \
+	x(memcmp_neq) \
+	/* output `get_size(binary->right)` zero bytes */ \
+	x(zeroinit) \
+	/* output binary->left != 0 */ \
+	x(left_to_bool) \
+	/* output binary->right != 0 */ \
+	x(right_to_bool) \
+	/* output binary->left == 0 */ \
+	x(left_to_bool_not) \
+	/* output binary->right == 0 */ \
+	x(right_to_bool_not) \
+	/* output binary->left */ \
+	x(left) \
+	\
+	x(u8_to_f32) \
+	x(u16_to_f32) \
+	x(u32_to_f32) \
+	x(u64_to_f32) \
+	x(s8_to_f32) \
+	x(s16_to_f32) \
+	x(s32_to_f32) \
+	x(s64_to_f32) \
+	\
+	x(u8_to_f64) \
+	x(u16_to_f64) \
+	x(u32_to_f64) \
+	x(u64_to_f64) \
+	x(s8_to_f64) \
+	x(s16_to_f64) \
+	x(s32_to_f64) \
+	x(s64_to_f64) \
+	\
+	x(f32_to_u8) \
+	x(f32_to_u16) \
+	x(f32_to_u32) \
+	x(f32_to_u64) \
+	x(f32_to_s8) \
+	x(f32_to_s16) \
+	x(f32_to_s32) \
+	x(f32_to_s64) \
+	\
+	x(f64_to_u8) \
+	x(f64_to_u16) \
+	x(f64_to_u32) \
+	x(f64_to_u64) \
+	x(f64_to_s8) \
+	x(f64_to_s16) \
+	x(f64_to_s32) \
+	x(f64_to_s64) \
+	\
+	x(f32_to_f64) \
+	x(f64_to_f32) \
+
 enum class LowBinaryOperation : u8 {
-	unknown,
-	// 2s complement addition
-	add8,
-	add16,
-	add32,
-	add64,
-	// 2s complement subtraction
-	sub8,
-	sub16,
-	sub32,
-	sub64,
-	// 2s complement multiplication
-	mul8,
-	mul16,
-	mul32,
-	mul64,
-	// unsigned division
-	divu8,
-	divu16,
-	divu32,
-	divu64,
-	// signed division
-	divs8,
-	divs16,
-	divs32,
-	divs64,
-	// unsigned modision
-	modu8,
-	modu16,
-	modu32,
-	modu64,
-	// signed modision
-	mods8,
-	mods16,
-	mods32,
-	mods64,
-	// binary xor
-	bxor8,
-	bxor16,
-	bxor32,
-	bxor64,
-	// binary and
-	band8,
-	band16,
-	band32,
-	band64,
-	// binary or
-	bor8,
-	bor16,
-	bor32,
-	bor64,
-	// shift left
-	bsl8,
-	bsl16,
-	bsl32,
-	bsl64,
-	// unsigned(logical) shift right
-	bsru8,
-	bsru16,
-	bsru32,
-	bsru64,
-	// signed(arithmetic) shift right
-	bsrs8,
-	bsrs16,
-	bsrs32,
-	bsrs64,
-	// equality
-	equ8,
-	equ16,
-	equ32,
-	equ64,
-	// notequality
-	neq8,
-	neq16,
-	neq32,
-	neq64,
-	// less than signed
-	lts8,
-	lts16,
-	lts32,
-	lts64,
-	// greater than signed
-	gts8,
-	gts16,
-	gts32,
-	gts64,
-	// less-equals signed
-	les8,
-	les16,
-	les32,
-	les64,
-	// greater-equals signed
-	ges8,
-	ges16,
-	ges32,
-	ges64,
-	// less than unsigned
-	ltu8,
-	ltu16,
-	ltu32,
-	ltu64,
-	// greater than unsigned
-	gtu8,
-	gtu16,
-	gtu32,
-	gtu64,
-	// less-equals unsigned
-	leu8,
-	leu16,
-	leu32,
-	leu64,
-	// greater-equals unsigned
-	geu8,
-	geu16,
-	geu32,
-	geu64,
-	// logical and with short circuiting
-	land,
-	// logical or with short circuiting
-	lor,
-	// zero extension
-	zex8to16,
-	zex8to32,
-	zex16to32,
-	zex8to64,
-	zex16to64,
-	zex32to64,
-	// sign extension
-	sex8to16,
-	sex8to32,
-	sex16to32,
-	sex8to64,
-	sex16to64,
-	sex32to64,
-	// memory comparisons
-	memcmp_equ,
-	memcmp_neq,
-	// output `get_size(binary->right)` zero bytes
-	zeroinit,
-	// output binary->left != 0
-	left_to_bool,
-	// output binary->right != 0
-	right_to_bool,
-	// output binary->left == 0
-	left_to_bool_not,
-	// output binary->right == 0
-	right_to_bool_not,
-	// output binary->left
-	left,
+	#define x(name) \
+		name,
+	ENUMERATE_LOW_BINARY_OPERATIONS(x)
+	#undef x
 
-	u8_to_f32,
-	u16_to_f32,
-	u32_to_f32,
-	u64_to_f32,
-	s8_to_f32,
-	s16_to_f32,
-	s32_to_f32,
-	s64_to_f32,
-
-	u8_to_f64,
-	u16_to_f64,
-	u32_to_f64,
-	u64_to_f64,
-	s8_to_f64,
-	s16_to_f64,
-	s32_to_f64,
-	s64_to_f64,
-
-	f32_to_u8,
-	f32_to_u16,
-	f32_to_u32,
-	f32_to_u64,
-	f32_to_s8,
-	f32_to_s16,
-	f32_to_s32,
-	f32_to_s64,
-
-	f64_to_u8,
-	f64_to_u16,
-	f64_to_u32,
-	f64_to_u64,
-	f64_to_s8,
-	f64_to_s16,
-	f64_to_s32,
-	f64_to_s64,
-
-	f32_to_f64,
-	f64_to_f32,
+	count,
 };
+
+inline void append(StringBuilder &builder, LowBinaryOperation op) {
+	switch (op) {
+		#define x(name)                    \
+			case LowBinaryOperation::name: \
+				return append(builder, #name##s);
+		ENUMERATE_LOW_BINARY_OPERATIONS(x)
+		#undef x
+
+		case LowBinaryOperation::count:
+			break;
+	}
+
+	return append_format(builder, "LowBinaryOperation({})", (u64)op);
+}

@@ -185,39 +185,51 @@ LowBinaryOperation integer_extension_low_op(umm source_size, bool source_signed,
 	}
 	if (source_signed) {
 		switch (destination_size) {
-			case 2: switch (source_size) {
-				case 1: return LowBinaryOperation::sex8to16;
-			}
-			case 4:	switch (source_size) {
-				case 1: return LowBinaryOperation::sex8to32;
-				case 2: return LowBinaryOperation::sex16to32;
-			}
-			case 8: switch (source_size) {
-				case 1: return LowBinaryOperation::sex8to64;
-				case 2: return LowBinaryOperation::sex16to64;
-				case 4: return LowBinaryOperation::sex32to64;
-			}
+			case 2:
+				switch (source_size) {
+					case 1: return LowBinaryOperation::sex8to16;
+				}
+				break;
+			case 4:
+				switch (source_size) {
+					case 1: return LowBinaryOperation::sex8to32;
+					case 2: return LowBinaryOperation::sex16to32;
+				}
+				break;
+			case 8:
+				switch (source_size) {
+					case 1: return LowBinaryOperation::sex8to64;
+					case 2: return LowBinaryOperation::sex16to64;
+					case 4: return LowBinaryOperation::sex32to64;
+				}
+				break;
 		}
 	} else {
 		switch (destination_size) {
-			case 2: switch (source_size) {
-				case 1: return LowBinaryOperation::zex8to16;
-			}
-			case 4:	switch (source_size) {
-				case 1: return LowBinaryOperation::zex8to32;
-				case 2: return LowBinaryOperation::zex16to32;
-			}
-			case 8: switch (source_size) {
-				case 1: return LowBinaryOperation::zex8to64;
-				case 2: return LowBinaryOperation::zex16to64;
-				case 4: return LowBinaryOperation::zex32to64;
-			}
+			case 2:
+				switch (source_size) {
+					case 1: return LowBinaryOperation::zex8to16;
+				}
+				break;
+			case 4:
+				switch (source_size) {
+					case 1: return LowBinaryOperation::zex8to32;
+					case 2: return LowBinaryOperation::zex16to32;
+				}
+				break;
+			case 8:
+				switch (source_size) {
+					case 1: return LowBinaryOperation::zex8to64;
+					case 2: return LowBinaryOperation::zex16to64;
+					case 4: return LowBinaryOperation::zex32to64;
+				}
+				break;
 		}
 	}
 	invalid_code_path("can't produce LowBinaryOperation for integer extension: {} {} to {}", source_signed ? "signed" : "unsigned", source_size, destination_size);
 }
 
-constexpr Array<Array<LowBinaryOperation, (int)BuiltinType::count>, (int)BuiltinType::count> builtin_type_conversion_low_op_table = [&](){
+constexpr Array<Array<LowBinaryOperation, (int)BuiltinType::count>, (int)BuiltinType::count> builtin_type_conversion_low_op_table = [](){
 	Array<Array<LowBinaryOperation, (int)BuiltinType::count>, (int)BuiltinType::count> result = {};
 
 	#define x(s, d, op) result[(int)BuiltinType::s][(int)BuiltinType::d] = LowBinaryOperation::op
@@ -1134,7 +1146,7 @@ VectorizedLambda Typechecker::get_or_instantiate_vectorized_lambda(Lambda *origi
 			vectorized = instantiate_fallback_vectorized_lambda();
 		}
 		
-		vectorized_lambdas.insert({ original_lambda, vector_size }, vectorized);
+		vectorized_lambdas.get_or_insert({ original_lambda, vector_size }) = vectorized;
 		return vectorized;
 
 
@@ -3473,7 +3485,7 @@ c
 								vectorized.lambda = as<Lambda>(vectorized.definition->initial_value);
 								assert(vectorized.lambda);
 								
-								vectorized_binarys.insert(key, vectorized);
+								vectorized_binarys.get_or_insert(key) = vectorized;
 							}
 						};
 
@@ -3529,7 +3541,7 @@ c
 			}
 		}
 
-		if (is_modass(binary->operation)) {
+		if (is_opass(binary->operation)) {
 			// Turn   x += y;
 			
 			// Into   { let c = &x; *c = *c + y; } 

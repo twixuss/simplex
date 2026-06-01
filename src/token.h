@@ -2,29 +2,20 @@
 #include "common.h"
 #include "x.h"
 
-consteval u64 const_string_to_token_kind(Span<char> string) {
-	assert(string.count <= 8);
-	u64 result = 0;
-	//for (umm i = string.count - 1; i != -1; --i) {
-	for (umm i = 0; i != string.count; ++i) {
-		result <<= 8;
-		result |= string.data[i];
-	}
-	return result;
-}
-consteval u64 const_string_to_token_kind(char a, char b) {
-	char buffer[] { a, b };
-	return const_string_to_token_kind(array_as_span(buffer));
-}
-consteval u64 const_string_to_token_kind(char a, char b, char c) {
-	char buffer[] { a, b, c };
-	return const_string_to_token_kind(array_as_span(buffer));
+// String TO 64-bit.
+constexpr u64 sto64(Span<char> x) {
+	u64 r = 0;
+	for (umm i = 0; i < x.count; ++i)
+		r ^= (u64)x.data[i] << ((i * 8) & 63);
+	return r;
 }
 
-static_assert(const_string_to_token_kind("+="s) == '+=');
+constexpr u64 operator""_t(char const *string, umm length) {
+	return sto64({string, length});
+}
 
 enum TokenKind : u64 {
-	#define x(name) Token_##name = const_string_to_token_kind(#name##s),
+	#define x(name) Token_##name = #name##_t,
 	#define y(name, value) Token_##name = value,
 	ENUMERATE_TOKEN_KIND(x, y)
 	#undef y

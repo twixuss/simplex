@@ -13,6 +13,89 @@
 #include <tl/variant.h>
 #include <tl/precise_time.h>
 
+
+u32 start_process_and_inherit_standard_streams(Span<utf8> command_line8) {
+	scoped(temporary_storage_checkpoint);
+	utf16 const *command_line = to_utf16<TemporaryAllocator>(command_line8, true).data;
+	SECURITY_ATTRIBUTES saAttr;
+	saAttr.nLength = sizeof(saAttr);
+	saAttr.bInheritHandle = TRUE;
+	saAttr.lpSecurityDescriptor = NULL;
+
+	PROCESS_INFORMATION piProcInfo = {};
+
+	STARTUPINFOW siStartInfo = {};
+	siStartInfo.cb = sizeof(siStartInfo);
+	siStartInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+	siStartInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+	siStartInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+	siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
+
+	if (!CreateProcessW(NULL,
+		(wchar_t *)command_line,
+		NULL,          // process security attributes
+		NULL,          // primary thread security attributes
+		TRUE,          // handles are inherited
+		0,             // creation flags
+		NULL,          // use parent's environment
+		NULL,          // use parent's current directory
+		&siStartInfo,  // STARTUPINFO pointer
+		&piProcInfo)   // receives PROCESS_INFORMATION
+	) {
+		standard_error_printer.writeln(u8"Could not start process. Make sure it is in your PATH."s);
+		return 1;
+	}
+
+	CloseHandle(piProcInfo.hThread);
+
+	WaitForSingleObject((HANDLE)piProcInfo.hProcess, INFINITE);
+
+	DWORD exit_code;
+	GetExitCodeProcess((HANDLE)piProcInfo.hProcess, &exit_code);
+	return (u32)exit_code;
+}
+bool run(String cmd) {
+	standard_error_printer.writeln(cmd);
+
+	u32 code = start_process_and_inherit_standard_streams(cmd);
+
+	if (code) {
+		standard_error_printer.writeln(u8"Process failed."s);
+		return false;
+	}
+	return true;
+}
+
+#if COMPILER_MSVC
+#define CFLAGS ""
+#else
+#define CFLAGS "-Werror=implicit-function-declaration -fmax-errors=1"
+#endif
+
+// TODO: select cl/gcc/clang/whatever through command line arguments instead of this way
+bool compile_intrinsics(String intrinsics_c_path, String intrinsics_obj_path) {
+	#if COMPILER_MSVC
+	if (!run(tformat(u8"cl "CFLAGS" /c {} /Fo:\"{}\" /FS /nologo", intrinsics_c_path, intrinsics_obj_path)))
+		return false;
+	#else
+	if (!run(tformat(u8"gcc "CFLAGS" -c {} -o \"{}\"", intrinsics_c_path, intrinsics_obj_path)))
+		return false;
+	#endif
+
+	return true;
+}
+bool compile_input(String path_base, String intrinsics_obj_path) {
+	#if COMPILER_MSVC
+	if (!run(tformat(u8"cl "CFLAGS" {}.c /Fo:\"{}.obj\" {} /Zi /FS /JMC /nologo /link /out:{}.exe", path_base, path_base, intrinsics_obj_path, path_base)))
+		return false;
+	#else
+	if (!run(tformat(u8"gcc "CFLAGS" {}.c {} -o {}.exe", path_base, intrinsics_obj_path, path_base)))
+		return false;
+	#endif
+
+	return true;
+}
+
 CompilerContext *context;
 
 Node *debug_current_node;
@@ -139,22 +222,25 @@ CType ctype(Type type) {
 }
 
 struct ArrayDesc {
-	Type type;
-	u32 count;
+	Type innermost_element_type;
+	StaticList<u32, 8> counts;
 
 	ArrayDesc(ArrayType *array) {
-		type = direct(array->element_type);
-		count = array->count.value();
+		while (array) {
+			innermost_element_type = direct(array->element_type);
+			counts.add(array->count.value());
+			array = as<ArrayType>(innermost_element_type);
+		}
 	}
 
 	bool operator==(ArrayDesc const &that) const {
-		return count == that.count && types_match(type, that.type);
+		return counts.span() == that.counts.span() && types_match(innermost_element_type, that.innermost_element_type);
 	}
 };
 
 template <>
 u64 get_hash(ArrayDesc const &a) {
-	return a.count ^ (u64)a.type.expression;
+	return get_hash(a.counts.span()) ^ (u64)a.innermost_element_type.expression;
 }
 
 
@@ -454,8 +540,16 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 		append_line(code, "/* {} */", node->location);
 	}
 
-	if (auto expression = as<Expression>(node); expression && !types_match(expression->type, BuiltinType::None) && define) {
-		append_line(code, "{} _{} = {{0}};", ctype(expression->type), node->uid);
+	if (node->uid == 620) {
+		int x = 5;
+	}
+
+	if (auto expression = as<Expression>(node)) {
+		if (!types_match(expression->type, BuiltinType::None)) {
+			if (define) {
+				append_line(code, "{} _{} = {{0}};", ctype(expression->type), node->uid);
+			}
+		}
 	}
 
 	visit_one(node, Combine{
@@ -522,7 +616,30 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			append_line(code, "_{} = {};", node->uid, literal->value);
 		},
 		[&](IntegerLiteral *literal) {
-			append_line(code, "_{} = {};", node->uid, (u64)literal->value);
+			auto t = as<BuiltinTypeName>(direct(literal->type))->type_kind;
+			switch (t) {
+				case BuiltinType::U8 : append_line(code, "_{} = {}u;",   node->uid, (u32)literal->value); break;
+				case BuiltinType::U16: append_line(code, "_{} = {}u;",   node->uid, (u32)literal->value); break;
+				case BuiltinType::U32: append_line(code, "_{} = {}u;",   node->uid, (u32)literal->value); break;
+				case BuiltinType::U64: append_line(code, "_{} = {}ull;", node->uid, (u64)literal->value); break;
+				case BuiltinType::S8 : append_line(code, "_{} = {};",    node->uid, (s32)literal->value); break;
+				case BuiltinType::S16: append_line(code, "_{} = {};",    node->uid, (s32)literal->value); break;
+				case BuiltinType::S32: append_line(code, "_{} = {};",    node->uid, (s32)literal->value); break;
+				case BuiltinType::S64: append_line(code, "_{} = {}ll;",  node->uid, (s64)literal->value); break;
+
+				case BuiltinType::UnsizedInteger:
+					// TODO: UnsizedInteger constants must be split into 4:
+					//       1, 2, 4 and 8 byte ones. The right one should
+					//       be picked at usage site, depending on the destination type.
+					//       Same should be done with UnsizedFloats.
+					//       In the meantime treat them as S64
+					append_line(code, "_{} = {}ll;", node->uid, (s64)literal->value);
+					break;
+				default: 
+					immediate_reporter.error(literal->location, "backends/c: append_node: IntegerLiteral: unhandled type {}", t);
+					invalid_code_path();
+					break;
+			}
 		},
 		[&](FloatLiteral *literal) {
 			append_line(code, "_{} = {};", node->uid, (f64)literal->value);
@@ -567,7 +684,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			if (as_pointer(binary->left->type)) {
 				append_node(code, binary->left);
 				append_node(code, binary->right);
-				append_line(code, "_{} = (char *)_{} {} _{};", node->uid, binary->left->uid, CBinaryOperation{binary->operation}, binary->right->uid);
+				append_line(code, "_{} = _{} {} _{};", node->uid, binary->left->uid, CBinaryOperation{binary->operation}, binary->right->uid);
 				return;
 			}
 
@@ -575,6 +692,14 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				append_node(code, binary->left);
 				append_node(code, binary->right);
 				append_line(code, "_{} = _{} {} (char *)_{};", node->uid, binary->left->uid, CBinaryOperation{binary->operation}, binary->right->uid);
+				return;
+			}
+
+			if (is_concrete_integer(binary->right->type) && is_concrete_integer(binary->left->type) && binary->operation == BinaryOperation::mod) {
+				assert(types_match(binary->left->type, binary->right->type));
+				append_node(code, binary->left);
+				append_node(code, binary->right);
+				append_line(code, "_{} = __modulo_{}(_{}, _{});", node->uid, binary->left->type, binary->left->uid, binary->right->uid);
 				return;
 			}
 
@@ -599,7 +724,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 
 			append_node(code, binary->left);
 			append_node(code, binary->right);
-			append_line(code, "_{} = _{} {} _{};", node->uid, binary->left->uid, CBinaryOperation{binary->operation}, binary->right->uid);
+			append_line(code, "_{} = ({})(_{} {} _{});", node->uid, ctype(binary->type), binary->left->uid, CBinaryOperation{binary->operation}, binary->right->uid);
 		},
 		[&](Return *ret) {
 			if (ret->value) {
@@ -765,12 +890,16 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				append_line(code, "if (_msk{} == {})", If->uid, slln(1, count) - 1);
 				{tabbed_block;
 					append_node(code, If->true_branch);
-					append_line(code, "_{} = _{};", node->uid, If->true_branch->uid);
+					if (!types_match(If->type, BuiltinType::None)) {
+						append_line(code, "_{} = _{};", node->uid, If->true_branch->uid);
+					}
 				}
 				append_line(code, "else if (_msk{} == 0)", If->uid);
 				{tabbed_block;
 					append_node(code, If->false_branch);
-					append_line(code, "_{} = _{};", node->uid, If->false_branch->uid);
+					if (!types_match(If->type, BuiltinType::None)) {
+						append_line(code, "_{} = _{};", node->uid, If->false_branch->uid);
+					}
 				}
 				append_line(code, "else");
 				{tabbed_block;
@@ -785,13 +914,17 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 				append_line(code, "if (_{})", If->condition->uid);
 				{tabbed_block;
 					append_node(code, If->true_branch);
-					append_line(code, "_{} = _{};", node->uid, If->true_branch->uid);
+					if (!types_match(If->type, BuiltinType::None)) {
+						append_line(code, "_{} = _{};", node->uid, If->true_branch->uid);
+					}
 				}
 				if (If->false_branch) {
 					append_line(code, "else");
 					{tabbed_block;
 						append_node(code, If->false_branch);
-						append_line(code, "_{} = _{};", node->uid, If->false_branch->uid);
+						if (!types_match(If->type, BuiltinType::None)) {
+							append_line(code, "_{} = _{};", node->uid, If->false_branch->uid);
+						}
 					}
 				}
 			}
@@ -872,6 +1005,24 @@ struct DirectExpression {
 	inline constexpr auto operator<=>(DirectExpression const &) const noexcept = default;
 };
 
+#define PRELUDE \
+"#include <stdint.h>            \n" \
+"#include <stdbool.h>           \n" \
+"                               \n" \
+"typedef bool Bool;             \n" \
+"typedef uint8_t U8;            \n" \
+"typedef uint16_t U16;          \n" \
+"typedef uint32_t U32;          \n" \
+"typedef uint64_t U64;          \n" \
+"typedef int8_t S8;             \n" \
+"typedef int16_t S16;           \n" \
+"typedef int32_t S32;           \n" \
+"typedef int64_t S64;           \n" \
+"                               \n" \
+"typedef U64 UInt;              \n" \
+"typedef S64 SInt;              \n" \
+"typedef SInt Int;              \n" \
+
 void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_declare) {
 	if (find(types_to_declare.span(), DirectExpression{root})) {
 		return;
@@ -922,27 +1073,16 @@ void add_dependencies(Expression* root, LinearSet<DirectExpression> &types_to_de
 	
 extern "C" __declspec(dllexport)
 bool convert_ast(Block *global_block, Lambda *main_lambda, Definition *main_lambda_definition) {
+	(void)main_lambda_definition;
 	StringBuilder builder;
 	StringBuilder code;
 	
-	append(builder, R"(
+	append(builder, PRELUDE R"(
 #include <stdio.h>
-#include <stdint.h>
-#include <stdbool.h>
 #include <string.h>
 #include <math.h>
 
 #undef assert
-
-typedef bool Bool;
-typedef uint8_t U8;
-typedef uint16_t U16;
-typedef uint32_t U32;
-typedef uint64_t U64;
-typedef int8_t S8;
-typedef int16_t S16;
-typedef int32_t S32;
-typedef int64_t S64;
 
 #pragma warning(push, 0)
 
@@ -1001,14 +1141,17 @@ typedef int64_t S64;
 				append(builder, "};\n");
 			},
 			[&] (ArrayType *array){
-				if (built_array_types.find(array))
+				auto desc = ArrayDesc(array);
+
+				if (built_array_types.find(desc))
 					return;
 
 				append_format(builder, 
-R"(typedef struct {{
+R"(// {}   hash {}   innermost {}  counts {}
+typedef struct {{
 	{} data[{}];
 }} _{};
-)", ctype(array->element_type), array->count.value(), array->uid);
+)", array, format_hex(get_hash(desc)), format_hex((u64)(Node *)desc.innermost_element_type), desc.counts.span(), ctype(array->element_type), array->count.value(), array->uid);
 
 				built_array_types.get_or_insert(array) = array->uid;
 			},
@@ -1043,6 +1186,14 @@ void print_String(_{} x);
 void print_S64(int64_t v);
 uint64_t __movmsk(void const *msk, uint64_t size, uint64_t count);
 void __blend(void *dest, uint64_t msk, void const *a, void const *b, uint64_t size, uint64_t count);
+U8  __modulo_U8 (U8 , U8 );
+U16 __modulo_U16(U16, U16);
+U32 __modulo_U32(U32, U32);
+U64 __modulo_U64(U64, U64);
+S8  __modulo_S8 (S8 , S8 );
+S16 __modulo_S16(S16, S16);
+S32 __modulo_S32(S32, S32);
+S64 __modulo_S64(S64, S64);
 )", context->builtin_structs.String->uid, context->builtin_structs.String->uid);
 	
 	append(builder, R"(
@@ -1129,7 +1280,11 @@ void __blend(void *dest, uint64_t msk, void const *a, void const *b, uint64_t si
 				append     (builder, code);
 				append     (builder, "retlabel:");
 				if (types_match(lambda->body->type, BuiltinType::None)) {
-					append_line(builder, "return;");
+					if (types_match(lambda->head.return_type, BuiltinType::None)) {
+						append_line(builder, "return;");
+					} else {
+						append_line(builder, "panic(__make_string(\"Should have returned something by that time but didn't\"));");
+					}
 				} else {
 					append_line(builder, "return _{};", lambda->body->uid);
 				}
@@ -1182,54 +1337,33 @@ int main() {{
 		}
 	}
 	--tabs;
-	append_format(builder, R"(
-    return {}();
+
+		append_format(builder, "\n#line 999999 \"{}.c\"\n", path_base);
+
+	if (types_match(main_lambda->head.return_type, BuiltinType::None)) {
+		append_format(builder, R"(
+	{}();
+	return 0;
 }}
 )", CName{main_lambda});
+	} else {
+		append_format(builder, R"(
+	return {}();
+}}
+)", CName{main_lambda});
+	}
 
 	write_entire_file(tformat(u8"{}.c", path_base), to_string(builder));
 	
 	
-	auto run = [&](String cmd) {
-		standard_error_printer.writeln(cmd);
 
-		
-		auto process = start_process(cmd);
-		if (!is_valid(process)) {
-			standard_error_printer.writeln(u8"Could not start process. Make sure it is in your PATH."s);
-			return false;
-		}
-		while (true) {
-			u8 buffer[256];
-			auto bytes_read = process.standard_out->read(array_as_span(buffer));
-			if (bytes_read == 0) {
-				break;
-			}
-			standard_error_printer.write(Span(buffer, bytes_read));
-		}
-
-		wait(process);
-		auto code = get_exit_code(process);
-		free(process);
-	
-		if (code) {
-			standard_error_printer.writeln(u8"Process failed."s);
-			return false;
-		}
-		return true;
-	};
-	
-
-	auto intrinsics_c_path = tformat("{}\\intrinsics.c", context_base->compiler_bin_directory);
-	auto intrinsics_obj_path = tformat("{}\\intrinsics.obj", context_base->compiler_bin_directory);
+	auto intrinsics_c_path = tformat(u8"{}\\intrinsics.c", context_base->compiler_bin_directory);
+	auto intrinsics_obj_path = tformat(u8"{}\\intrinsics.obj", context_base->compiler_bin_directory);
 
 	if (get_file_write_time(tformat("{}\\targets\\c.dll", context_base->compiler_bin_directory)).value_or(0) > get_file_write_time(intrinsics_obj_path).value_or(0)) {
 		builder.clear();
 
-		append(builder, R"(
-#include <stdint.h>
-#include <stdbool.h>
-
+		append(builder, PRELUDE R"(
 #pragma warning(push, 0)
 
 //
@@ -1237,14 +1371,18 @@ int main() {{
 //
 
 typedef struct {
-	uint8_t *data;
-	size_t count;
+	U8 *data;
+	UInt count;
 } String;
 
 bool __stdcall WriteFile(void *hFile, void const *lpBuffer, unsigned nNumberOfBytesToWrite, unsigned *lpNumberOfBytesWritten, void *lpOverlapped);
+void *__stdcall GetStdHandle(int);
+
+size_t strlen(char const *);
+void *memcpy(void *, void const *, size_t);
 
 String __make_string(char const *str) {
-	return (String){str, strlen(str)};
+	return (String){(U8 *)str, strlen(str)};
 }
 
 // stdio replaces \n with \r\n ...
@@ -1275,25 +1413,35 @@ void print_S64(int64_t v) {
 
 }
 
-uint64_t __movmsk(uint8_t const *msk, uint64_t size, uint64_t count) {
-	uint64_t result = 0;
-	for (uint64_t i = 0; i < count; ++i)
-		result |= (uint64_t)(msk[i * size] & 1) << i;
+U64 __movmsk(U8 const *msk, U64 size, U64 count) {
+	U64 result = 0;
+	for (U64 i = 0; i < count; ++i)
+		result |= (U64)(msk[i * size] & 1) << i;
 	return result;
 }
-void __blend(uint8_t *d, uint64_t msk, uint8_t const *a, uint8_t const *b, uint64_t size, uint64_t count) {
-	for (uint64_t i = 0; i < count; ++i)
+void __blend(U8 *d, U64 msk, U8 const *a, U8 const *b, U64 size, U64 count) {
+	for (U64 i = 0; i < count; ++i)
 		memcpy(d + i*size, ((msk >> i) & 1 ? a : b) + i*size, size);
 }
+
+
+U8  __modulo_U8 (U8  v, U8  s) { return v % s; }
+U16 __modulo_U16(U16 v, U16 s) { return v % s; }
+U32 __modulo_U32(U32 v, U32 s) { return v % s; }
+U64 __modulo_U64(U64 v, U64 s) { return v % s; }
+S8  __modulo_S8 (S8  v, S8  s) { return v < 0 ? (v + 1) % s + s - 1 : v % s; }
+S16 __modulo_S16(S16 v, S16 s) { return v < 0 ? (v + 1) % s + s - 1 : v % s; }
+S32 __modulo_S32(S32 v, S32 s) { return v < 0 ? (v + 1) % s + s - 1 : v % s; }
+S64 __modulo_S64(S64 v, S64 s) { return v < 0 ? (v + 1) % s + s - 1 : v % s; }
 
 void debug_break() {
 	__debugbreak();
 }
-void panic() {
-	print_String(__make_string("PANIC\n"));
+void panic(String reason) {
+	print_String(reason);
 	__debugbreak();
 }
-void assert(bool x) {
+void assert(Bool x) {
 	if (!x)
 		debug_break();
 }
@@ -1301,16 +1449,13 @@ void assert(bool x) {
 )");
 
 		write_entire_file(intrinsics_c_path, to_string(builder));
-		if (!run(tformat(u8"cl /c {} /Fo:\"{}\" /FS /nologo", intrinsics_c_path, intrinsics_obj_path))) {
+		if (!compile_intrinsics(intrinsics_c_path, intrinsics_obj_path))
 			return false;
-		}
 	}
-
 	
-	if (!run(tformat(u8"cl {}.c /Fo:\"{}\" {} /Zi /FS /JMC /nologo /link /out:{}.exe", path_base, tformat("{}.obj", path_base), intrinsics_obj_path, path_base))) {
+	if (!compile_input(path_base, intrinsics_obj_path))
 		return false;
-	}
-
+	
 	if (!context_base->keep_build_artifacts) {
 		delete_file(tformat(u8"{}.c", path_base));
 		delete_file(tformat(u8"{}.obj", path_base));
@@ -1322,8 +1467,7 @@ void assert(bool x) {
 
 extern "C" __declspec(dllexport)
 u32 run() {
-	auto code = start_process(tformat(u8"{}.exe", parse_path(context->input_source_path).path_without_extension()), [](auto s){standard_error_printer.write(s);});
-	return code.value_or(0);
+	return start_process_and_inherit_standard_streams(tformat(u8"{}.exe", parse_path(context->input_source_path).path_without_extension()));
 }
 
 // FIXME: Copied from main.cpp

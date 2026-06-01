@@ -7,6 +7,22 @@
 
 namespace Bytecode {
 
+enum PrintIntBase {
+	decimal,
+	hex,
+	binary,
+};
+
+struct PrintValueOptions {
+	PrintIntBase base = PrintIntBase::decimal;
+};
+
+#if COMPILER_MSVC
+#define dont_sanitize
+#else
+#define dont_sanitize __attribute__((no_sanitize("address")))
+#endif
+
 struct Interpreter {
 	inline static Interpreter *current_interpreter;
 	Bytecode *bytecode = 0;
@@ -68,16 +84,6 @@ struct Interpreter {
 	}
 	
 	bool init_gui();
-
-	enum PrintIntBase {
-		decimal,
-		hex,
-		binary,
-	};
-
-	struct PrintValueOptions {
-		PrintIntBase base = PrintIntBase::decimal;
-	};
 
 	inline static PrintValueOptions current_print_options = {};
 
@@ -175,7 +181,7 @@ struct Interpreter {
 	void *load_extern_function(String libname, String name);
 	
 	#define y(type, name)
-	#define x(name, fields) void execute(Instruction::name##_t i);
+	#define x(name, fields) dont_sanitize void execute(Instruction::name##_t i);
 	ENUMERATE_BYTECODE_INSTRUCTION_KIND
 	#undef x
 	#undef y

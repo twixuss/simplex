@@ -7,7 +7,7 @@
 #include <tl/contiguous_hash_map.h>
 #include <tl/bucket_hash_map.h>
 #include <tl/dynamic_lib.h>
-#include <tl/opengl.h>
+//#include <tl/opengl.h>
 #include <tl/precise_time.h>
 #include <tl/date.h>
 
@@ -566,6 +566,10 @@ s32 tl_main(Span<Span<utf8>> args) {
 	debug_init();
 
 	set_console_encoding(Encoding::utf8);
+
+	atexit([] {
+		set_console_color(ConsoleColor::gray);
+	});
 	
 	/*
 	c2simplex(u8R"(
@@ -622,6 +626,7 @@ s32 tl_main(Span<Span<utf8>> args) {
 	context_base->generated_source_directory = format(u8"{}\\generated", context_base->compiler_root_directory);
 
 	for_each_file(context_base->generated_source_directory, {}, [&](String path) {
+		(void)path;
 		return ForEach_erase;
 	});
 
@@ -694,11 +699,10 @@ s32 tl_main(Span<Span<utf8>> args) {
 
 		for (auto node : context->global_block.unprotected.children) {
 			auto &entry = typecheck_entries.add({.node = node});
-			typecheck_entries_by_node.insert(node, &entry);
+			typecheck_entries_by_node.get_or_insert(node) = &entry;
 		}
 
 
-		u32 round_index = 0;
 		while (true) {
 			auto initial_progress = get_typechecking_progress();
 
@@ -819,6 +823,8 @@ s32 tl_main(Span<Span<utf8>> args) {
 							cycle.clear();
 							break;
 						}
+						case VertexState::finished:
+							break;
 					}
 				}
 				vertices.get_or_insert(u).state = VertexState::finished;

@@ -6,7 +6,7 @@ struct Copier {
 	HashMap<Node *, Node *> copied_nodes;
 
 	template <class T>
-	[[nodiscard]] void copy_base(T *from, T *to) {
+	void copy_base(T *from, T *to) {
 		copied_nodes.get_or_insert(from) = to;
 		to->location = from->location;
 	}
@@ -18,7 +18,7 @@ struct Copier {
 	}
 	
 	template <class T>
-	[[nodiscard]] void deep_copy(T *from, T *to) {
+	void deep_copy(T *from, T *to) {
 		copy_base(from, to);
 		deep_copy_impl(from, to);
 		if (auto to_expression = as<Expression>(to)) {

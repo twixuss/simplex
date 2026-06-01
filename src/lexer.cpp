@@ -12,21 +12,21 @@ using VMask = u64;
 #define vcmplt(a, b) _mm512_cmplt_epi8(a, b)
 #define vset1(a) _mm512_set1_epi8(a)
 #define vat(a, i) (a).m512i_u8[i]
-#define vmset1(a) _cvtu64_mask64(a ? ~0 : 0)
+#define vmset1(a) _cvtu64_mask64(a ? 0xffff'ffff'ffff'ffff : 0)
 #define vmor(a, b) _kor_mask64(a, b)
-#define vmask(a) (u16)(a)
+#define vmask(a) (u64)(a)
 #elif ARCH_AVX2
 using VMask = u32;
 #define VSIZE 32
 #define vload(p) _mm256_loadu_si256((__m256i *)(p))
 #define vsub(a, b) _mm256_sub_epi8(a, b)
 #define vcmpeq(a, b) _mm256_cmpeq_epi8(a, b)
-#define vcmplt(a, b) _mm256_cmplt_epi8(a, b)
+#define vcmplt(a, b) _mm256_cmpgt_epi8(b, a)
 #define vset1(a) _mm256_set1_epi8(a)
 #define vat(a, i) (a).m256i_u8[i]
-#define vmset1(a) (a ? ~0 : 0)
+#define vmset1(a) (a ? 0xffff'ffff : 0)
 #define vmor(a, b) _mm256_or_si256(a, b)
-#define vmask(a) (u16)_mm256_movemask_epi8(a)
+#define vmask(a) (u32)_mm256_movemask_epi8(a)
 #else
 using VMask = u16;
 #define VSIZE 16
@@ -36,7 +36,7 @@ using VMask = u16;
 #define vcmplt(a, b) _mm_cmplt_epi8(a, b)
 #define vset1(a) _mm_set1_epi8(a)
 #define vat(a, i) (a).m128i_u8[i]
-#define vmset1(a) (a ? ~0 : 0)
+#define vmset1(a) (a ? 0xffff : 0)
 #define vmor(a, b) _mm_or_si128(a, b)
 #define vmask(a) (u16)_mm_movemask_epi8(a)
 #endif
@@ -111,6 +111,7 @@ Token Lexer::next_token() {
 				case '\0': {
 					reporter->error(token.string.take(1), "Unclosed literal");
 					fail();
+					break;
 				}
 				case '\\': {
 					next();
@@ -258,8 +259,8 @@ restart:
 	
 	#if 1
 	// SIMD
-	VMask mask = vmset1(1);
-	while (mask == (VMask)~0) {
+	VMask mask = vmset1(true);
+	while (mask == vmset1(true)) {
 		auto chars = vload(cursor);
 		auto m1 = vcmpeq(chars, vset1('\t'));
 		auto m2 = vcmpeq(chars, vset1('\v'));
@@ -322,7 +323,7 @@ restart:
 
 			bool same = *cursor == first;
 			cursor += same;
-			kind = same ? first | (first << 8) : first;
+			kind = same ? (first << 8) | first : first;
 
 			token.kind = (TokenKind)kind;
 			goto finish;
@@ -337,7 +338,7 @@ restart:
 		case '!': {
 			u64 kind = *cursor++;
 			if (*cursor == '=') {
-				kind = kind << 8 | *cursor++;
+				kind |= *cursor++ << 8;
 			}
 			token.kind = (TokenKind)kind;
 			goto finish;
@@ -351,11 +352,11 @@ restart:
 			u8 first = *cursor++;
 			u64 kind = first;
 			if (*cursor == '=' || *cursor == first) {
-				kind = kind << 8 | *cursor++;
+				kind |= *cursor++ << 8;
 			}
 			token.kind = (TokenKind)kind;
 
-			if (token.kind == (first | (first << 8))) {
+			if (token.kind == ((first << 8) | first)) {
 				reporter->error(String{token.string.data, cursor}, "This language does not support {}{} operation. Use {}= instead", (char)first, (char)first, (char)first);
 				fail();
 			}
@@ -370,7 +371,7 @@ restart:
 			u8 first = *cursor++;
 			u64 kind = first;
 			if (*cursor == '>' || *cursor == first) {
-				kind = kind << 8 | *cursor++;
+				kind |= *cursor++ << 8;
 			}
 			token.kind = (TokenKind)kind;
 			goto finish;
@@ -385,11 +386,11 @@ restart:
 			u8 first = *cursor++;
 			u64 kind = first; // x
 			if (*cursor == '=') {
-				kind = kind << 8 | *cursor++; // x=
+				kind |= *cursor++ << 8; // x=
 			} else if (*cursor == first) {
-				kind = kind << 8 | *cursor++; // xx
+				kind |= *cursor++ << 8; // xx
 				if (*cursor == '=') {
-					kind = kind << 8 | *cursor++; // xx=
+					kind |= *cursor++ << 16; // xx=
 				}
 			}
 			token.kind = (TokenKind)kind;
@@ -406,7 +407,7 @@ restart:
 				goto restart;
 			} else if (*cursor == '=') {
 				++cursor;
-				token.kind = (TokenKind)'/=';
+				token.kind = (TokenKind)"/="_t;
 				goto finish;
 			} else if (*cursor == '*') {
 				int level = 1;
@@ -491,7 +492,7 @@ restart:
 
 			umm max_length = 8;
 			if (i > max_length) {
-				reporter->error(Span(token.string.data, cursor), "Multi-character can't be longer than {} bytes. You provided {}.", max_length, i);
+				reporter->error(Span(token.string.data, cursor), "Multi-character literal can't be longer than {} bytes. You provided {}.", max_length, i);
 				fail();
 			}
 
@@ -729,23 +730,6 @@ restart:
 				return max; 
 			}();
 			
-			auto swp = [](u64 x) {
-				u64 r = 0;
-				while (x) {
-					r = (r << 8) | (x & 0xff);
-					x >>= 8;
-				}
-				return r;
-			};
-
-			auto swp2 = [](Span<char> x) {
-				u64 r = 0;
-				for (umm i = 0; i < x.count; ++i) {
-					r = (r << 8) | x.data[x.count-i-1];
-				}
-				return r;
-			};
-
 			#if 0
 				
 			if (false) {}
@@ -788,77 +772,88 @@ restart:
 				#elif 1
 				// Manual switch
 				case 2: {
-					u16 token_as_int = *(u16 *)token.string.data;
+					u16 token_as_int;
+					memcpy(&token_as_int, token.string.data, 2);
+
 					switch (token_as_int) {
-						case swp('or'): { token.kind = Token_or; break; }
-						case swp('U8'): { token.kind = Token_U8; break; }
-						case swp('S8'): { token.kind = Token_S8; break; }
-						case swp('if'): { token.kind = Token_if; break; }
-						case swp('as'): { token.kind = Token_as; break; }
-						case swp('fn'): { token.kind = Token_fn; break; }
-						case swp('in'): { token.kind = Token_in; break; }
+						case "or"_t: { token.kind = Token_or; break; }
+						case "U8"_t: { token.kind = Token_U8; break; }
+						case "S8"_t: { token.kind = Token_S8; break; }
+						case "if"_t: { token.kind = Token_if; break; }
+						case "as"_t: { token.kind = Token_as; break; }
+						case "fn"_t: { token.kind = Token_fn; break; }
+						case "in"_t: { token.kind = Token_in; break; }
 					}
 					break;
 				}
 				case 3: {
-					u32 token_as_int = *(u32 *)token.string.data & 0xff'ff'ff;
+					u32 token_as_int;
+					memcpy(&token_as_int, token.string.data, 4);
+					token_as_int &= 0xff'ff'ff;
+
 					switch (token_as_int) {
-						case swp('U16'): { token.kind = Token_U16; break; }
-						case swp('U32'): { token.kind = Token_U32; break; }
-						case swp('U64'): { token.kind = Token_U64; break; }
-						case swp('S16'): { token.kind = Token_S16; break; }
-						case swp('S32'): { token.kind = Token_S32; break; }
-						case swp('S64'): { token.kind = Token_S64; break; }
-						case swp('let'): { token.kind = Token_let; break; }
-						case swp('var'): { token.kind = Token_var; break; }
-						case swp('for'): { token.kind = Token_for; break; }
-						case swp('use'): { token.kind = Token_use; break; }
+						case "U16"_t: { token.kind = Token_U16; break; }
+						case "U32"_t: { token.kind = Token_U32; break; }
+						case "U64"_t: { token.kind = Token_U64; break; }
+						case "S16"_t: { token.kind = Token_S16; break; }
+						case "S32"_t: { token.kind = Token_S32; break; }
+						case "S64"_t: { token.kind = Token_S64; break; }
+						case "let"_t: { token.kind = Token_let; break; }
+						case "var"_t: { token.kind = Token_var; break; }
+						case "for"_t: { token.kind = Token_for; break; }
+						case "use"_t: { token.kind = Token_use; break; }
 					}
 					break;
 				}
 				case 4: {
-					u32 token_as_int = *(u32 *)token.string.data;
+					u32 token_as_int;
+					memcpy(&token_as_int, token.string.data, 4);
 					switch (token_as_int) {
-						case swp('Type'): { token.kind = Token_Type; break; }
-						case swp('Bool'): { token.kind = Token_Bool; break; }
-						case swp('None'): { token.kind = Token_None; break; }
-						case swp('none'): { token.kind = Token_none; break; }
-						case swp('then'): { token.kind = Token_then; break; }
-						case swp('else'): { token.kind = Token_else; break; }
-						case swp('true'): { token.kind = Token_true; break; }
-						case swp('enum'): { token.kind = Token_enum; break; }
+						case "Type"_t: { token.kind = Token_Type; break; }
+						case "Bool"_t: { token.kind = Token_Bool; break; }
+						case "None"_t: { token.kind = Token_None; break; }
+						case "none"_t: { token.kind = Token_none; break; }
+						case "then"_t: { token.kind = Token_then; break; }
+						case "else"_t: { token.kind = Token_else; break; }
+						case "true"_t: { token.kind = Token_true; break; }
+						case "enum"_t: { token.kind = Token_enum; break; }
 					}
 					break;
 				}
 				case 5: {
-					u64 token_as_int = *(u64 *)token.string.data & 0xff'ff'ff'ff'ff;
+					u64 token_as_int;
+					memcpy(&token_as_int, token.string.data, 8);
+					token_as_int &= 0xff'ff'ff'ff'ff;
 					switch (token_as_int) {
-						case swp2("const"s): { token.kind = Token_const; break; }
-						case swp2("false"s): { token.kind = Token_false; break; }
-						case swp2("while"s): { token.kind = Token_while; break; }
-						case swp2("break"s): { token.kind = Token_break; break; }
-						case swp2("match"s): { token.kind = Token_match; break; }
-						case swp2("defer"s): { token.kind = Token_defer; break; }
+						case "const"_t: { token.kind = Token_const; break; }
+						case "false"_t: { token.kind = Token_false; break; }
+						case "while"_t: { token.kind = Token_while; break; }
+						case "break"_t: { token.kind = Token_break; break; }
+						case "match"_t: { token.kind = Token_match; break; }
+						case "defer"_t: { token.kind = Token_defer; break; }
 					}
 					break;
 				}
 				case 6: {
-					u64 token_as_int = *(u64 *)token.string.data & 0xff'ff'ff'ff'ff'ff;
+					u64 token_as_int;
+					memcpy(&token_as_int, token.string.data, 8);
+					token_as_int &= 0xff'ff'ff'ff'ff'ff;
 					switch (token_as_int) {
-						case swp2("String"s): { token.kind = Token_String; break; }
-						case swp2("return"s): { token.kind = Token_return; break; }
-						case swp2("typeof"s): { token.kind = Token_typeof; break; }
-						case swp2("inline"s): { token.kind = Token_inline; break; }
-						case swp2("struct"s): { token.kind = Token_struct; break; }
-						case swp2("import"s): { token.kind = Token_import; break; }
+						case "String"_t: { token.kind = Token_String; break; }
+						case "return"_t: { token.kind = Token_return; break; }
+						case "typeof"_t: { token.kind = Token_typeof; break; }
+						case "inline"_t: { token.kind = Token_inline; break; }
+						case "struct"_t: { token.kind = Token_struct; break; }
+						case "import"_t: { token.kind = Token_import; break; }
 					}
 					break;
 				}
 				case 8: {
-					u64 token_as_int = *(u64 *)token.string.data;
+					u64 token_as_int;
+					memcpy(&token_as_int, token.string.data, 8);
 					switch (token_as_int) {
-						case swp2("continue"s): { token.kind = Token_continue; break; }
-						case swp2("noinline"s): { token.kind = Token_noinline; break; }
+						case "continue"_t: { token.kind = Token_continue; break; }
+						case "noinline"_t: { token.kind = Token_noinline; break; }
 					}
 					break;
 				}

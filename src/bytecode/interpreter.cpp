@@ -1,6 +1,7 @@
-#include <imgui.h>
-#include <backends/imgui_impl_win32.h>
-#include <backends/imgui_impl_opengl3.h>
+//#define IMGUI_DEFINE_MATH_OPERATORS
+//#include <imgui.h>
+//#include <backends/imgui_impl_win32.h>
+//#include <backends/imgui_impl_opengl3.h>
 
 #include <conio.h>
 
@@ -14,14 +15,13 @@
 #include "../compiler_context.h"
 
 #include <tl/linear_set.h>
-#include <tl/opengl.h>
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <tl/win32.h>
 
-ImVec2 operator-(ImVec2 a, ImVec2 b) { return {a.x - b.x, a.y - b.y}; }
-
+#if 0
+#include <tl/opengl.h>
 HWND hwnd;
 v2s screen_size;
 
@@ -55,12 +55,31 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 	}
 	return DefWindowProcW(hwnd, msg, wp, lp);
 }
+#endif
+
+#if COMPILER_MSVC
+	#define TRY_EXCEPT(try_function, exception_filter_function, ...)      \
+		__try {                                                           \
+			try_function();                                               \
+		}                                                                 \
+		__except (exception_filter_function(GetExceptionInformation())) { \
+			__VA_ARGS__                                                   \
+		}
+#else
+	#define TRY_EXCEPT(try_function, exception_filter_function)                   \
+		auto handler = AddVectoredExceptionHandler(1, exception_filter_function); \
+		try_function();                                                           \
+		RemoveVectoredExceptionHandler(handler);
+#endif
 
 namespace Bytecode {
 
 String exception_info;
 
 bool Interpreter::init_gui() {
+	not_implemented();
+	return false;
+	#if 0
 	WNDCLASSEXW c {
 		.cbSize = sizeof c,
 		.lpfnWndProc = wnd_proc,
@@ -104,6 +123,7 @@ bool Interpreter::init_gui() {
 	ImGui_ImplWin32_InitForOpenGL(hwnd);
 	ImGui_ImplOpenGL3_Init();
 	return true;
+	#endif
 }
 Optional<u64> Interpreter::run(Bytecode *bytecode, umm entry_index, bool interactive) {
 	scoped_replace(current_interpreter, this);
@@ -131,15 +151,17 @@ Optional<u64> Interpreter::run(Bytecode *bytecode, umm entry_index, bool interac
 	for (auto i : bytecode->instructions) {
 		switch (i.kind) {
 			case InstructionKind::callext:
-				load_extern_function(i.v_callext.lib, i.v_callext.name);
+				load_extern_function(i.as.callext.lib, i.as.callext.name);
 				break;
 			case InstructionKind::copyext:
-				load_extern_function(i.v_copyext.lib, i.v_copyext.name);
+				load_extern_function(i.as.copyext.lib, i.as.copyext.name);
 				break;
 		}
 	}
 
 	if (interactive && context_base->enable_gui) {
+		not_implemented();
+		#if 0
 		if (!init_gui()) {
 			context_base->enable_gui = false;
 		}
@@ -174,30 +196,34 @@ Optional<u64> Interpreter::run(Bytecode *bytecode, umm entry_index, bool interac
 			gl::present();
 			current_temporary_allocator.clear();
 		}
+		#endif
 	}
 
 	if (setjmp(stop_interpering_jmp_buf) == 1) {
 		return {};
 	}
 
-	__try {
+	auto try_block = [&] {
 		run_while([&] { return current_instruction_index < bytecode->instructions.count; });
-	}
-	__except (EXCEPTION_EXECUTE_HANDLER) {
+	};
+
+	static thread_local Interpreter *self;
+	self = this;
+	auto exception_filter = [](EXCEPTION_POINTERS *ep) -> LONG {
 		with(ConsoleColor::red, println("Caught exception during bytecode interpreting"));
-		println("Instruction index: {}", current_instruction_index);
-		if (current_instruction_index < bytecode->instructions.count) {
-			auto i = bytecode->instructions[current_instruction_index];
+		println("Instruction index: {}", self->current_instruction_index);
+		if (self->current_instruction_index < self->bytecode->instructions.count) {
+			auto i = self->bytecode->instructions[self->current_instruction_index];
 			println("Instruction:");
 			print("    ");
-			print_instruction(current_instruction_index, i);
+			print_instruction(self->current_instruction_index, i);
 			println();
 
 			immediate_reporter.error(i.source_location, "Source:");
 		}
 		println("Call stack (old first):");
-		for (auto index : debug_call_stack) {
-			if (auto found = bytecode->first_instruction_to_lambda.find(index)) {
+		for (auto index : self->debug_call_stack) {
+			if (auto found = self->bytecode->first_instruction_to_lambda.find(index)) {
 				auto lambda = *found.value;
 				auto loc = get_source_location(lambda->location);
 				println("{}:{}: {}", loc.file, loc.location_line_number, lambda->definition ? lambda->definition->name : u8"(unnamed)"s);
@@ -205,8 +231,10 @@ Optional<u64> Interpreter::run(Bytecode *bytecode, umm entry_index, bool interac
 				println("unknown at #{}", index);
 			}
 		}
-		return {};
-	}
+		return EXCEPTION_EXECUTE_HANDLER;
+	};
+
+	TRY_EXCEPT(try_block, exception_filter);
 
 	return val8(Address { .offset = (s64)((stack + stack_size) - 8)});
 }
@@ -552,28 +580,34 @@ void Interpreter::run_one_instruction() {
 
 	previous_registers = registers;
 
-	__try {
+	auto try_block = [&] {
 		switch (bytecode->instructions[current_instruction_index].kind) {
-			#define x(name, fields) case InstructionKind::name: execute(bytecode->instructions[current_instruction_index].v_##name); break;
+			#define x(name, fields) case InstructionKind::name: execute(bytecode->instructions[current_instruction_index].as.name); break;
 			ENUMERATE_BYTECODE_INSTRUCTION_KIND
 			#undef x
 		}
-	} __except ([&](EXCEPTION_POINTERS *ep){
+	};
+
+	static thread_local Interpreter *interpreter;
+	interpreter = this;
+	auto exception_filter = [] (EXCEPTION_POINTERS *ep) -> LONG {
 		if (context->run_interactive) {
 			exception_info = format(u8"EXCEPTION: {}\nADDRESS: {}", ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress);
-			current_instruction_index -= 1;
-			run_strategy = RunNever{};
+			interpreter->current_instruction_index -= 1;
+			interpreter->run_strategy = RunNever{};
 			return EXCEPTION_EXECUTE_HANDLER;
 		} else {
 			return EXCEPTION_CONTINUE_SEARCH;
 		}
-	}(GetExceptionInformation())) {
-	}
+	};
+
+	TRY_EXCEPT(try_block, exception_filter);
 
 	++current_instruction_index;
 }
 	
 int Interpreter::print_value_inner(Address address, Type type, PrintValueOptions options) {
+	#if COMPILER_MSVC
 	__try {
 		if (types_match(type, BuiltinType::None)) return 0;
 		if (types_match(type, BuiltinType::Bool)) return print((bool)val1(address));
@@ -645,6 +679,9 @@ int Interpreter::print_value_inner(Address address, Type type, PrintValueOptions
 	} __except (EXCEPTION_EXECUTE_HANDLER) {
 		return print("???");
 	}
+	#else
+	not_implemented();
+	#endif
 }
 int Interpreter::print_value(Address address, Type type, PrintValueOptions options) {
 	printed_value_addresses.clear();
@@ -692,7 +729,7 @@ s32 Interpreter::val4(InputValue v, u8 index) { return v.is_register() ? val4(v.
 s16 Interpreter::val2(InputValue v, u8 index) { return v.is_register() ? val2(v.get_register(), index) : v.is_address() ? val2(v.get_address(), index) : v.get_constant(); }
 s8  Interpreter::val1(InputValue v, u8 index) { return v.is_register() ? val1(v.get_register(), index) : v.is_address() ? val1(v.get_address(), index) : v.get_constant(); }
 
-#define E(name, ...) execute(Instruction{.kind = InstructionKind::name, .v_##name = { __VA_ARGS__ }}.v_##name)
+#define E(name, ...) execute(Instruction{.kind = InstructionKind::name, .as = { .name = { __VA_ARGS__ }}}.as.name)
 	
 void *Interpreter::load_extern_function(String libname, String name) {
 	auto &lib = libraries.get_or_insert(libname);
@@ -728,6 +765,7 @@ inline f32 mod(f32 x, f32 y) { return frac(x / y) * y; }
 inline f64 mod(f64 x, f64 y) { return frac(x / y) * y; }
 
 static void _checks() {
+	static constexpr bool test = all(edivmod<int>(-2147483648, -3) == v2s{715827883, 1});
 	static_assert(all(edivmod<int>(-2147483648, -3) == v2s{715827883, 1}));
 	static_assert(all(edivmod<int>(-2147483647, -3) == v2s{715827883, 2}));
 	static_assert(all(edivmod<int>(-2147483646, -3) == v2s{715827882, 0}));

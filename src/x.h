@@ -168,52 +168,55 @@ ENUMERATE_KEYWORDS(x)
 	x(use) \
 
 /*
-#define x(name, token, precedence)
+#define x(name, token, precedence, associativity)
 ENUMERATE_BINARY_OPERATIONS(x)
 #undef x
 */
+// Sorted by precedence in descending order
+// When associativity of op is '<' (left),  parsing is (((a op b) op c) op d)
+// When associativity of op is '>' (right), parsing is (a op (b op (c op d)))
 #define ENUMERATE_BINARY_OPERATIONS(x) \
-	x(dot, "." , 9) \
+	/* name token prec assoc */ \
+	x(dot,    ".",   9, '<') \
 	\
-	x(as, "as", 8)\
-    \
-	x(mul, "*" , 7) \
-	x(div, "/" , 7) \
-	x(mod, "%" , 7) \
+	x(as,     "as",  8, '<') \
 	\
-	x(add, "+" , 6) \
-	x(sub, "-" , 6) \
+	x(mul,    "*",   7, '<') \
+	x(div,    "/",   7, '<') \
+	x(mod,    "%",   7, '<') \
 	\
-	x(bor, "|" , 5) \
-	x(ban, "&" , 5) \
-	x(bxo, "^" , 5) \
-	x(bsl, "<<", 5) \
-	x(bsr, ">>", 5) \
+	x(add,    "+",   6, '<') \
+	x(sub,    "-",   6, '<') \
 	\
-	x(equ, "==", 4) \
-	x(neq, "!=", 4) \
-	x(les, "<" , 4) \
-	x(leq, "<=", 4) \
-	x(grt, ">" , 4) \
-	x(grq, ">=", 4) \
+	x(bor,    "|",   5, '<') \
+	x(ban,    "&",   5, '<') \
+	x(bxo,    "^",   5, '<') \
+	x(bsl,    "<<",  5, '<') \
+	x(bsr,    ">>",  5, '<') \
 	\
-	x(lan, "&&", 3) \
-	x(lor, "||", 3) \
+	x(equ,    "==",  4, '<') \
+	x(neq,    "!=",  4, '<') \
+	x(les,    "<",   4, '<') \
+	x(leq,    "<=",  4, '<') \
+	x(grt,    ">",   4, '<') \
+	x(grq,    ">=",  4, '<') \
 	\
-	x(ran, "..", 2) \
+	x(lan,    "&&",  3, '<') \
+	x(lor,    "||",  3, '<') \
 	\
-	x(ass, "=" , 1) \
+	x(ran,    "..",  2, '<') \
 	\
-	x(addass, "+=" , 1) \
-	x(subass, "-=" , 1) \
-	x(mulass, "*=" , 1) \
-	x(divass, "/=" , 1) \
-	x(modass, "%=" , 1) \
-	x(borass, "|=" , 1) \
-	x(banass, "&=" , 1) \
-	x(bxoass, "^=" , 1) \
-	x(bslass, "<<=", 1) \
-	x(bsrass, ">>=", 1) \
+	x(ass,    "=",   1, '>') \
+	x(addass, "+=",  1, '>') \
+	x(subass, "-=",  1, '>') \
+	x(mulass, "*=",  1, '>') \
+	x(divass, "/=",  1, '>') \
+	x(modass, "%=",  1, '>') \
+	x(borass, "|=",  1, '>') \
+	x(banass, "&=",  1, '>') \
+	x(bxoass, "^=",  1, '>') \
+	x(bslass, "<<=", 1, '>') \
+	x(bsrass, ">>=", 1, '>') \
 
 /*
 #define x(name, token)
@@ -249,7 +252,7 @@ ENUMERATE_TOKEN_KIND(x, y)
 	y(string, '"') \
 	y(number, '0') \
 	y(float, '1') \
-	y(directive, '#dir') \
+	y(directive, "#dir"_t) \
 	ENUMERATE_KEYWORDS(x) \
 
 /*
@@ -365,9 +368,10 @@ ENUMERATE_EXECUTION_VALUE_KIND(x)
 	x(lambda) \
 	x(Type) \
 	x(pointer) \
+	x(struct_) \
+	x(array) \
+	/* TODO: use longjmp bro */ \
 	x(break_) \
 	x(continue_) \
 	x(return_) \
-	x(struct_) \
-	x(array) \
 

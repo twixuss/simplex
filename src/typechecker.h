@@ -122,6 +122,10 @@ void call_each_reverse(auto call, auto ...args, auto last) {
 	call_each_reverse(call, args...);
 }
 
+struct SortArgumentOptions {
+	bool allow_missing = false;
+};
+
 struct Typechecker {
 	enum class YieldResult : u8 {
 		fail,
@@ -354,10 +358,6 @@ private:
 	[[nodiscard]] Expression           *vectorize_node(Expression *expression);
 	[[nodiscard]] Statement            *vectorize_node(Statement *statement);
 	[[nodiscard]] VectorizedLambda get_or_instantiate_vectorized_lambda(Lambda *original_lambda, u64 vector_size, String instantiation_location);
-
-	struct SortArgumentOptions {
-		bool allow_missing = false;
-	};
 
 	void sort_arguments(GList<CallArgument> &arguments, GList<Definition *> &parameters, String call_location, Node *lambda_head_or_struct, Definition *lambda_or_struct_definition, SortArgumentOptions options = {});
 	

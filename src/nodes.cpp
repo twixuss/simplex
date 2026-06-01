@@ -3,7 +3,7 @@
 Node *debug_node_to_print = 0;
 
 Node::Node() {
-	if (uid == 3674) {
+	if (uid == 620) {
 		int x = 4;
 	}
 }

@@ -13,12 +13,14 @@ extern bool debug_print;
 //     So linker can't find Instruction::`scalar deleting destructor' in ~OptionalBaseNonTrivial()
 //     I could not solve that, so using bool.
 bool optimize_one_instruction(Instruction &i) {
-	#define I(name, ...)                  \
-		Instruction {                      \
-			.kind = InstructionKind::name, \
-			.v_##name = { __VA_ARGS__ },   \
-			.file = __FILE_NAME__, \
-			.line = __LINE__, \
+	#define I(name, ...)                          \
+		Instruction {                             \
+			.kind = InstructionKind::name,        \
+			.as = {                               \
+				.name = { __VA_ARGS__ },          \
+			},                                    \
+			.file = __FILE_NAME__,                \
+			.line = __LINE__,                     \
 			.source_location = i.source_location, \
 		}
 
@@ -205,7 +207,7 @@ PackedInstructions optimize(Span<Instruction> is) {
 							#define y(type, name) handle_operand(I.name),
 							#define x(name, fields)           \
 								case InstructionKind::name: { \
-									auto &I = result.instructions[j].v_##name; \
+									auto &I = result.instructions[j].as.name; \
 									(0 TL_REVERSE fields);       \
 									break;                    \
 								}
@@ -368,7 +370,7 @@ PackedInstructions optimize(Span<Instruction> is) {
 							#define y(type, name) handle_operand(I.name),
 							#define x(name, fields)           \
 								case InstructionKind::name: { \
-									auto &I = result.instructions[j].v_##name; \
+									auto &I = result.instructions[j].as.name; \
 									(0 TL_REVERSE fields);       \
 									break;                    \
 								}
