@@ -13,7 +13,7 @@
             "cwd":     "${workspaceFolder}\\bin-gcc-debug",
             "args": [
                 "-threads", "1",
-                "${workspaceFolder}\\examples\\gol.sp",
+                "${workspaceFolder}\\a.sp",
                 //"-run",
                 "-target", "c",
             ],

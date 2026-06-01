@@ -14,8 +14,6 @@ void print_tabs() {
 
 static constexpr ConsoleColor untypechecked_color = ConsoleColor::red;
 
-void print_ast(Node *node);
-
 void print_if_type(Node *type, Node *fallback) {
 	if (type) {
 		print_ast(type);
@@ -371,14 +369,25 @@ void print_ast_impl(For *For) {
 void print_ast_impl(Use *Use) {
 	print("use {}", Use->name.name);
 }
+static bool print_expression_types = true;
 void print_ast(Node *node) {
 	if (!node) {
 		print("<NULL>");
 		return;
 	}
 	switch (node->kind) {
-#define x(name) case NodeKind::name: return print_ast_impl((name *)node);
+#define x(name) case NodeKind::name: print_ast_impl((name *)node); break;
 		ENUMERATE_NODE_KIND(x)
 #undef x
+	}
+
+	if (print_expression_types) {
+		if (auto expression = as<Expression>(node)) {
+			withs(ConsoleColor::dark_gray) {
+				scoped_replace(print_expression_types, false);
+				print(':');
+				print_ast(expression->type);
+			};
+		}
 	}
 }

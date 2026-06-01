@@ -1754,10 +1754,6 @@ void Typechecker::resolve_name_in_block(GList<Definition *> &possible_definition
 		if (block == &context->global_block.unprotected) {
 			entry->dependency = *typecheck_entries_by_node.find(definition).value;
 		}
-			
-		if (name == "test") {
-			int x = 42;
-		}
 
 		if (!yield_while(location, [&] { return definition->type == 0; })) {
 			// Sometimes this error is meaningless and noisy because is is caused by another error.
@@ -1775,10 +1771,6 @@ void Typechecker::resolve_name_in_block(GList<Definition *> &possible_definition
 	}
 }
 void Typechecker::resolve_name(GList<Definition *> &possible_definitions, String location, String name) {
-	if (name == "bar") {
-		int x = 5;
-	}
-
 	possible_definitions.clear();
 
 	// FIXME: Duplicated :REACHABLE_BLOCK_NAMES:
@@ -1947,13 +1939,6 @@ Definition       *Typechecker::typecheck_impl(Definition *definition, bool can_s
 				lambda->locals.add(definition);
 			}
 		}
-	}
-
-	if (definition->uid == 3651) {
-		int x = 41;
-	}
-	if (definition->name == "as_implicit") {
-		int x = 41;
 	}
 
 	if (definition->parsed_type) {
@@ -2295,10 +2280,6 @@ Lambda           *Typechecker::typecheck_impl(Lambda *lambda, bool can_substitut
 	return lambda;
 }
 Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
-	if (name->name == "all_true") {
-		int x = 42;
-	}
-
 	name->possible_definitions.clear();
 	
 	// FIXME: Duplicated :REACHABLE_BLOCK_NAMES:
@@ -2419,12 +2400,6 @@ Expression       *Typechecker::typecheck_impl(Name *name, bool can_substitute) {
 }
 Expression       *Typechecker::typecheck_impl(Call *call, bool can_substitute) {
 	defer { assert(call->callable->type != 0); };
-	if (call->location == u8"foo(.[1, 2, 3, 4], .[true, true, false, false])"s) {
-		int x = 4;
-	}
-	if (call->uid == 356) {
-		int x = 4;
-	}
 	if (auto binary = as<Binary>(call->callable)) {
 		if (binary->operation == BinaryOperation::dot) {
 			if (auto lambda_name = as<Name>(binary->right)) {
@@ -2750,12 +2725,6 @@ BuiltinTypeName  *Typechecker::typecheck_impl(BuiltinTypeName *type, bool can_su
 	return type;
 }
 Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitute) {
-	if (binary->uid == 478) {
-		int x = 4;
-	}
-	if (binary->location == "a += b") {
-		int x = 4;
-	}
 	if (binary->operation == BinaryOperation::dot) {
 		//
 		// Struct member access
@@ -3233,6 +3202,14 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 				}
 
 				if (binary->type) {
+					// pointer + 10
+					// =>
+					// ((pointer as *U8) + (10 * sizeof(*pointer))) as *Original
+
+					auto original_pointer_type = pointer_value->type;
+					pointer_value = make_cast(pointer_value, make_pointer(get_builtin_type(BuiltinType::U8), as_pointer(pointer_value->type)->mutability));
+					binary->type = pointer_value->type;
+
 					// Multiply integer by size of pointer's type.
 					auto mul = Binary::create();
 					mul->left = int_value;
@@ -3243,7 +3220,7 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 					mul->type = get_builtin_type(BuiltinType::S64);
 					int_value = mul;
 
-					return binary;
+					return make_cast(binary, original_pointer_type);
 				}
 
 				return 0;
@@ -3281,6 +3258,8 @@ Expression       *Typechecker::typecheck_impl(Binary *binary, bool can_substitut
 					if (auto left_pointer = as_pointer(dleft)) {
 						if (auto right_pointer = as_pointer(dright)) {
 							if (types_match(left_pointer->expression, right_pointer->expression)) {
+								binary->left  = make_cast(binary->left,  get_builtin_type(BuiltinType::S64));
+								binary->right = make_cast(binary->right, get_builtin_type(BuiltinType::S64));
 								binary->low_operation = LowBinaryOperation::sub64;
 								binary->type = get_builtin_type(BuiltinType::S64);
 
@@ -4115,10 +4094,6 @@ Enum             *Typechecker::typecheck_impl(Enum *Enum, bool can_substitute) {
 	return Enum;
 }
 ArrayType        *Typechecker::typecheck_impl(ArrayType *arr, bool can_substitute) {
-	if (arr->uid == 585) {
-		int x = 5;
-	}
-
 	typecheck(&arr->count_expression);
 	if (auto maybe_count = get_constant_value(arr->count_expression)) {
 		auto count_value = maybe_count.value();

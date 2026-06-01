@@ -1,4 +1,3 @@
-#pragma once
 #include "parser.h"
 #include "nodes.h"
 #include "escape.h"
@@ -125,10 +124,6 @@ Parser::NamedLambda Parser::parse_lambda() {
 		parse_name(&dummy_location, &lambda_name);
 
 		skip_lines();
-	}
-	
-	if (lambda_name == "set_sum") {
-		int x = 5;
 	}
 		
 
@@ -567,6 +562,12 @@ void Parser::parse_name(String *location, String *name) {
 
 	next();
 
+	return;
+
+	// Comment out the above `return` to enable multi-token names.
+	// This idea just appeared in my mind and I implemented it, but
+	// now I think I don't really want it.
+
 	auto can_be_merged = [&] {
 		return is_valid_name_part(token.kind) && token.string.begin() - location->end() == 1;
 	};
@@ -768,10 +769,6 @@ Expression *Parser::parse_expression_0() {
 			
 			parse_name(&definition->location, &definition->name);
 
-			if (definition->name == "file_size") {
-				int x = 2;
-			}
-
 			skip_lines();
 
 			expect({':', '='});
@@ -951,9 +948,6 @@ Expression *Parser::parse_expression_0() {
 		case Token_name: {
 			auto name = Name::create();
 			parse_name(&name->location, &name->name);
-			if (name->name == "bytes_remaining") {
-				int x = 4;
-			}
 			return finish_node(name);
 		}
 		case Token_number: {

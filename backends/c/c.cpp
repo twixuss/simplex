@@ -431,10 +431,6 @@ void append_node(StringBuilder &code, Node *node, bool define = true);
 void append_address(StringBuilder &code, Node *node) {
 	scoped_replace(debug_current_node, node);
 	
-	if (node->uid == 291) {
-		int x = 2;
-	}
-
 	visit_one(node, Combine{
 		[&](auto *node) {
 			append_line(code, "a{} = &(unknown_node {});", node->uid, node->kind);
@@ -519,10 +515,6 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 	auto prev_node = debug_current_node;
 	scoped_replace(debug_current_node, node);
 
-	if (node->uid == 291) {
-		int x = 2;
-	}
-
 	append_debug_info(code, node->location);
 
 	//defer{
@@ -538,10 +530,6 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 
 	if (generate_readable_code) {
 		append_line(code, "/* {} */", node->location);
-	}
-
-	if (node->uid == 620) {
-		int x = 5;
 	}
 
 	if (auto expression = as<Expression>(node)) {
@@ -616,8 +604,17 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 			append_line(code, "_{} = {};", node->uid, literal->value);
 		},
 		[&](IntegerLiteral *literal) {
-			auto t = as<BuiltinTypeName>(direct(literal->type))->type_kind;
-			switch (t) {
+			auto type = direct(literal->type);
+			if (auto Enum = as<::Enum>(type)) {
+				type = direct(Enum->underlying_type);
+			}
+			auto builtin_type = as<BuiltinTypeName>(type);
+			if (!builtin_type) {
+				immediate_reporter.error(literal->location, "backends/c: append_node: Unexpected integer literal type");
+				invalid_code_path();
+			}
+			auto underlying_builtin_type = builtin_type->type_kind;
+			switch (underlying_builtin_type) {
 				case BuiltinType::U8 : append_line(code, "_{} = {}u;",   node->uid, (u32)literal->value); break;
 				case BuiltinType::U16: append_line(code, "_{} = {}u;",   node->uid, (u32)literal->value); break;
 				case BuiltinType::U32: append_line(code, "_{} = {}u;",   node->uid, (u32)literal->value); break;
@@ -636,7 +633,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 					append_line(code, "_{} = {}ll;", node->uid, (s64)literal->value);
 					break;
 				default: 
-					immediate_reporter.error(literal->location, "backends/c: append_node: IntegerLiteral: unhandled type {}", t);
+					immediate_reporter.error(literal->location, "backends/c: append_node: IntegerLiteral: unhandled type {}", underlying_builtin_type);
 					invalid_code_path();
 					break;
 			}
