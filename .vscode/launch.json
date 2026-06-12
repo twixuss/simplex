@@ -36,6 +36,37 @@
             ]
         },
         {
+            "name": "simplex release",
+            "type": "cppdbg",
+            "request": "launch",
+            "preLaunchTask": "nob release",
+            "program": "${workspaceFolder}\\bin-gcc-release\\simplex.exe",
+            "cwd":     "${workspaceFolder}\\bin-gcc-release",
+            "args": [
+                "-threads", "1",
+                "${workspaceFolder}\\a.sp",
+                //"-run",
+                "-target", "c",
+            ],
+            "stopAtEntry": false,
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "F:\\programs\\mingw64\\bin\\gdb.exe",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "nob",
             "type": "cppdbg",
             "request": "launch",

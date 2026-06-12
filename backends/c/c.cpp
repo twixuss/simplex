@@ -815,7 +815,7 @@ void append_node(StringBuilder &code, Node *node, bool define) {
 						append_node(code, match->default_case->to);
 						append_line(code, "_{} = _{};", node->uid, match->default_case->to->uid);
 					} else {
-						append_line(code, "*(int *)0 = 0; // incomplete match");
+						append_line(code, "panic(__make_string(\"incomplete match\"));");
 					}
 				} else {
 					if (match->default_case) {

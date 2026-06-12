@@ -1111,54 +1111,54 @@ void Interpreter::execute(Instruction::blend_t i) {
 }
 void Interpreter::execute(Instruction::fadd_t i) {
 	switch (i.layout.size) {
-		case 4: for (umm j = 0; j < i.layout.count; ++j) *(f32 *)&val4(i.d, j) = std::bit_cast<f32>(val4(i.a, j)) + std::bit_cast<f32>(val4(i.b, j)); break;
-		case 8: for (umm j = 0; j < i.layout.count; ++j) *(f64 *)&val8(i.d, j) = std::bit_cast<f64>(val8(i.a, j)) + std::bit_cast<f64>(val8(i.b, j)); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = bit_cast<u32>(bit_cast<f32>(val4(i.a, j)) + bit_cast<f32>(val4(i.b, j))); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = bit_cast<u64>(bit_cast<f64>(val8(i.a, j)) + bit_cast<f64>(val8(i.b, j))); break;
 		default: invalid_code_path();
 	}
 }
 void Interpreter::execute(Instruction::fsub_t i) {
 	switch (i.layout.size) {
-		case 4: for (umm j = 0; j < i.layout.count; ++j) *(f32 *)&val4(i.d, j) = std::bit_cast<f32>(val4(i.a, j)) - std::bit_cast<f32>(val4(i.b, j)); break;
-		case 8: for (umm j = 0; j < i.layout.count; ++j) *(f64 *)&val8(i.d, j) = std::bit_cast<f64>(val8(i.a, j)) - std::bit_cast<f64>(val8(i.b, j)); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = bit_cast<u32>(bit_cast<f32>(val4(i.a, j)) - bit_cast<f32>(val4(i.b, j))); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = bit_cast<u64>(bit_cast<f64>(val8(i.a, j)) - bit_cast<f64>(val8(i.b, j))); break;
 		default: invalid_code_path();
 	}
 }
 void Interpreter::execute(Instruction::fmul_t i) {
 	switch (i.layout.size) {
-		case 4: for (umm j = 0; j < i.layout.count; ++j) *(f32 *)&val4(i.d, j) = std::bit_cast<f32>(val4(i.a, j)) * std::bit_cast<f32>(val4(i.b, j)); break;
-		case 8: for (umm j = 0; j < i.layout.count; ++j) *(f64 *)&val8(i.d, j) = std::bit_cast<f64>(val8(i.a, j)) * std::bit_cast<f64>(val8(i.b, j)); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = bit_cast<u32>(bit_cast<f32>(val4(i.a, j)) * bit_cast<f32>(val4(i.b, j))); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = bit_cast<u64>(bit_cast<f64>(val8(i.a, j)) * bit_cast<f64>(val8(i.b, j))); break;
 		default: invalid_code_path();
 	}
 }
 void Interpreter::execute(Instruction::fdiv_t i) {
 	switch (i.layout.size) {
-		case 4: for (umm j = 0; j < i.layout.count; ++j) *(f32 *)&val4(i.d, j) = std::bit_cast<f32>(val4(i.a, j)) / std::bit_cast<f32>(val4(i.b, j)); break;
-		case 8: for (umm j = 0; j < i.layout.count; ++j) *(f64 *)&val8(i.d, j) = std::bit_cast<f64>(val8(i.a, j)) / std::bit_cast<f64>(val8(i.b, j)); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = bit_cast<u32>(bit_cast<f32>(val4(i.a, j)) / bit_cast<f32>(val4(i.b, j))); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = bit_cast<u64>(bit_cast<f64>(val8(i.a, j)) / bit_cast<f64>(val8(i.b, j))); break;
 		default: invalid_code_path();
 	}
 }
 void Interpreter::execute(Instruction::fmod_t i) {
 	switch (i.layout.size) {
-		case 4: for (umm j = 0; j < i.layout.count; ++j) *(f32 *)&val4(i.d, j) = mod(std::bit_cast<f32>(val4(i.a, j)), std::bit_cast<f32>(val4(i.b, j))); break;
-		case 8: for (umm j = 0; j < i.layout.count; ++j) *(f64 *)&val8(i.d, j) = mod(std::bit_cast<f64>(val8(i.a, j)), std::bit_cast<f64>(val8(i.b, j))); break;
+		case 4: for (umm j = 0; j < i.layout.count; ++j) val4(i.d, j) = bit_cast<u32>(mod(bit_cast<f32>(val4(i.a, j)), bit_cast<f32>(val4(i.b, j)))); break;
+		case 8: for (umm j = 0; j < i.layout.count; ++j) val8(i.d, j) = bit_cast<u64>(mod(bit_cast<f64>(val8(i.a, j)), bit_cast<f64>(val8(i.b, j)))); break;
 		default: invalid_code_path();
 	}
 }
 void Interpreter::execute(Instruction::f32_to_s32_t i) { 
 	for (umm j = 0; j < i.count; ++j) 
-		val4(i.d, j) = (s32)std::bit_cast<f32>(val4(i.a, j));
+		val4(i.d, j) = (s32)bit_cast<f32>(val4(i.a, j));
 }
 void Interpreter::execute(Instruction::f64_to_s64_t i) {
 	for (umm j = 0; j < i.count; ++j) 
-		val8(i.d, j) = (s64)std::bit_cast<f64>(val8(i.a, j));
+		val8(i.d, j) = (s64)bit_cast<f64>(val8(i.a, j));
 }
 void Interpreter::execute(Instruction::f32_to_f64_t i) {
 	for (umm j = 0; j < i.count; ++j) 
-		*(f64 *)&val8(i.d, j) = std::bit_cast<f32>(val4(i.a, j));
+		val8(i.d, j) = bit_cast<u64>((f64)bit_cast<f32>(val4(i.a, j)));
 }
 void Interpreter::execute(Instruction::f64_to_f32_t i) {
 	for (umm j = 0; j < i.count; ++j) 
-		*(f32 *)&val4(i.d, j) = std::bit_cast<f64>(val8(i.a, j));
+		val4(i.d, j) = bit_cast<u32>((f32)bit_cast<f64>(val8(i.a, j)));
 }
 void Interpreter::execute(Instruction::call_t i) {
 	E(push, (s64)current_instruction_index);

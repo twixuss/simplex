@@ -88,6 +88,62 @@ inline void assertion_failure(char const *cause_string, char const *expression, 
 	assertion_failure_impl(cause_string, expression, file, line, function, {}, tformat(format, args...));
 }
 
+#define ENABLE_STRING_HASH_COUNT 0
+
+forceinline constexpr u64 read_u64(utf8 *data) {
+	if (std::is_constant_evaluated()) {
+		return 
+			((u64)data[0] << (0*8)) | 
+			((u64)data[1] << (1*8)) |
+			((u64)data[2] << (2*8)) |
+			((u64)data[3] << (3*8)) |
+			((u64)data[4] << (4*8)) |
+			((u64)data[5] << (5*8)) |
+			((u64)data[6] << (6*8)) |
+			((u64)data[7] << (7*8));
+	} else {
+		u64 x;
+		memcpy(&x, data, sizeof(x));
+		return x;
+	}
+}
+
+#if ENABLE_STRING_HASH_COUNT
+inline u32 string_hash_count;
+#endif
+
+template <>
+constexpr u64 get_hash(String const &string) {
+	#if ENABLE_STRING_HASH_COUNT
+	if (!std::is_constant_evaluated())
+		atomic_increment(&string_hash_count);
+	#endif
+	
+	u64 result = 0;
+	if (1) {
+		umm c = min(string.count, (umm)8);
+		u64 first = 0;
+		u64 last = 0;
+		memcpy(&first, string.data, c);
+		memcpy(&last, string.end() - c, c);
+		result = first * 0x9e3779b97f4a7c55zu ^ last * 0xb504f333f9de6497zu;
+	} else {
+		if (string.count >= 8) {
+			u64 first = read_u64(string.data);
+			u64 last = read_u64(string.end() - 8);
+			result = string.count * 462591913 + first * 315861 + last * 5737893;
+		} else {
+			for (auto c : string) {
+				result ^= (u64)c * 0x9e3779b97f4a7c55zu;
+			}
+		}
+	}
+		
+	//println("{} {}", format_hex(result), string);
+
+	return result;
+}
+
 // WinGDI defines PASSTHROUGH, but I wanna use it myself
 #ifdef PASSTHROUGH
 #undef PASSTHROUGH

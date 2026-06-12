@@ -86,7 +86,9 @@ static uint64_t nobdc_get_file_write_time(const char *path) {
         nob_log(NOB_ERROR, "Could not get time of %s: %s", path, nob_win32_error_message(GetLastError()));
         return 0;
     }
-	return *(uint64_t *)&output_path_time;
+	uint64_t x;
+	memcpy(&x, &output_path_time, sizeof(x));
+	return x;
 #else
     struct stat statbuf = {0};
     if (stat(path, &statbuf) < 0) {

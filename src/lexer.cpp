@@ -1,7 +1,16 @@
-#pragma once
 #include "lexer.h"
 #include "reporter.h"
 #include "escape.h"
+
+// TODO: put in tl
+#if COMPILER_MSVC
+	#define forceinline_lambda \
+	__pragma(push_macro, "forceinline") \
+	[[msvc::forceinline]] \
+	__pragma(pop_macro, "forceinline")
+#else
+	#define forceinline_lambda __attribute__((always_inline))
+#endif
 
 #if ARCH_AVX512
 using VMask = u64;
@@ -83,6 +92,49 @@ u64 vcmpltu8 (u64 a, u64 b) {
     return a;
 }
 
+forceinline u32 number_of_bytes_to_store(std::unsigned_integral auto c) {
+	if constexpr (sizeof(c) == 1) {
+		return 1;
+	} else {
+		#if 1
+			c |= 1; // avoid passing 0 to log2.
+			return log2(c) / 8 + 1;
+		#else
+			if (c <= 0xff) {
+				return 1;
+			} else if (c <= 0xff'ff) {
+				return 2;
+			} else if (c <= 0xff'ff'ff) {
+				return 3;
+			} else if (c <= 0xff'ff'ff'ff) {
+				return 4;
+			} else if (c <= 0xff'ff'ff'ff'ff) {
+				return 5;
+			} else if (c <= 0xff'ff'ff'ff'ff'ff) {
+				return 6;
+			} else if (c <= 0xff'ff'ff'ff'ff'ff'ff) {
+				return 7;
+			} else {
+				return 8;
+			}
+		#endif
+	}
+}
+
+static int test = []() {
+	assert_equal(number_of_bytes_to_store(0x00u), 1);
+	assert_equal(number_of_bytes_to_store(0x01u), 1);
+	assert_equal(number_of_bytes_to_store(0x02u), 1);
+	assert_equal(number_of_bytes_to_store(0xffu), 1);
+	assert_equal(number_of_bytes_to_store(0x01'00u), 2);
+	assert_equal(number_of_bytes_to_store(0xff'ffu), 2);
+	assert_equal(number_of_bytes_to_store(0x01'00'00u), 3);
+	assert_equal(number_of_bytes_to_store(0xff'ff'ffu), 3);
+	assert_equal(number_of_bytes_to_store(0x01'00'00'00u), 4);
+	assert_equal(number_of_bytes_to_store(0xff'ff'ff'ffu), 4);
+	return 0;
+}();
+
 Token Lexer::next_token() {
 	auto end = source.end();
 
@@ -134,7 +186,7 @@ Token Lexer::next_token() {
 							next();
 							switch (c) {
 								case 'b': case 'B': {
-									Char digits[] = {
+									Array<Char, 8> digits = {
 										(Char)((next(), c) - '0'),
 										(Char)((next(), c) - '0'),
 										(Char)((next(), c) - '0'),
@@ -145,17 +197,9 @@ Token Lexer::next_token() {
 										(Char)((next(), c) - '0'),
 									};
 
-									vcmpltu8(broadcast_u8_to_u64(2), *(u64 *)digits);
+									// vcmpltu8(broadcast_u8_to_u64(2), *(u64 *)digits);
 
-									if (digits[0] >= 2 ||
-										digits[1] >= 2 ||
-										digits[2] >= 2 ||
-										digits[3] >= 2 ||
-										digits[4] >= 2 ||
-										digits[5] >= 2 ||
-										digits[6] >= 2 ||
-										digits[7] >= 2)
-									{
+									if (any(digits >= 2)) {
 										reporter->error(Span(cursor, (umm)1), "\\0b must be followed by exactly eight binary digits.");
 										fail();
 									}
@@ -216,8 +260,8 @@ Token Lexer::next_token() {
 									};
 
 									u32 x = 0;
-									x = (x << 4) | hex_digit_to_int_unchecked(cursor[0]);
-									x = (x << 4) | hex_digit_to_int_unchecked(cursor[1]);
+									x = (x << 4) | digits[0];
+									x = (x << 4) | digits[1];
 
 									on_char(x);
 									break;
@@ -232,7 +276,7 @@ Token Lexer::next_token() {
 						default: {
 							reporter->error(Span(cursor, (umm)1), "\\ must be followed by a valid escape sequence.");
 							if (c == 'x') {
-								reporter->help("If you wanted a hex literal, use \\0x (backslash zero x), followed by exactly two hex digits. You can also use binary and octal.");
+								reporter->help("If you wanted a hex literal, use \\0x (backslash zero x), followed by exactly two hex digits. You can also use \\0b for binary and \\0o for octal.");
 							}
 							fail();
 						}
@@ -479,15 +523,7 @@ restart:
 			u64 i = 0;
 			parse_string.operator()<'\'', true>([&](utf32 c) {
 				int_value |= (u64)c << (i * 8);
-				if (c <= 0xff) {
-					i += 1;
-				} else if (c <= 0xffff) {
-					i += 2;
-				} else if (c <= 0xffffff) {
-					i += 3;
-				} else {
-					i += 4;
-				}
+				i += number_of_bytes_to_store(c);
 			});
 
 			umm max_length = 8;
@@ -606,8 +642,10 @@ restart:
 				#if 0
 				// SIMD
 				not_implemented("floats");
+				#if COMPILER_MSVC
 				#pragma warning(push)
 				#pragma warning(disable: 4309) // constant value truncation
+				#endif
 				VMask mask = vmset1(1);
 				while (mask == (VMask)~0) {
 					auto chars = vload(cursor);
@@ -630,7 +668,9 @@ restart:
 
 					cursor += advance;
 				}
+				#if COMPILER_MSVC
 				#pragma warning(pop)
+				#endif
 				#else
 				// SCALAR
 				while (1) {
@@ -678,8 +718,10 @@ restart:
 
 			#if 1
 			// SIMD
+			#if COMPILER_MSVC
 			#pragma warning(push)
 			#pragma warning(disable: 4309) // constant value truncation
+			#endif
 
 			VMask mask = vmset1(1);
 			while (mask == (VMask)~0) {
@@ -698,7 +740,9 @@ restart:
 				cursor += count_trailing_ones(mask);
 			}
 				
+			#if COMPILER_MSVC
 			#pragma warning(pop)
+			#endif
 			#else
 			// SCALAR
 			while (true) {

@@ -1,4 +1,5 @@
 #define TL_IMPL
+#define TL_ENABLE_TESTS
 #include "common.h"
 #include "targets\x64\x64.h"
 #include <tl/main.h>
@@ -34,48 +35,6 @@
 #include "cmd_args.h"
 
 CompilerContext _context, *context = &_context;
-
-#define ENABLE_STRING_HASH_COUNT 0
-
-forceinline constexpr u64 read_u64(utf8 *data) {
-	if (std::is_constant_evaluated()) {
-		return 
-			((u64)data[0] << (0*8)) | 
-			((u64)data[1] << (1*8)) |
-			((u64)data[2] << (2*8)) |
-			((u64)data[3] << (3*8)) |
-			((u64)data[4] << (4*8)) |
-			((u64)data[5] << (5*8)) |
-			((u64)data[6] << (6*8)) |
-			((u64)data[7] << (7*8));
-	} else {
-		return *(u64 *)data;
-	}
-}
-
-#if ENABLE_STRING_HASH_COUNT
-u32 string_hash_count;
-#endif
-
-template <>
-constexpr u64 get_hash(String const &string) {
-#if ENABLE_STRING_HASH_COUNT
-	if (!std::is_constant_evaluated())
-		++string_hash_count;
-#endif
-
-	if (string.count >= 8) {
-		u64 first = read_u64(string.data);
-		u64 last = read_u64(string.end() - 8);
-		return string.count * 462591913 + first * 315861 + last * 5737893;
-	}
-
-	tl::u64 result = 0xdeadc0debabeface;
-	for (u64 i = 0; i < string.count; ++i) {
-		result += string.data[i] * (i * 0xdeadc0debabeface + 1);
-	}
-	return result;
-}
 
 /*
 struct GlobalAllocator : AllocatorBase<GlobalAllocator> {
@@ -571,6 +530,14 @@ s32 tl_main(Span<Span<utf8>> args) {
 		set_console_color(ConsoleColor::gray);
 	});
 	
+	#ifdef TL_ENABLE_TESTS
+	for (umm i = 0; i < tests_to_run_count; ++i) {
+		auto test = tests_to_run[i];
+		println("{}:{}", test.file, test.name);
+		test.func();
+	}
+	#endif
+
 	/*
 	c2simplex(u8R"(
 #define X1 1
